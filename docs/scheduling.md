@@ -2,6 +2,18 @@
 
 The scheduler is a deterministic policy engine wrapped by a periodic reconciler.
 
+The implemented pure entry point is `decideTargetReset`. It receives the
+current instant, provider/policy IDs, target reset, selected normalized window,
+observation freshness, trigger capability and automation eligibility. It returns
+either `noop` or `create_intent` plus a JSON-serializable explanation. It never
+reads the system clock, provider transport or database.
+
+Stable reasons currently include `TARGET_RESET_WINDOW_MATCH`,
+`TARGET_NOT_DUE`, `TARGET_MISSED`, `WINDOW_DURATION_UNKNOWN`,
+`WINDOW_DURATION_CONFIDENCE_TOO_LOW`, `WINDOW_PHASE_CONFIDENCE_TOO_LOW`,
+`WINDOW_NOT_INACTIVE`, `OBSERVATION_STALE`, `OBSERVATION_MISSING`,
+`TRIGGER_CAPABILITY_UNAVAILABLE` and `AUTOMATION_DISABLED`.
+
 ## Modes in the MVP
 
 ### Manual

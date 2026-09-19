@@ -34,6 +34,11 @@ pnpm validate
 
 `pnpm validate` is the canonical completion gate. It runs format checking, lint, strict typechecking, the coverage-enforced test suite, the build, and Gitleaks. Install Gitleaks before running it locally. `pnpm test:coverage` requires at least 90% global lines, statements, functions, and branches and writes text/LCOV reports under the ignored `coverage/` directory.
 
+The daemon performs one initial reconcile and then one coalescing global tick.
+FakeProvider is enabled by default; Codex monitoring is opt-in through
+`AWM_CODEX_ENABLED=true`, `AWM_CODEX_HOME` and `AWM_CODEX_EXECUTABLE`. The
+Codex adapter remains read-only and provider actions are not dispatched.
+
 ## Development provider
 
 Use FakeProvider. Never require a live Codex/Antigravity account for normal development or CI.

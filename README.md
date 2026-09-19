@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: architecture-first scaffold. The FakeProvider vertical slice and core contracts are present; real provider automation is intentionally gated behind the research/compliance decisions in `docs/`.
+> Status: observation-to-durable-intent vertical slice. FakeProvider and Codex read-only monitoring are available; provider actions remain intentionally disabled.
 
 ## Product boundary
 
@@ -95,10 +95,13 @@ Included now:
 
 - domain contracts for evidence, windows, capabilities, and provider actions;
 - injectable clock;
-- pure scheduler decision seam;
+- pure target-reset scheduler decision engine with freshness/confidence gates and explanations;
+- IANA local-time occurrence resolution with deterministic DST rules and a wall/monotonic clock-jump seam;
 - FakeProvider;
 - SQLite schema and migration runner;
-- health, metrics, provider-list API and minimal overview page;
+- durable provider reconciliation with last-known-good state, samples, events and deduplicated planned intents;
+- health, metrics, and persisted provider overview/API (HTTP reads do not inspect providers);
+- official Codex app-server read-only adapter with offline protocol fixtures;
 - Docker/Compose hardening baseline;
 - CI/validation scaffolding;
 - provider research and compliance classification;
@@ -106,7 +109,7 @@ Included now:
 
 Intentionally **not** implemented yet:
 
-- Codex authentication/real inspection/trigger;
+- automatic provider action execution and Codex trigger;
 - Antigravity real adapter;
 - UI settings editor;
 - production scheduler action execution;
@@ -124,4 +127,4 @@ Those are implementation-roadmap work, not omissions from the planning deliverab
 
 ## Research snapshot
 
-Provider research was refreshed on **2026-09-14**. Provider behavior is intentionally treated as a changing external contract; see `docs/providers.md` and `docs/research/sources.md`.
+Provider research was refreshed on **2026-09-19**. Provider behavior is intentionally treated as a changing external contract; see `docs/providers.md` and `docs/research/sources.md`.

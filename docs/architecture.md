@@ -48,6 +48,21 @@ Confirmation observation / result
 
 The scheduler cannot import provider-specific transports. The provider adapter cannot choose when a trigger is desirable. The UI cannot know auth implementation details.
 
+The current runtime implements the observation-to-intent planning path:
+
+```text
+reconciler tick
+  -> due adapter inspection
+  -> canonical observation validation
+  -> provider_state + window_samples + event
+  -> pure target-reset decision
+  -> deduplicated planned action_intent
+  -> persisted overview/API read model
+```
+
+The final arrow is read-only. HTTP handlers do not inspect providers and no
+planned intent is dispatched in this milestone.
+
 ## Reconciler over durable timers
 
 The daemon wakes every configurable interval (default 30 seconds), loads runtime config/current state/open intents, inspects due providers, computes decisions, and advances intents. Scheduling correctness comes from persisted state + current time, not from a `setTimeout` expected to survive restarts.

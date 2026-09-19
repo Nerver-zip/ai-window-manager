@@ -1,7 +1,7 @@
 # AI Window Manager — implementation plan
 
-Prepared: **2026-09-14**  
-Scope: architecture-first repository scaffold; not a full product implementation.
+Prepared: **2026-09-19**
+Scope: observation-to-durable-intent vertical slice; provider action execution remains deferred.
 
 ## A. Executive summary
 
@@ -421,6 +421,8 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 2 — First vertical slice with FakeProvider
 
+**Status: complete for persisted monitor/overview flow.**
+
 **Goal**: earliest useful running daemon.  
 **Components**: FakeProvider, reconcile loop read path, SQLite, overview, health/metrics, Docker.  
 **Tests**: integration + container smoke.  
@@ -428,12 +430,16 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 3 — Scheduler/intents
 
+**Status: SCHED-001, TIME-001 and SCHED-002 complete; dispatch remains deferred.**
+
 **Goal**: deterministic target-reset recommendations and safe manual fake trigger.  
 **Components**: decision engine, action lifecycle, time conversion/recovery.  
 **Tests**: time matrix, crashes/uncertain/duplicate.  
 **Acceptance**: exactly one trigger intent per target cycle; explanations persisted.
 
 ### Phase 4 — Codex monitor
+
+**Status: CODEX-001 offline adapter complete; live authenticated acceptance remains manual/pending.**
 
 **Goal**: real read-only Codex state through official client surface.  
 **Components**: dedicated client state, adapter, parser/schema validation.  

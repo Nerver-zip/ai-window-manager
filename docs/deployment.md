@@ -22,6 +22,13 @@ One container, one data volume, optional dedicated provider credential/state mou
 - graceful SIGTERM;
 - no Docker socket.
 
+At startup the daemon seeds only enabled bootstrap providers when their DB record
+does not already exist, performs one reconcile, then uses one coalescing global
+reconcile interval. Runtime provider state and planned intents remain in SQLite;
+the overview/API only reads that persisted state. Optional Codex monitoring uses
+a dedicated `AWM_CODEX_HOME` under the persistent data volume and is disabled by
+default; the image does not provide a Codex credential or provider trigger.
+
 ## Dockge
 
 `compose.yaml` is ordinary Docker Compose and needs no Dockge-specific keys. Point Dockge at the repository/stack directory and configure `.env`/mount paths there.

@@ -58,11 +58,15 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## SCHED-001 — Implement pure target-reset decision engine
 
+**Status: complete (2026-09-19).**
+
 **Scope**: candidate trigger, confidence/staleness gates, explanation object, tolerance window.  
 **Acceptance**: table tests around 07:59/08:00/08:01 example and unknown duration/reset.  
 **Dependencies**: CORE-001.
 
 ## SCHED-002 — Implement durable reconcile loop
+
+**Status: complete (2026-09-19).**
 
 **Scope**: polling due calculation, inspections, decision call, event persistence; no real triggers yet.  
 **Acceptance**: restart-safe; no `sleep` in tests; duplicate ticks produce one intent.  
@@ -76,12 +80,16 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## TIME-001 — Implement IANA local schedule conversion
 
+**Status: complete (2026-09-19).**
+
 **Scope**: wall-clock target occurrence, DST nonexistent/ambiguous rules, monotonic jump detection seam.  
 **Acceptance**: tested on at least one spring-forward and fall-back zone plus America/Sao_Paulo normal day.  
 **Dependencies**: SCHED-001.  
 **Parallel**: SCHED-002 after stable interface.
 
 ## CODEX-001 — Implement Codex read-only adapter
+
+**Status: complete (2026-09-19); offline acceptance complete, live authenticated acceptance pending.**
 
 **Scope**: official client/app-server only, lifecycle, timeout, validated rate-limit response, normalized multi-window observation.  
 **Acceptance**: monitor-only real provider works; partial/null fields degrade safely; offline contract tests.  
@@ -108,6 +116,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 **MVP note**: may close as “not supported”.
 
 ## WEB-001 — Implement overview SSR
+
+**Status: complete (2026-09-19).**
 
 **Scope**: provider cards, stale/evidence labels, reset/remaining/next-decision explanation.  
 **Acceptance**: works with FakeProvider and unavailable provider; no secret fields.  

@@ -49,3 +49,8 @@ provider state, window samples, events, settings, schedule policies and action
 intents. Provider observations are validated at the persistence boundary, window
 samples round-trip evidence/source/confidence metadata, and action-intent
 creation uses a transaction plus the database `UNIQUE(dedupe_key)` constraint.
+
+The reconciler writes a successful normalized observation, all of its window
+samples and a bounded inspection event together. Inspection failures update
+health/error metadata while retaining the previous normalized observation; no
+fabricated empty observation replaces last-known-good state.
