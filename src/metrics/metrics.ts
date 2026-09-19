@@ -1,4 +1,5 @@
 import client from 'prom-client';
+import type { ProviderObservation } from '../domain/types.js';
 
 client.collectDefaultMetrics({ prefix: 'ai_window_process_' });
 
@@ -21,3 +22,28 @@ export const remainingRatio = new client.Gauge({
 });
 
 export const registry = client.register;
+
+export function recordObservation(observation: ProviderObservation): void {
+  recordProviderHealth(observation.providerId, observation.health);
+  for (const window of observation.windows) {
+    if (window.usageRatio) {
+      usageRatio.set(
+        { provider: observation.providerId, window: window.windowKind },
+        window.usageRatio.value,
+      );
+    }
+    if (window.remainingRatio) {
+      remainingRatio.set(
+        { provider: observation.providerId, window: window.windowKind },
+        window.remainingRatio.value,
+      );
+    }
+  }
+}
+
+export function recordProviderHealth(
+  providerId: string,
+  health: ProviderObservation['health'],
+): void {
+  providerUp.set({ provider: providerId }, health === 'UP' ? 1 : 0);
+}
