@@ -30,6 +30,7 @@ export interface SchedulerExplanation {
   policyId: string;
   targetResetAt: string;
   targetTriggerAt?: string;
+  windowKind?: string;
   windowDurationSeconds?: number;
   durationConfidence?: Confidence;
   phase?: WindowPhase;
@@ -96,6 +97,7 @@ export function decideTargetReset(input: TargetResetInput): SchedulerDecision {
     observationAgeSeconds,
     phase: window.phase.value,
     phaseConfidence: window.phase.confidence,
+    windowKind: window.windowKind,
     ...(window.durationSeconds
       ? {
           windowDurationSeconds: window.durationSeconds.value,
