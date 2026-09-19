@@ -18,6 +18,7 @@ const adapters = new Map<string, ProviderAdapter>();
 
 registerFakeProvider();
 registerCodexProvider();
+hydrateMetricsFromState();
 
 const reconciler = new Reconciler({
   clock,
@@ -98,6 +99,17 @@ function seedProvider(input: { id: string; kind: string; config: unknown }): voi
     createdAtMs: nowMs,
     updatedAtMs: nowMs,
   });
+}
+
+function hydrateMetricsFromState(): void {
+  for (const provider of repositories.providers.list()) {
+    const state = repositories.providerState.get(provider.id);
+    if (state?.observation) {
+      recordObservation(state.observation);
+    } else if (state) {
+      recordProviderHealth(provider.id, state.health);
+    }
+  }
 }
 
 function resolveTargetResetAt(policy: SchedulePolicyRecord, now: Date): Date | undefined {
