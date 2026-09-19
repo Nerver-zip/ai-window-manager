@@ -28,7 +28,11 @@ export function decideTargetReset(input: TargetResetInput): SchedulerDecision {
     return { kind: 'noop', reasonCode: 'WINDOW_DURATION_CONFIDENCE_TOO_LOW' };
   }
 
-  if (input.window.phase !== 'INACTIVE') {
+  if (!actionableConfidence.has(input.window.phase.confidence)) {
+    return { kind: 'noop', reasonCode: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW' };
+  }
+
+  if (input.window.phase.value !== 'INACTIVE') {
     return { kind: 'noop', reasonCode: 'WINDOW_NOT_INACTIVE' };
   }
 

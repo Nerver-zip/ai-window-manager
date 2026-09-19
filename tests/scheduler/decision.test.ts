@@ -2,16 +2,24 @@ import { describe, expect, it } from 'vitest';
 import type { WindowSnapshot } from '../../src/domain/types.js';
 import { decideTargetReset } from '../../src/scheduler/decision.js';
 
-function inactiveFiveHourWindow(confidence: 'exact' | 'low' = 'exact'): WindowSnapshot {
+function inactiveFiveHourWindow(
+  durationConfidence: 'exact' | 'low' = 'exact',
+  phaseConfidence: 'exact' | 'low' = 'exact',
+): WindowSnapshot {
   return {
     providerId: 'codex',
     windowKind: 'five_hour',
-    phase: 'INACTIVE',
     observedAt: '2026-09-14T10:59:00.000Z',
+    phase: {
+      value: 'INACTIVE',
+      source: phaseConfidence === 'exact' ? 'observed' : 'estimated',
+      confidence: phaseConfidence,
+      observedAt: '2026-09-14T10:59:00.000Z',
+    },
     durationSeconds: {
       value: 5 * 60 * 60,
-      source: confidence === 'exact' ? 'official_supported' : 'estimated',
-      confidence,
+      source: durationConfidence === 'exact' ? 'official_supported' : 'estimated',
+      confidence: durationConfidence,
       observedAt: '2026-09-14T10:59:00.000Z',
     },
   };
@@ -73,6 +81,18 @@ describe('decideTargetReset', () => {
     ).toEqual({ kind: 'noop', reasonCode: 'WINDOW_DURATION_UNKNOWN' });
   });
 
+  it('refuses a low-confidence phase for automatic action', () => {
+    expect(
+      decideTargetReset({
+        now: new Date('2026-09-14T11:00:00.000Z'),
+        providerId: 'codex',
+        policyId: 'daily-13',
+        targetResetAt: new Date('2026-09-14T16:00:00.000Z'),
+        window: inactiveFiveHourWindow('exact', 'low'),
+      }),
+    ).toEqual({ kind: 'noop', reasonCode: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW' });
+  });
+
   it('refuses an active window and a missed target', () => {
     expect(
       decideTargetReset({
@@ -80,7 +100,10 @@ describe('decideTargetReset', () => {
         providerId: 'codex',
         policyId: 'daily-13',
         targetResetAt: new Date('2026-09-14T16:00:00.000Z'),
-        window: { ...inactiveFiveHourWindow(), phase: 'ACTIVE' },
+        window: {
+          ...inactiveFiveHourWindow(),
+          phase: { ...inactiveFiveHourWindow().phase, value: 'ACTIVE' },
+        },
       }),
     ).toEqual({ kind: 'noop', reasonCode: 'WINDOW_NOT_INACTIVE' });
 

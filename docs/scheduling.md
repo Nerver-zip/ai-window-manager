@@ -10,13 +10,15 @@ The scheduler is a deterministic policy engine wrapped by a periodic reconciler.
 
 ### Target reset
 
-User configures a local wall-clock reset target, e.g. 13:00. When an exact/high-confidence window duration is known:
+User configures a local wall-clock reset target, e.g. 13:00. When an exact/high-confidence window duration and phase fact are known:
 
 ```text
 target trigger ≈ target reset - window duration
 ```
 
 For a 5h window and 13:00 target, the candidate trigger is 08:00 local for that date.
+
+The current pure decision consumer requires both `durationSeconds.confidence` and `phase.confidence` to be `exact` or `high`, and requires `phase.value` to be `INACTIVE`. A low-confidence phase produces `WINDOW_PHASE_CONFIDENCE_TOO_LOW`; it is not silently treated as inactive.
 
 ### Desired work period
 

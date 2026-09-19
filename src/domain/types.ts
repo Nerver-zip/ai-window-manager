@@ -1,4 +1,4 @@
-export type ContractClass =
+export type EvidenceSource =
   | 'official_supported'
   | 'official_client_internal'
   | 'observed'
@@ -7,11 +7,14 @@ export type ContractClass =
   | 'manual'
   | 'unknown';
 
+export type CapabilityContract =
+  'official_supported' | 'official_client_internal' | 'observed_undocumented' | 'unknown';
+
 export type Confidence = 'exact' | 'high' | 'medium' | 'low' | 'unknown';
 
 export interface Fact<T> {
   value: T;
-  source: ContractClass;
+  source: EvidenceSource;
   confidence: Confidence;
   observedAt: string;
 }
@@ -22,8 +25,8 @@ export type WindowPhase = 'UNKNOWN' | 'INACTIVE' | 'ACTIVE' | 'EXHAUSTED' | 'RES
 export interface WindowSnapshot {
   providerId: string;
   windowKind: string;
-  phase: WindowPhase;
   observedAt: string;
+  phase: Fact<WindowPhase>;
   startedAt?: Fact<string>;
   durationSeconds?: Fact<number>;
   resetAt?: Fact<string>;
@@ -40,17 +43,23 @@ export interface ProviderObservation {
   summary?: string;
 }
 
-export interface CapabilityDescriptor {
+export interface ReadCapability {
   supported: boolean;
-  contract: ContractClass;
-  consumesQuota?: boolean;
+  contract: CapabilityContract;
+  notes?: string;
+}
+
+export interface TriggerCapability {
+  supported: boolean;
+  contract: CapabilityContract;
+  consumesQuota: boolean | 'unknown';
   notes?: string;
 }
 
 export interface ProviderCapabilities {
-  usageRead: CapabilityDescriptor;
-  resetRead: CapabilityDescriptor;
-  windowTrigger: CapabilityDescriptor;
+  usageRead: ReadCapability;
+  resetRead: ReadCapability;
+  windowTrigger: TriggerCapability;
 }
 
 export type ProviderActionStatus = 'succeeded' | 'failed' | 'uncertain' | 'rejected';

@@ -54,6 +54,7 @@ package.json
 scripts/secret-scan.sh
 scripts/validate.sh
 src/config.ts
+src/domain/schemas.ts
 src/domain/types.ts
 src/index.ts
 src/metrics/metrics.ts
@@ -66,6 +67,10 @@ src/scheduler/decision.ts
 src/storage/database.ts
 src/web/server.ts
 tests/config.test.ts
+tests/domain/capabilities.test.ts
+tests/domain/facts.test.ts
+tests/domain/provider-observation.test.ts
+tests/domain/window-snapshot.test.ts
 tests/providers/fake-provider.test.ts
 tests/scheduler/decision.test.ts
 tests/storage/database.test.ts

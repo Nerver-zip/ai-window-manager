@@ -38,6 +38,9 @@ If a proposed change broadens the product beyond usage-window observation/timing
 - The UI must never receive provider credentials.
 - Provider adapters normalize observations; they do not choose scheduling policy.
 - External-provider responses are untrusted input and must be validated.
+- Normalized facts use explicit `EvidenceSource` and `Confidence`; `WindowSnapshot.phase` is a `Fact<WindowPhase>`, not a bare phase string.
+- Capability descriptors use the separate `CapabilityContract`; trigger capabilities must explicitly declare `consumesQuota` as `true`, `false`, or `unknown`.
+- Provider observations must cross the canonical `ProviderObservationSchema` boundary before downstream consumers use them.
 - Never call undocumented/internal provider endpoints unless an ADR explicitly accepts the risk. The MVP should prefer official client surfaces.
 - Never use extracted Antigravity credentials from a third-party client. The official Antigravity FAQ explicitly rejects third-party access with Antigravity login.
 - `trigger` is opt-in and provider-capability-gated. Unsupported/unknown providers are monitor-only.

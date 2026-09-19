@@ -37,16 +37,20 @@ function createApp(providers: ProviderAdapter[]) {
 }
 
 const capabilities: ProviderCapabilities = {
-  usageRead: { supported: true, contract: 'observed' },
+  usageRead: { supported: true, contract: 'observed_undocumented' },
   resetRead: { supported: false, contract: 'unknown' },
-  windowTrigger: { supported: false, contract: 'unknown' },
+  windowTrigger: { supported: false, contract: 'unknown', consumesQuota: 'unknown' },
 };
 
 describe('web server', () => {
   it('serves health, metrics, provider JSON, and escaped HTML', async () => {
-    const provider = new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'), {
+    const fakeProvider = new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'));
+    const provider: ProviderAdapter = {
       id: `&<>'"`,
-    });
+      capabilities: () => fakeProvider.capabilities(),
+      health: (ctx) => fakeProvider.health(ctx),
+      inspect: (ctx) => fakeProvider.inspect(ctx),
+    };
     const app = createApp([provider]);
 
     const health = await app.inject('/healthz');
@@ -60,7 +64,7 @@ describe('web server', () => {
     expect(api.json()).toMatchObject({
       providers: [
         {
-          observation: { health: 'UP', windows: [{ phase: 'INACTIVE' }] },
+          observation: { health: 'UP', windows: [{ phase: { value: 'INACTIVE' } }] },
           capabilities: { windowTrigger: { supported: true } },
         },
       ],
@@ -86,7 +90,7 @@ describe('web server', () => {
 
     const api = await app.inject('/api/v1/providers');
     expect(api.json()).toMatchObject({
-      providers: [{ observation: { windows: [{ phase: 'ACTIVE' }] } }],
+      providers: [{ observation: { windows: [{ phase: { value: 'ACTIVE' } }] } }],
     });
 
     const page = await app.inject('/');
@@ -108,7 +112,12 @@ describe('web server', () => {
         {
           providerId: `&<>'"`,
           windowKind: 'five_hour',
-          phase: 'UNKNOWN',
+          phase: {
+            value: 'UNKNOWN',
+            source: 'unknown',
+            confidence: 'unknown',
+            observedAt: '2026-09-14T11:00:00.000Z',
+          },
           observedAt: '2026-09-14T11:00:00.000Z',
         },
       ],
@@ -123,7 +132,9 @@ describe('web server', () => {
 
     const api = await app.inject('/api/v1/providers');
     expect(api.json()).toMatchObject({
-      providers: [{ observation: { health: 'DEGRADED', windows: [{ phase: 'UNKNOWN' }] } }],
+      providers: [
+        { observation: { health: 'DEGRADED', windows: [{ phase: { value: 'UNKNOWN' } }] } },
+      ],
     });
 
     const page = await app.inject('/');

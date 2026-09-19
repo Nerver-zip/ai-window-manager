@@ -7,6 +7,7 @@ import type {
   TriggerWindowRequest,
   WindowPhase,
 } from '../domain/types.js';
+import { parseProviderObservation } from '../domain/schemas.js';
 
 export interface FakeProviderOptions {
   id?: string;
@@ -54,58 +55,65 @@ export class FakeProvider implements ProviderAdapter {
       ? new Date(this.startedAt.getTime() + this.durationSeconds * 1000)
       : undefined;
 
-    return Promise.resolve({
-      providerId: this.id,
-      health: 'UP',
-      observedAt,
-      staleAfterSeconds: 10,
-      windows: [
-        {
-          providerId: this.id,
-          windowKind: 'five_hour',
-          phase: this.phase,
-          observedAt,
-          durationSeconds: {
-            value: this.durationSeconds,
-            source: 'official_supported',
-            confidence: 'exact',
+    return Promise.resolve(
+      parseProviderObservation({
+        providerId: this.id,
+        health: 'UP',
+        observedAt,
+        staleAfterSeconds: 10,
+        windows: [
+          {
+            providerId: this.id,
+            windowKind: 'five_hour',
+            phase: {
+              value: this.phase,
+              source: 'observed',
+              confidence: 'exact',
+              observedAt,
+            },
             observedAt,
+            durationSeconds: {
+              value: this.durationSeconds,
+              source: 'official_supported',
+              confidence: 'exact',
+              observedAt,
+            },
+            ...(this.startedAt
+              ? {
+                  startedAt: {
+                    value: this.startedAt.toISOString(),
+                    source: 'observed' as const,
+                    confidence: 'exact' as const,
+                    observedAt,
+                  },
+                }
+              : {}),
+            ...(resetAt
+              ? {
+                  resetAt: {
+                    value: resetAt.toISOString(),
+                    source: 'inferred' as const,
+                    confidence: 'high' as const,
+                    observedAt,
+                  },
+                }
+              : {}),
+            usageRatio: {
+              value: this.usageRatio,
+              source: 'observed',
+              confidence: 'exact',
+              observedAt,
+            },
+            remainingRatio: {
+              value: Math.max(0, 1 - this.usageRatio),
+              source: 'inferred',
+              confidence: 'exact',
+              observedAt,
+            },
           },
-          ...(this.startedAt
-            ? {
-                startedAt: {
-                  value: this.startedAt.toISOString(),
-                  source: 'observed' as const,
-                  confidence: 'exact' as const,
-                  observedAt,
-                },
-              }
-            : {}),
-          ...(resetAt
-            ? {
-                resetAt: {
-                  value: resetAt.toISOString(),
-                  source: 'inferred' as const,
-                  confidence: 'high' as const,
-                  observedAt,
-                },
-              }
-            : {}),
-          usageRatio: {
-            value: this.usageRatio,
-            source: 'observed',
-            confidence: 'exact',
-            observedAt,
-          },
-          remainingRatio: {
-            value: Math.max(0, 1 - this.usageRatio),
-            source: 'inferred',
-            confidence: 'exact',
-            observedAt,
-          },
-        },
-      ],
-    });
+        ],
+      }),
+    );
   }
 
   triggerWindow(

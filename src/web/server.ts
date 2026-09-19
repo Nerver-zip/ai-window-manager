@@ -73,7 +73,7 @@ export function buildServer(input: BuildServerInput) {
           : 'unknown';
         const reset = window?.resetAt?.value ?? 'unknown';
         return `<article><h2>${escapeHtml(provider.id)}</h2><p>Status: ${escapeHtml(
-          window?.phase ?? 'UNKNOWN',
+          window?.phase.value ?? 'UNKNOWN',
         )}</p><p>Remaining: ${escapeHtml(remaining)}</p><p>Reset: ${escapeHtml(reset)}</p></article>`;
       }),
     );

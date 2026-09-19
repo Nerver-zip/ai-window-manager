@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 
@@ -7,7 +8,7 @@ describe('FakeProvider', () => {
     const clock = new FakeClock('2026-09-14T11:00:00Z');
     const provider = new FakeProvider(clock, { windowDurationSeconds: 30 });
 
-    expect((await provider.inspect({})).windows[0]?.phase).toBe('INACTIVE');
+    expect((await provider.inspect({})).windows[0]?.phase.value).toBe('INACTIVE');
     expect(
       (
         await provider.triggerWindow(
@@ -20,10 +21,33 @@ describe('FakeProvider', () => {
         )
       ).status,
     ).toBe('succeeded');
-    expect((await provider.inspect({})).windows[0]?.phase).toBe('ACTIVE');
+    const activeObservation = await provider.inspect({});
+    expect(activeObservation.windows[0]?.phase.value).toBe('ACTIVE');
+    expect(activeObservation.windows[0]?.phase).toMatchObject({
+      source: 'observed',
+      confidence: 'exact',
+    });
+    expect(activeObservation.windows[0]?.durationSeconds).toMatchObject({
+      source: 'official_supported',
+      confidence: 'exact',
+    });
+    expect(activeObservation.windows[0]?.resetAt).toBeDefined();
+    expect(activeObservation.windows[0]?.resetAt).toMatchObject({
+      source: 'inferred',
+      confidence: 'high',
+    });
+    expect(activeObservation.windows[0]?.usageRatio).toMatchObject({
+      source: 'observed',
+      confidence: 'exact',
+    });
+    expect(activeObservation.windows[0]?.remainingRatio).toMatchObject({
+      source: 'inferred',
+      confidence: 'exact',
+    });
+    expect(parseProviderObservation(activeObservation)).toEqual(activeObservation);
 
     clock.advanceMs(30_000);
-    expect((await provider.inspect({})).windows[0]?.phase).toBe('INACTIVE');
+    expect((await provider.inspect({})).windows[0]?.phase.value).toBe('INACTIVE');
   });
 
   it('exposes capabilities, health, custom state, and rejects duplicate activation', async () => {
@@ -42,7 +66,7 @@ describe('FakeProvider', () => {
       consumesQuota: false,
     });
     expect((await provider.inspect({})).windows[0]).toMatchObject({
-      phase: 'ACTIVE',
+      phase: { value: 'ACTIVE' },
       usageRatio: { value: 0.4 },
       remainingRatio: { value: 0.6 },
     });

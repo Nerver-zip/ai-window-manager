@@ -177,7 +177,7 @@ Adds process/build/state boundaries without a requirement. A small private statu
 
 ## H. Domain model
 
-Use separate `ProviderHealth` and `WindowPhase`. A provider can be unreachable while retaining a stale last-known active window. Window timestamps/ratios are `Fact<T>` values carrying source + confidence + observedAt. Multiple window kinds are first-class; do not collapse five-hour and weekly quotas.
+Use separate `ProviderHealth` and `WindowPhase`. A provider can be unreachable while retaining a stale last-known active window. Window phase, timestamps and ratios are `Fact<T>` values carrying evidence source + confidence + observedAt. `EvidenceSource` and `CapabilityContract` are separate concepts. Multiple window kinds are first-class; do not collapse five-hour and weekly quotas.
 
 Key invariants are in `docs/domain.md`. Most important: persist an action intent before side effect; unique dedupe key; uncertain trigger is not retried blindly; stale/low-confidence data cannot silently authorize automation.
 
@@ -189,7 +189,7 @@ Concrete direction:
 interface ProviderAdapter {
   readonly id: string;
   capabilities(): ProviderCapabilities;
-  health(ctx: ProviderContext): Promise<ProviderHealthReport>;
+  health(ctx: ProviderContext): Promise<ProviderHealth>;
   inspect(ctx: ProviderContext): Promise<ProviderObservation>;
   triggerWindow?(
     ctx: ProviderContext,
@@ -202,16 +202,19 @@ Capabilities are richer than booleans:
 
 ```ts
 interface ProviderCapabilities {
-  usageRead: CapabilityDescriptor;
-  resetRead: CapabilityDescriptor;
-  windowTrigger: CapabilityDescriptor;
+  usageRead: ReadCapability;
+  resetRead: ReadCapability;
+  windowTrigger: TriggerCapability;
 }
 
-interface CapabilityDescriptor {
+interface ReadCapability {
   supported: boolean;
-  contract: 'official_supported' | 'official_client_internal' | 'observed' | 'unknown';
-  consumesQuota?: boolean;
+  contract: 'official_supported' | 'official_client_internal' | 'observed_undocumented' | 'unknown';
   notes?: string;
+}
+
+interface TriggerCapability extends ReadCapability {
+  consumesQuota: boolean | 'unknown';
 }
 ```
 

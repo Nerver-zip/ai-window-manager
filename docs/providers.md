@@ -2,6 +2,18 @@
 
 Research date: **2026-09-14**.
 
+## Normalized adapter contract
+
+Provider-specific parsing ends at the runtime-validated `ProviderObservationSchema` in `src/domain/schemas.ts`. Adapters preserve provenance and certainty in `Fact<T>` values:
+
+- `EvidenceSource` describes where a normalized value came from (`observed`, `inferred`, `estimated`, and so on);
+- `Confidence` describes how actionable or certain that value is;
+- `CapabilityContract` separately describes how stable/supportable the mechanism behind a capability is.
+
+These concepts must not be collapsed. For example, an inferred reset can be deterministic and high-confidence, while a trigger mechanism can be `official_client_internal`. Window phase is also a fact, so adapters must return `phase: Fact<WindowPhase>` rather than a bare lifecycle string.
+
+Capabilities remain truthful and explicit. Read capabilities use `supported` plus a `CapabilityContract`; trigger capabilities additionally set `consumesQuota` to `true`, `false`, or `'unknown'`. Unsupported or unproven behavior remains monitor-only and must not be emulated through undocumented endpoints or credential handling.
+
 The words below are contractual classifications, not rhetorical labels:
 
 - **SUPPORTED**: current official public documentation or documented official client surface.
