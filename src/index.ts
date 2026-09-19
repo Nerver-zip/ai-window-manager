@@ -2,12 +2,22 @@ import { loadConfig } from './config.js';
 import type { ProviderAdapter } from './providers/provider.js';
 import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
-import { recordObservation, recordProviderHealth } from './metrics/metrics.js';
+import {
+  recordInspection,
+  recordObservation,
+  recordProviderHealth,
+  recordSchedulerDecision,
+  recordTrigger,
+  refreshObservationMetrics,
+  setActionIntentCounts,
+} from './metrics/metrics.js';
 import { SystemClock } from './scheduler/clock.js';
 import { resolveLocalOccurrence } from './scheduler/time.js';
 import { Reconciler } from './scheduler/reconciler.js';
+import { ActionExecutor } from './scheduler/action-executor.js';
 import { openDatabase } from './storage/database.js';
 import { createRepositories, type SchedulePolicyRecord } from './storage/repositories.js';
+import { runRetentionMaintenance } from './storage/retention.js';
 import { buildServer } from './web/server.js';
 
 const config = loadConfig();
@@ -28,16 +38,41 @@ const reconciler = new Reconciler({
   resolveTargetResetAt,
   onObservation: recordObservation,
   onInspectionFailure: recordProviderHealth,
+  onInspection: recordInspection,
+  onSchedulerDecision: recordSchedulerDecision,
+});
+const executor = new ActionExecutor({
+  clock,
+  db,
+  repositories,
+  adapters,
+  onTrigger: recordTrigger,
 });
 
-const app = buildServer({ config, db, repositories, adapters, clock });
+let reconcileRequested = false;
+const app = buildServer({
+  config,
+  db,
+  repositories,
+  adapters,
+  clock,
+  requestReconcile: () => {
+    reconcileRequested = true;
+  },
+});
 let reconcileTimer: NodeJS.Timeout | undefined;
+let executorTimer: NodeJS.Timeout | undefined;
+let retentionTimer: NodeJS.Timeout | undefined;
 let reconcileInFlight: Promise<unknown> | undefined;
+let executorInFlight: Promise<unknown> | undefined;
 let stopping = false;
 
 function startReconcileLoop(): void {
   reconcileTimer = setInterval(() => {
     if (stopping || reconcileInFlight) return;
+    const requested = reconcileRequested;
+    reconcileRequested = false;
+    if (requested) app.log.debug('reconcile requested by HTTP command');
     const current = reconciler.reconcile();
     reconcileInFlight = current;
     void current
@@ -46,8 +81,36 @@ function startReconcileLoop(): void {
       })
       .finally(() => {
         if (reconcileInFlight === current) reconcileInFlight = undefined;
+        refreshRuntimeMetrics();
       });
   }, config.AWM_RECONCILE_INTERVAL_SECONDS * 1000);
+}
+
+function startExecutorLoop(): void {
+  executorTimer = setInterval(() => {
+    if (stopping || executorInFlight) return;
+    const current = executor.executeDue();
+    executorInFlight = current;
+    void current
+      .catch((error: unknown) => {
+        app.log.error({ error }, 'action executor failed');
+      })
+      .finally(() => {
+        if (executorInFlight === current) executorInFlight = undefined;
+        refreshRuntimeMetrics();
+      });
+  }, config.AWM_EXECUTOR_INTERVAL_SECONDS * 1000);
+}
+
+function startRetentionLoop(): void {
+  retentionTimer = setInterval(() => {
+    if (stopping) return;
+    try {
+      runRetentionMaintenance(db, { clock });
+    } catch (error) {
+      app.log.error({ error }, 'retention maintenance failed');
+    }
+  }, config.AWM_RETENTION_INTERVAL_SECONDS * 1000);
 }
 
 async function shutdown(signal: string): Promise<void> {
@@ -55,7 +118,10 @@ async function shutdown(signal: string): Promise<void> {
   stopping = true;
   app.log.info({ signal }, 'shutting down');
   if (reconcileTimer) clearInterval(reconcileTimer);
+  if (executorTimer) clearInterval(executorTimer);
+  if (retentionTimer) clearInterval(retentionTimer);
   if (reconcileInFlight) await reconcileInFlight;
+  if (executorInFlight) await executorInFlight;
   await app.close();
   db.close();
 }
@@ -105,10 +171,22 @@ function hydrateMetricsFromState(): void {
   for (const provider of repositories.providers.list()) {
     const state = repositories.providerState.get(provider.id);
     if (state?.observation) {
-      recordObservation(state.observation);
+      recordObservation(state.observation, {
+        nowMs: clock.now().getTime(),
+        successfulInspectionAtMs:
+          state.lastSuccessAtMs ?? state.observedAtMs ?? clock.now().getTime(),
+      });
     } else if (state) {
       recordProviderHealth(provider.id, state.health);
     }
+  }
+}
+
+function refreshRuntimeMetrics(): void {
+  const nowMs = clock.now().getTime();
+  refreshObservationMetrics(nowMs);
+  for (const provider of repositories.providers.list()) {
+    setActionIntentCounts(provider.id, repositories.actionIntents.countsByState(provider.id));
   }
 }
 
@@ -153,5 +231,10 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 }
 
 await reconciler.reconcile();
+await executor.executeDue();
+refreshRuntimeMetrics();
+runRetentionMaintenance(db, { clock });
 startReconcileLoop();
+startExecutorLoop();
+startRetentionLoop();
 await app.listen({ host: config.AWM_BIND, port: config.AWM_PORT });

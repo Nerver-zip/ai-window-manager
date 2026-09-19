@@ -22,6 +22,8 @@ const envSchema = z.object({
   AWM_CODEX_HOME: z.string().default('./data/codex'),
   AWM_CODEX_EXECUTABLE: z.string().default('codex'),
   AWM_RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
+  AWM_EXECUTOR_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(5),
+  AWM_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(60).max(604800).default(86400),
 });
 
 function isValidTimeZone(value: string): boolean {

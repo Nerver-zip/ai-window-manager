@@ -18,6 +18,9 @@ import {
 export type InspectionFailureCode =
   'AUTH_REQUIRED' | 'PROVIDER_UNAVAILABLE' | 'INSPECTION_FAILED' | 'INVALID_PROVIDER_RESPONSE';
 
+export type InspectionMetricResult =
+  'success' | 'auth_required' | 'provider_unavailable' | 'invalid_response' | 'failed';
+
 export interface TargetResetResolver {
   (policy: SchedulePolicyRecord, now: Date): Date | undefined;
 }
@@ -31,6 +34,8 @@ export interface ReconcilerInput {
   idFactory?: () => string;
   onObservation?: (observation: ProviderObservation) => void;
   onInspectionFailure?: (providerId: string, health: ProviderStateRecord['health']) => void;
+  onInspection?: (providerId: string, result: InspectionMetricResult) => void;
+  onSchedulerDecision?: (providerId: string, decision: SchedulerDecision['kind']) => void;
 }
 
 export interface ReconcileDecisionResult {
@@ -102,14 +107,17 @@ export class Reconciler {
         inspectedProviderIds.push(provider.id);
         if (!adapter) {
           this.recordFailure(provider, previousState, nowMs, 'PROVIDER_UNAVAILABLE');
+          this.input.onInspection?.(provider.id, 'provider_unavailable');
           inspectionFailed = true;
         } else {
           const inspection = await this.inspect(adapter);
           if (inspection.ok) {
             state = this.persistObservation(provider, inspection.observation, nowMs);
+            this.input.onInspection?.(provider.id, 'success');
             this.input.onObservation?.(inspection.observation);
           } else {
             this.recordFailure(provider, previousState, nowMs, inspection.code);
+            this.input.onInspection?.(provider.id, inspectionMetricResult(inspection.code));
             inspectionFailed = true;
           }
         }
@@ -149,6 +157,7 @@ export class Reconciler {
           policyId: policy.id,
           decision,
         };
+        this.input.onSchedulerDecision?.(provider.id, decision.kind);
 
         if (decision.kind === 'create_intent') {
           const intentResult = this.createIntent(provider, policy, decision, nowMs);
@@ -377,6 +386,19 @@ function healthToFailureCode(health: ProviderObservation['health']): InspectionF
       return 'INSPECTION_FAILED';
     case 'UP':
       return 'INSPECTION_FAILED';
+  }
+}
+
+function inspectionMetricResult(code: InspectionFailureCode): InspectionMetricResult {
+  switch (code) {
+    case 'AUTH_REQUIRED':
+      return 'auth_required';
+    case 'PROVIDER_UNAVAILABLE':
+      return 'provider_unavailable';
+    case 'INVALID_PROVIDER_RESPONSE':
+      return 'invalid_response';
+    case 'INSPECTION_FAILED':
+      return 'failed';
   }
 }
 

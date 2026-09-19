@@ -12,6 +12,8 @@ describe('loadConfig', () => {
     expect(config.AWM_CODEX_ENABLED).toBe(false);
     expect(config.AWM_CODEX_HOME).toBe('./data/codex');
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
+    expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);
+    expect(config.AWM_RETENTION_INTERVAL_SECONDS).toBe(86400);
   });
 
   it('rejects an invalid timezone before startup', () => {

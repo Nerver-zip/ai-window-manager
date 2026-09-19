@@ -114,6 +114,25 @@ function setup(
 }
 
 describe('ActionExecutor', () => {
+  it('coalesces overlapping ticks on the same executor instance', async () => {
+    const context = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executor = context.executor({
+      onPhase: async (phase) => {
+        if (phase === 'after_claim') await gate;
+      },
+    });
+
+    const first = executor.executeDue();
+    await Promise.resolve();
+    await expect(executor.executeDue()).resolves.toMatchObject({ skipped: true });
+    release();
+    await first;
+  });
+
   it('claims, dispatches, confirms and audits a successful FakeProvider action', async () => {
     const context = setup();
 
