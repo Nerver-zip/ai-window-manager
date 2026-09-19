@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Research date: **2026-09-14**.
+Research date: **2026-09-19**.
 
 ## Normalized adapter contract
 
@@ -30,6 +30,11 @@ The words below are contractual classifications, not rhetorical labels:
 - Current allowance and reset times are surfaced in Settings → Usage; limits vary by plan and workload/model/settings affect consumption.
 - The official open-source Codex app-server protocol includes `account/rateLimits/read` and rate-limit update notifications. Its schema represents used percentage, reset time/window duration and multiple quota buckets.
 - Codex supports authenticated ChatGPT account flows in its official client; auth ownership should remain with the official client rather than this project reimplementing OAuth.
+
+SPIKE-001 confirmed that the documented app-server stdio/JSONL lifecycle and
+`account/rateLimits/read` are suitable for a future read-only adapter. The
+adapter still requires a dedicated persistent `CODEX_HOME` and official
+client-owned authentication; no production adapter is enabled by this spike.
 
 ### Observed / internal
 
@@ -75,11 +80,17 @@ The Codex adapter must degrade to monitor-only if the official client cannot be 
 - Users outside Pro/Ultra are documented as receiving weekly-refresh baseline quota.
 - `/usage` (alias `/quota`) in the official Antigravity CLI refreshes quota status from backend and displays model quota usage.
 - Official headless mode `agy -p ...` is designed for scripted/CI use and uses cached official CLI credentials.
+- Official headless JSON and stream-JSON output was validated in SPIKE-002 and
+  exposes structured groups, quota buckets, remaining fractions and reset
+  timestamps without spending a turn.
 - Official auth uses the OS keyring/Secret Service and offers an SSH OAuth flow.
 
 ### Observed / internal
 
-- The interactive quota panel and CLI output format are user-facing, not a versioned machine-readable quota API. A text parser is therefore fragile even when invoking a supported official command.
+- The interactive quota panel and CLI output format are user-facing, not a
+  versioned machine-readable quota API. The documented headless JSON envelope
+  and the observed nested usage payload are parseable, but the nested payload
+  remains an official-client output contract with version-drift risk.
 - Community/runtime observations can show model-specific five-hour/weekly countdowns, but those formats must not become domain contracts.
 
 ### Inferred
@@ -89,8 +100,8 @@ The Codex adapter must degrade to monitor-only if the official client cannot be 
 ### Unknown
 
 - The exact event that starts an Antigravity five-hour window after inactivity.
-- Whether a machine-readable quota/reset command/API exists that is intended for third-party consumption.
-- Whether `agy -p /usage` consistently yields parseable non-interactive quota output in every current release/configuration.
+- Whether the nested quota payload remains stable across CLI releases.
+- Whether `agy -p /usage` consistently yields the same parseable non-interactive quota output in every future release/configuration.
 - The simplest secure Linux-container strategy for persisting the official CLI keyring without introducing a desktop/keyring daemon burden.
 - Whether any automated quota-positioning request is acceptable under Antigravity terms beyond ordinary documented CLI automation.
 
@@ -103,12 +114,19 @@ The only integration path considered is invoking the **official `agy` CLI itself
 **MVP capability proposal**
 
 ```text
-can_query_usage       = experimental/conditional, official CLI only
-can_query_reset       = experimental/conditional, only if CLI exposes it reliably
+can_query_usage       = experimental/conditional, official CLI headless JSON only
+can_query_reset       = experimental/conditional, only with validated bucket reset fields
 can_trigger_window    = false (UNKNOWN semantics + policy risk)
 trigger_consumes_quota= true if ever enabled
 public_usage_api      = false / none found
 ```
+
+SPIKE-002 concludes `VIABLE_OFFICIAL_READ_PATH` for a monitor-only adapter,
+provided it pins the CLI version, validates the JSON/NDJSON boundary strictly,
+and fails closed on schema changes. SPIKE-003 concludes
+`NO_SUPPORTED_CONTAINER_PATH` for safely persisting Antigravity account auth in
+the current container model, so this finding does not unblock a deployable
+Antigravity adapter by itself.
 
 ## Provider contract change detection
 

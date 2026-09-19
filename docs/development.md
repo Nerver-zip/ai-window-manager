@@ -38,13 +38,13 @@ pnpm validate
 
 Use FakeProvider. Never require a live Codex/Antigravity account for normal development or CI.
 
-The fake should eventually support scenario fixtures:
+The FakeProvider supports deterministic scenario fixtures:
 
 - configurable window duration;
-- inactive/active/exhausted states;
+- configurable inactive/active/exhausted states;
 - usage progression;
-- read failures/429/auth expiry;
-- delayed/uncertain trigger responses;
+- read failures and auth/unavailable states;
+- succeeded/rejected/failed/uncertain trigger responses;
 - reset transitions.
 
 A 30-second fake window is appropriate for manual UI development, while tests should use FakeClock and advance instantly.

@@ -1,0 +1,40 @@
+{
+  "status": "SUCCESS",
+  "response": "Gemini Models\tWeekly Limit Remaining\t75%\t2030-01-03T12:00:00Z\nGemini Models\tFive Hour Limit Remaining\t100%\t2029-12-31T17:00:00Z\n",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 0
+  },
+  "command": {
+    "name": "usage",
+    "data": {
+      "description": "Synthetic fixture: model groups share weekly and five-hour limits.",
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "description": "Synthetic model group.",
+          "buckets": [
+            {
+              "id": "synthetic-gemini-weekly",
+              "name": "Weekly Limit Remaining",
+              "description": "Synthetic fixture bucket.",
+              "window": "weekly",
+              "remaining_fraction": 0.75,
+              "reset_time": "2030-01-03T12:00:00Z"
+            },
+            {
+              "id": "synthetic-gemini-5h",
+              "name": "Five Hour Limit Remaining",
+              "window": "5h",
+              "remaining_fraction": 1,
+              "reset_time": "2029-12-31T17:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

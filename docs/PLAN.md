@@ -13,7 +13,7 @@ The primary implementation strategy is to reach a vertical slice early with `Fak
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots. A minimal normal Codex request can therefore be an opt-in quota-consuming trigger, but there is no dedicated zero-cost “start window” API. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
-Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. However, Google also explicitly warns that third-party software using Antigravity login violates its Terms. The design therefore forbids token extraction/direct backend impersonation and considers only the official `agy` executable. Exact inactive-window start semantics and container keyring persistence remain UNKNOWN; Antigravity ships monitor-only/disabled until spikes resolve them.
+Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. SPIKE-002 validated a structured official headless JSON/NDJSON usage path for monitor-only parsing, but SPIKE-003 found no supported safe container auth-persistence path. Google also explicitly warns that third-party software using Antigravity login violates its Terms. The design therefore forbids token extraction/direct backend impersonation and considers only the official `agy` executable. Exact inactive-window start semantics and container keyring persistence remain UNKNOWN; Antigravity stays monitor-only/disabled until the auth boundary is resolved.
 
 The stack is Node 24 + TypeScript + Fastify + SQLite (`better-sqlite3`) + server-rendered HTML/tiny JS + `prom-client` + Vitest + pnpm. One service/container; no Redis/Postgres/broker/React/Kubernetes. Environment owns process/bootstrap config; SQLite owns mutable runtime config; secrets live in dedicated provider-owned/mounted storage.
 
@@ -92,7 +92,7 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 **Supported**
 
 - Pro/Ultra five-hour baseline refresh plus weekly constraints; non-Pro/Ultra weekly baseline in current docs;
-- official CLI `/usage`/`/quota` refreshes quota state;
+- official CLI `/usage`/`/quota` refreshes quota state and SPIKE-002 validated headless JSON/NDJSON output with quota buckets, remaining fractions and reset timestamps;
 - `agy -p` is documented for non-interactive scripting;
 - official auth uses system keyring/Secret Service; SSH OAuth exists.
 
@@ -107,7 +107,7 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 **Unknown**
 
 - inactive-window start event;
-- stable machine-readable quota/reset interface;
+- long-term stability of the nested machine-readable quota/reset payload;
 - secure/lightweight headless keyring persistence inside this Docker design.
 
 **Risk**

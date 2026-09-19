@@ -74,4 +74,121 @@ describe('FakeProvider', () => {
       await provider.triggerWindow({}, { intentId: 'i2', dedupeKey: 'd2', reasonCode: 'test' }),
     ).toMatchObject({ status: 'rejected', errorCode: 'WINDOW_ALREADY_ACTIVE' });
   });
+
+  it.each(['succeeded', 'failed', 'uncertain', 'rejected'] as const)(
+    'returns configured trigger result: %s',
+    async (status) => {
+      const clock = new FakeClock('2026-09-14T11:00:00Z');
+      const triggerResult = {
+        status,
+        ...(status === 'uncertain' ? { confirmationHint: 'confirmation required' } : {}),
+        ...(status === 'failed' || status === 'rejected' ? { errorCode: `FAKE_${status}` } : {}),
+      } as const;
+      const provider = new FakeProvider(clock, { triggerResult });
+
+      const result = await provider.triggerWindow(
+        {},
+        { intentId: 'intent', dedupeKey: 'dedupe', reasonCode: 'test' },
+      );
+
+      expect(result.status).toBe(status);
+      expect(result.occurredAt).toBe('2026-09-14T11:00:00.000Z');
+      expect((await provider.inspect({})).windows[0]?.phase.value).toBe(
+        status === 'succeeded' ? 'ACTIVE' : 'INACTIVE',
+      );
+    },
+  );
+
+  it('consumes queued trigger results deterministically', async () => {
+    const provider = new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'), {
+      triggerResults: ['failed', 'succeeded'],
+    });
+
+    await expect(
+      provider.triggerWindow({}, { intentId: 'i1', dedupeKey: 'd1', reasonCode: 'test' }),
+    ).resolves.toMatchObject({ status: 'failed' });
+    await expect(
+      provider.triggerWindow({}, { intentId: 'i2', dedupeKey: 'd2', reasonCode: 'test' }),
+    ).resolves.toMatchObject({ status: 'succeeded' });
+  });
+
+  it('uses the injected clock for an initially active window and configurable results', async () => {
+    const clock = new FakeClock('2026-09-14T11:00:00Z');
+    const provider = new FakeProvider(clock, {
+      initialPhase: 'ACTIVE',
+      windowDurationSeconds: 10,
+    });
+
+    expect((await provider.inspect({})).windows[0]?.resetAt?.value).toBe(
+      '2026-09-14T11:00:10.000Z',
+    );
+    provider.setPhase('INACTIVE');
+    provider.setTriggerResult('succeeded');
+    await provider.triggerWindow({}, { intentId: 'i1', dedupeKey: 'd1', reasonCode: 'test' });
+    clock.advanceMs(10_000);
+    expect((await provider.inspect({})).windows[0]?.phase.value).toBe('INACTIVE');
+  });
+
+  it.each([
+    ['DEGRADED', 'simulated degradation'],
+    ['AUTH_REQUIRED', undefined],
+    ['UNAVAILABLE', undefined],
+    ['ERROR', undefined],
+  ] as const)('simulates an inspection state: %s', async (health, summary) => {
+    const provider = new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'), {
+      inspectionFailure: summary ? { health, summary } : health,
+    });
+
+    expect(await provider.health({})).toBe(health);
+    await expect(provider.inspect({})).resolves.toMatchObject({
+      providerId: 'fake',
+      health,
+      windows: [],
+      ...(summary ? { summary } : {}),
+    });
+  });
+
+  it('allows changing the current scenario without using real time', async () => {
+    const clock = new FakeClock('2026-09-14T11:00:00Z');
+    const provider = new FakeProvider(clock);
+
+    provider.setUsageRatio(0.75);
+    provider.setPhase('ACTIVE');
+    expect((await provider.inspect({})).windows[0]).toMatchObject({
+      phase: { value: 'ACTIVE' },
+      usageRatio: { value: 0.75 },
+      startedAt: { value: '2026-09-14T11:00:00.000Z' },
+    });
+
+    provider.setHealth('AUTH_REQUIRED');
+    expect(await provider.health({})).toBe('AUTH_REQUIRED');
+    provider.setHealth('UP');
+    provider.setInspectionFailure('UNAVAILABLE');
+    expect(await provider.health({})).toBe('UNAVAILABLE');
+    provider.setInspectionFailure();
+    expect(await provider.health({})).toBe('UP');
+  });
+
+  it('rejects a trigger while the simulated provider is unavailable', async () => {
+    const provider = new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'), {
+      initialHealth: 'AUTH_REQUIRED',
+    });
+
+    await expect(
+      provider.triggerWindow({}, { intentId: 'i1', dedupeKey: 'd1', reasonCode: 'test' }),
+    ).resolves.toMatchObject({ status: 'rejected', errorCode: 'PROVIDER_NOT_AVAILABLE' });
+  });
+
+  it('validates mutable usage scenarios at the provider boundary', () => {
+    const provider = new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'));
+
+    expect(() => provider.setUsageRatio(-0.1)).toThrow('between 0 and 1');
+    expect(() => provider.setUsageRatio(1.1)).toThrow('between 0 and 1');
+    expect(
+      () =>
+        new FakeProvider(new FakeClock('2026-09-14T11:00:00Z'), {
+          windowDurationSeconds: 0,
+        }),
+    ).toThrow('positive integer');
+  });
 });

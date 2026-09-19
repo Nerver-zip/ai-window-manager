@@ -1,0 +1,800 @@
+import type {
+  Confidence,
+  EvidenceSource,
+  Fact,
+  ProviderHealth,
+  ProviderObservation,
+  WindowPhase,
+  WindowSnapshot,
+} from '../domain/types.js';
+import { parseProviderObservation, WindowSnapshotSchema } from '../domain/schemas.js';
+import type { SqliteDatabase } from './database.js';
+
+export type ProviderMode = 'monitor_only' | 'automation';
+export type SchedulePolicyKind = 'manual' | 'target_reset' | 'work_window';
+export type ActionIntentState =
+  | 'planned'
+  | 'executing'
+  | 'succeeded'
+  | 'confirmed'
+  | 'uncertain'
+  | 'skipped'
+  | 'canceled'
+  | 'failed_retryable'
+  | 'failed_terminal';
+export type EventSeverity = 'debug' | 'info' | 'warn' | 'error';
+
+export interface ProviderRecord {
+  id: string;
+  kind: string;
+  enabled: boolean;
+  mode: ProviderMode;
+  pollIntervalSeconds: number;
+  config: unknown;
+  configVersion: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface ProviderStateRecord {
+  providerId: string;
+  health: ProviderHealth;
+  observedAtMs: number | null;
+  staleAfterMs: number | null;
+  observation: ProviderObservation | null;
+  lastSuccessAtMs: number | null;
+  lastErrorCode: string | null;
+  updatedAtMs: number;
+}
+
+export interface EventRecord {
+  id?: number;
+  occurredAtMs: number;
+  providerId: string | null;
+  type: string;
+  severity: EventSeverity;
+  reasonCode: string | null;
+  data: unknown;
+}
+
+export interface SchedulePolicyRecord {
+  id: string;
+  providerId: string;
+  kind: SchedulePolicyKind;
+  enabled: boolean;
+  timezone: string;
+  config: unknown;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface ActionIntentRecord {
+  id: string;
+  providerId: string;
+  policyId: string | null;
+  actionType: string;
+  dedupeKey: string;
+  state: ActionIntentState;
+  scheduledForMs: number;
+  notBeforeMs: number | null;
+  expiresAtMs: number | null;
+  attemptCount: number;
+  reasonCode: string;
+  explanation: unknown;
+  lastErrorCode: string | null;
+  createdAtMs: number;
+  startedAtMs: number | null;
+  finishedAtMs: number | null;
+  updatedAtMs: number;
+}
+
+export interface SettingRecord<T = unknown> {
+  key: string;
+  value: T;
+  updatedAtMs: number;
+}
+
+export interface ListOptions {
+  limit?: number;
+  beforeMs?: number;
+}
+
+export interface StorageRepositories {
+  providers: ProviderRepository;
+  providerState: ProviderStateRepository;
+  windowSamples: WindowSampleRepository;
+  events: EventRepository;
+  settings: SettingsRepository;
+  schedulePolicies: SchedulePolicyRepository;
+  actionIntents: ActionIntentRepository;
+}
+
+export function createRepositories(db: SqliteDatabase): StorageRepositories {
+  return {
+    providers: new ProviderRepository(db),
+    providerState: new ProviderStateRepository(db),
+    windowSamples: new WindowSampleRepository(db),
+    events: new EventRepository(db),
+    settings: new SettingsRepository(db),
+    schedulePolicies: new SchedulePolicyRepository(db),
+    actionIntents: new ActionIntentRepository(db),
+  };
+}
+
+export function withTransaction<T>(db: SqliteDatabase, operation: () => T): T {
+  return db.transaction(operation)();
+}
+
+export class ProviderRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  upsert(provider: ProviderRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO providers (
+          id, kind, enabled, mode, poll_interval_seconds, config_json,
+          config_version, created_at_ms, updated_at_ms
+        ) VALUES (@id, @kind, @enabled, @mode, @pollIntervalSeconds, @config,
+          @configVersion, @createdAtMs, @updatedAtMs)
+        ON CONFLICT(id) DO UPDATE SET
+          kind = excluded.kind,
+          enabled = excluded.enabled,
+          mode = excluded.mode,
+          poll_interval_seconds = excluded.poll_interval_seconds,
+          config_json = excluded.config_json,
+          config_version = excluded.config_version,
+          updated_at_ms = excluded.updated_at_ms`,
+      )
+      .run({
+        ...provider,
+        enabled: booleanToInteger(provider.enabled),
+        config: stringifyJson(provider.config),
+      });
+  }
+
+  get(id: string): ProviderRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM providers WHERE id = ?').get(id) as
+      ProviderRow | undefined;
+    return row ? providerFromRow(row) : undefined;
+  }
+
+  list(): ProviderRecord[] {
+    return (this.db.prepare('SELECT * FROM providers ORDER BY id').all() as ProviderRow[]).map(
+      providerFromRow,
+    );
+  }
+
+  delete(id: string): boolean {
+    return this.db.prepare('DELETE FROM providers WHERE id = ?').run(id).changes === 1;
+  }
+}
+
+export class ProviderStateRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  upsert(state: ProviderStateRecord): void {
+    const observation = state.observation ? parseProviderObservation(state.observation) : null;
+    this.db
+      .prepare(
+        `INSERT INTO provider_state (
+          provider_id, health, observed_at_ms, stale_after_ms, observation_json,
+          last_success_at_ms, last_error_code, updated_at_ms
+        ) VALUES (@providerId, @health, @observedAtMs, @staleAfterMs, @observation,
+          @lastSuccessAtMs, @lastErrorCode, @updatedAtMs)
+        ON CONFLICT(provider_id) DO UPDATE SET
+          health = excluded.health,
+          observed_at_ms = excluded.observed_at_ms,
+          stale_after_ms = excluded.stale_after_ms,
+          observation_json = excluded.observation_json,
+          last_success_at_ms = excluded.last_success_at_ms,
+          last_error_code = excluded.last_error_code,
+          updated_at_ms = excluded.updated_at_ms`,
+      )
+      .run({
+        ...state,
+        observation: observation ? stringifyJson(observation) : null,
+      });
+  }
+
+  get(providerId: string): ProviderStateRecord | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM provider_state WHERE provider_id = ?')
+      .get(providerId) as ProviderStateRow | undefined;
+    return row ? providerStateFromRow(row) : undefined;
+  }
+}
+
+export class WindowSampleRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  insert(snapshot: WindowSnapshot): number {
+    const values = snapshotToColumns(WindowSnapshotSchema.parse(snapshot) as WindowSnapshot);
+    const result = this.db
+      .prepare(
+        `INSERT INTO window_samples (
+          provider_id, window_kind, observed_at_ms, phase,
+          phase_source, phase_confidence, phase_observed_at_ms,
+          started_at_ms, started_source, started_confidence, started_observed_at_ms,
+          reset_at_ms, reset_source, reset_confidence, reset_observed_at_ms,
+          duration_seconds, duration_source, duration_confidence, duration_observed_at_ms,
+          usage_ratio, usage_source, usage_confidence, usage_observed_at_ms,
+          remaining_ratio, remaining_source, remaining_confidence, remaining_observed_at_ms
+        ) VALUES (
+          @providerId, @windowKind, @observedAtMs, @phase,
+          @phaseSource, @phaseConfidence, @phaseObservedAtMs,
+          @startedAtMs, @startedSource, @startedConfidence, @startedObservedAtMs,
+          @resetAtMs, @resetSource, @resetConfidence, @resetObservedAtMs,
+          @durationSeconds, @durationSource, @durationConfidence, @durationObservedAtMs,
+          @usageRatio, @usageSource, @usageConfidence, @usageObservedAtMs,
+          @remainingRatio, @remainingSource, @remainingConfidence, @remainingObservedAtMs
+        )`,
+      )
+      .run(values);
+    return Number(result.lastInsertRowid);
+  }
+
+  get(id: number): WindowSnapshot | undefined {
+    const row = this.db.prepare('SELECT * FROM window_samples WHERE id = ?').get(id) as
+      WindowSampleRow | undefined;
+    return row ? windowSnapshotFromRow(row) : undefined;
+  }
+
+  list(providerId: string, options: ListOptions = {}): WindowSnapshot[] {
+    const limit = boundedLimit(options.limit);
+    const clauses = ['provider_id = @providerId'];
+    const params: Record<string, string | number> = { providerId, limit };
+    if (options.beforeMs !== undefined) {
+      clauses.push('observed_at_ms < @beforeMs');
+      params.beforeMs = options.beforeMs;
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM window_samples
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY observed_at_ms DESC, id DESC
+         LIMIT @limit`,
+      )
+      .all(params) as WindowSampleRow[];
+    return rows.map(windowSnapshotFromRow);
+  }
+
+  latest(providerId: string, windowKind: string): WindowSnapshot | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM window_samples
+         WHERE provider_id = ? AND window_kind = ?
+         ORDER BY observed_at_ms DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(providerId, windowKind) as WindowSampleRow | undefined;
+    return row ? windowSnapshotFromRow(row) : undefined;
+  }
+}
+
+export class EventRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  append(event: EventRecord): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO events (
+          occurred_at_ms, provider_id, type, severity, reason_code, data_json
+        ) VALUES (@occurredAtMs, @providerId, @type, @severity, @reasonCode, @data)`,
+      )
+      .run({ ...event, data: stringifyJson(event.data) });
+    return Number(result.lastInsertRowid);
+  }
+
+  list(providerId?: string, options: ListOptions = {}): EventRecord[] {
+    const limit = boundedLimit(options.limit);
+    const clauses: string[] = [];
+    const params: Record<string, string | number> = { limit };
+    if (providerId !== undefined) {
+      clauses.push('provider_id = @providerId');
+      params.providerId = providerId;
+    }
+    if (options.beforeMs !== undefined) {
+      clauses.push('occurred_at_ms < @beforeMs');
+      params.beforeMs = options.beforeMs;
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM events ${where}
+         ORDER BY occurred_at_ms DESC, id DESC
+         LIMIT @limit`,
+      )
+      .all(params) as EventRow[];
+    return rows.map(eventFromRow);
+  }
+}
+
+export class SettingsRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  set<T>(key: string, value: T, updatedAtMs: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO settings(key, value_json, updated_at_ms)
+         VALUES (@key, @value, @updatedAtMs)
+         ON CONFLICT(key) DO UPDATE SET
+           value_json = excluded.value_json,
+           updated_at_ms = excluded.updated_at_ms`,
+      )
+      .run({ key, value: stringifyJson(value), updatedAtMs });
+  }
+
+  get<T = unknown>(key: string): SettingRecord<T> | undefined {
+    const row = this.db.prepare('SELECT * FROM settings WHERE key = ?').get(key) as
+      SettingRow | undefined;
+    return row
+      ? { key: row.key, value: parseJson<T>(row.value_json), updatedAtMs: row.updated_at_ms }
+      : undefined;
+  }
+
+  list(): SettingRecord[] {
+    return (this.db.prepare('SELECT * FROM settings ORDER BY key').all() as SettingRow[]).map(
+      (row) => ({ key: row.key, value: parseJson(row.value_json), updatedAtMs: row.updated_at_ms }),
+    );
+  }
+
+  delete(key: string): boolean {
+    return this.db.prepare('DELETE FROM settings WHERE key = ?').run(key).changes === 1;
+  }
+}
+
+export class SchedulePolicyRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  upsert(policy: SchedulePolicyRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO schedule_policies (
+          id, provider_id, kind, enabled, timezone, config_json, created_at_ms, updated_at_ms
+        ) VALUES (@id, @providerId, @kind, @enabled, @timezone, @config, @createdAtMs, @updatedAtMs)
+        ON CONFLICT(id) DO UPDATE SET
+          provider_id = excluded.provider_id,
+          kind = excluded.kind,
+          enabled = excluded.enabled,
+          timezone = excluded.timezone,
+          config_json = excluded.config_json,
+          updated_at_ms = excluded.updated_at_ms`,
+      )
+      .run({
+        ...policy,
+        enabled: booleanToInteger(policy.enabled),
+        config: stringifyJson(policy.config),
+      });
+  }
+
+  get(id: string): SchedulePolicyRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM schedule_policies WHERE id = ?').get(id) as
+      SchedulePolicyRow | undefined;
+    return row ? schedulePolicyFromRow(row) : undefined;
+  }
+
+  list(providerId?: string): SchedulePolicyRecord[] {
+    const rows =
+      providerId === undefined
+        ? this.db.prepare('SELECT * FROM schedule_policies ORDER BY id').all()
+        : this.db
+            .prepare('SELECT * FROM schedule_policies WHERE provider_id = ? ORDER BY id')
+            .all(providerId);
+    return (rows as SchedulePolicyRow[]).map(schedulePolicyFromRow);
+  }
+
+  delete(id: string): boolean {
+    return this.db.prepare('DELETE FROM schedule_policies WHERE id = ?').run(id).changes === 1;
+  }
+}
+
+export class ActionIntentRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  createIfAbsent(intent: ActionIntentRecord): { created: boolean; intent: ActionIntentRecord } {
+    return withTransaction(this.db, () => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO action_intents (
+            id, provider_id, policy_id, action_type, dedupe_key, state,
+            scheduled_for_ms, not_before_ms, expires_at_ms, attempt_count,
+            reason_code, explanation_json, last_error_code, created_at_ms,
+            started_at_ms, finished_at_ms, updated_at_ms
+          ) VALUES (
+            @id, @providerId, @policyId, @actionType, @dedupeKey, @state,
+            @scheduledForMs, @notBeforeMs, @expiresAtMs, @attemptCount,
+            @reasonCode, @explanation, @lastErrorCode, @createdAtMs,
+            @startedAtMs, @finishedAtMs, @updatedAtMs
+          ) ON CONFLICT(dedupe_key) DO NOTHING`,
+        )
+        .run({ ...intent, explanation: stringifyJson(intent.explanation) });
+      const stored = this.getByDedupeKey(intent.dedupeKey);
+      if (!stored) throw new Error('action intent was not available after insert');
+      return { created: result.changes === 1, intent: stored };
+    });
+  }
+
+  get(id: string): ActionIntentRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM action_intents WHERE id = ?').get(id) as
+      ActionIntentRow | undefined;
+    return row ? actionIntentFromRow(row) : undefined;
+  }
+
+  getByDedupeKey(dedupeKey: string): ActionIntentRecord | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM action_intents WHERE dedupe_key = ?')
+      .get(dedupeKey) as ActionIntentRow | undefined;
+    return row ? actionIntentFromRow(row) : undefined;
+  }
+
+  listOpen(providerId?: string): ActionIntentRecord[] {
+    const states = ['planned', 'executing', 'uncertain', 'failed_retryable'];
+    const placeholders = states.map(() => '?').join(', ');
+    const params: Array<string> = [...states];
+    let query = `SELECT * FROM action_intents WHERE state IN (${placeholders})`;
+    if (providerId !== undefined) {
+      query += ' AND provider_id = ?';
+      params.push(providerId);
+    }
+    query += ' ORDER BY scheduled_for_ms, id';
+    return (this.db.prepare(query).all(...params) as ActionIntentRow[]).map(actionIntentFromRow);
+  }
+
+  setState(
+    id: string,
+    state: ActionIntentState,
+    updatedAtMs: number,
+    details: {
+      attemptCount?: number;
+      lastErrorCode?: string | null;
+      startedAtMs?: number | null;
+      finishedAtMs?: number | null;
+    } = {},
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE action_intents SET
+          state = @state,
+          attempt_count = COALESCE(@attemptCount, attempt_count),
+          last_error_code = CASE WHEN @hasLastError = 1 THEN @lastErrorCode ELSE last_error_code END,
+          started_at_ms = COALESCE(@startedAtMs, started_at_ms),
+          finished_at_ms = COALESCE(@finishedAtMs, finished_at_ms),
+          updated_at_ms = @updatedAtMs
+         WHERE id = @id`,
+      )
+      .run({
+        id,
+        state,
+        updatedAtMs,
+        attemptCount: details.attemptCount ?? null,
+        hasLastError: Object.hasOwn(details, 'lastErrorCode') ? 1 : 0,
+        lastErrorCode: details.lastErrorCode ?? null,
+        startedAtMs: details.startedAtMs ?? null,
+        finishedAtMs: details.finishedAtMs ?? null,
+      });
+    return result.changes === 1;
+  }
+}
+
+interface ProviderRow {
+  id: string;
+  kind: string;
+  enabled: number;
+  mode: ProviderMode;
+  poll_interval_seconds: number;
+  config_json: string;
+  config_version: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+interface ProviderStateRow {
+  provider_id: string;
+  health: ProviderHealth;
+  observed_at_ms: number | null;
+  stale_after_ms: number | null;
+  observation_json: string | null;
+  last_success_at_ms: number | null;
+  last_error_code: string | null;
+  updated_at_ms: number;
+}
+
+interface WindowSampleRow {
+  id: number;
+  provider_id: string;
+  window_kind: string;
+  observed_at_ms: number;
+  phase: WindowPhase;
+  phase_source: EvidenceSource | null;
+  phase_confidence: Confidence | null;
+  phase_observed_at_ms: number | null;
+  started_at_ms: number | null;
+  started_source: EvidenceSource | null;
+  started_confidence: Confidence | null;
+  started_observed_at_ms: number | null;
+  reset_at_ms: number | null;
+  reset_source: EvidenceSource | null;
+  reset_confidence: Confidence | null;
+  reset_observed_at_ms: number | null;
+  duration_seconds: number | null;
+  duration_source: EvidenceSource | null;
+  duration_confidence: Confidence | null;
+  duration_observed_at_ms: number | null;
+  usage_ratio: number | null;
+  usage_source: EvidenceSource | null;
+  usage_confidence: Confidence | null;
+  usage_observed_at_ms: number | null;
+  remaining_ratio: number | null;
+  remaining_source: EvidenceSource | null;
+  remaining_confidence: Confidence | null;
+  remaining_observed_at_ms: number | null;
+}
+
+interface EventRow {
+  id: number;
+  occurred_at_ms: number;
+  provider_id: string | null;
+  type: string;
+  severity: EventSeverity;
+  reason_code: string | null;
+  data_json: string;
+}
+
+interface SettingRow {
+  key: string;
+  value_json: string;
+  updated_at_ms: number;
+}
+
+interface SchedulePolicyRow {
+  id: string;
+  provider_id: string;
+  kind: SchedulePolicyKind;
+  enabled: number;
+  timezone: string;
+  config_json: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+interface ActionIntentRow {
+  id: string;
+  provider_id: string;
+  policy_id: string | null;
+  action_type: string;
+  dedupe_key: string;
+  state: ActionIntentState;
+  scheduled_for_ms: number;
+  not_before_ms: number | null;
+  expires_at_ms: number | null;
+  attempt_count: number;
+  reason_code: string;
+  explanation_json: string;
+  last_error_code: string | null;
+  created_at_ms: number;
+  started_at_ms: number | null;
+  finished_at_ms: number | null;
+  updated_at_ms: number;
+}
+
+function providerFromRow(row: ProviderRow): ProviderRecord {
+  return {
+    id: row.id,
+    kind: row.kind,
+    enabled: row.enabled === 1,
+    mode: row.mode,
+    pollIntervalSeconds: row.poll_interval_seconds,
+    config: parseJson(row.config_json),
+    configVersion: row.config_version,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function providerStateFromRow(row: ProviderStateRow): ProviderStateRecord {
+  return {
+    providerId: row.provider_id,
+    health: row.health,
+    observedAtMs: row.observed_at_ms,
+    staleAfterMs: row.stale_after_ms,
+    observation: row.observation_json
+      ? parseProviderObservation(parseJson(row.observation_json))
+      : null,
+    lastSuccessAtMs: row.last_success_at_ms,
+    lastErrorCode: row.last_error_code,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function snapshotToColumns(snapshot: WindowSnapshot): Record<string, string | number | null> {
+  return {
+    providerId: snapshot.providerId,
+    windowKind: snapshot.windowKind,
+    observedAtMs: epochMs(snapshot.observedAt),
+    phase: snapshot.phase.value,
+    phaseSource: snapshot.phase.source,
+    phaseConfidence: snapshot.phase.confidence,
+    phaseObservedAtMs: epochMs(snapshot.phase.observedAt),
+    ...factColumns('started', snapshot.startedAt),
+    ...factColumns('reset', snapshot.resetAt),
+    ...factColumns('duration', snapshot.durationSeconds),
+    ...factColumns('usage', snapshot.usageRatio),
+    ...factColumns('remaining', snapshot.remainingRatio),
+  };
+}
+
+function factColumns(
+  prefix: string,
+  fact: Fact<string | number> | undefined,
+): Record<string, string | number | null> {
+  return {
+    [`${prefix}${prefix === 'duration' ? 'Seconds' : prefix === 'usage' ? 'Ratio' : prefix === 'remaining' ? 'Ratio' : 'AtMs'}`]:
+      fact ? (typeof fact.value === 'string' ? epochMs(fact.value) : fact.value) : null,
+    [`${prefix}Source`]: fact?.source ?? null,
+    [`${prefix}Confidence`]: fact?.confidence ?? null,
+    [`${prefix}ObservedAtMs`]: fact ? epochMs(fact.observedAt) : null,
+  };
+}
+
+function windowSnapshotFromRow(row: WindowSampleRow): WindowSnapshot {
+  const snapshot: WindowSnapshot = {
+    providerId: row.provider_id,
+    windowKind: row.window_kind,
+    observedAt: instant(row.observed_at_ms),
+    phase: {
+      value: row.phase,
+      source: row.phase_source ?? 'unknown',
+      confidence: row.phase_confidence ?? 'unknown',
+      observedAt: instant(row.phase_observed_at_ms ?? row.observed_at_ms),
+    },
+  };
+  const startedAt = optionalInstantFact(
+    row.started_at_ms,
+    row.started_source,
+    row.started_confidence,
+    row.started_observed_at_ms,
+    row.observed_at_ms,
+  );
+  if (startedAt) snapshot.startedAt = startedAt;
+  const resetAt = optionalInstantFact(
+    row.reset_at_ms,
+    row.reset_source,
+    row.reset_confidence,
+    row.reset_observed_at_ms,
+    row.observed_at_ms,
+  );
+  if (resetAt) snapshot.resetAt = resetAt;
+  const durationSeconds = optionalNumberFact(
+    row.duration_seconds,
+    row.duration_source,
+    row.duration_confidence,
+    row.duration_observed_at_ms,
+    row.observed_at_ms,
+  );
+  if (durationSeconds) snapshot.durationSeconds = durationSeconds;
+  const usageRatio = optionalNumberFact(
+    row.usage_ratio,
+    row.usage_source,
+    row.usage_confidence,
+    row.usage_observed_at_ms,
+    row.observed_at_ms,
+  );
+  if (usageRatio) snapshot.usageRatio = usageRatio;
+  const remainingRatio = optionalNumberFact(
+    row.remaining_ratio,
+    row.remaining_source,
+    row.remaining_confidence,
+    row.remaining_observed_at_ms,
+    row.observed_at_ms,
+  );
+  if (remainingRatio) snapshot.remainingRatio = remainingRatio;
+  return WindowSnapshotSchema.parse(snapshot) as WindowSnapshot;
+}
+
+function optionalInstantFact(
+  value: number | null,
+  source: EvidenceSource | null,
+  confidence: Confidence | null,
+  observedAtMs: number | null,
+  fallbackObservedAtMs: number,
+): Fact<string> | undefined {
+  if (value === null) return undefined;
+  return {
+    value: instant(value),
+    source: source ?? 'unknown',
+    confidence: confidence ?? 'unknown',
+    observedAt: instant(observedAtMs ?? fallbackObservedAtMs),
+  };
+}
+
+function optionalNumberFact(
+  value: number | null,
+  source: EvidenceSource | null,
+  confidence: Confidence | null,
+  observedAtMs: number | null,
+  fallbackObservedAtMs: number,
+): Fact<number> | undefined {
+  if (value === null) return undefined;
+  return {
+    value,
+    source: source ?? 'unknown',
+    confidence: confidence ?? 'unknown',
+    observedAt: instant(observedAtMs ?? fallbackObservedAtMs),
+  };
+}
+
+function eventFromRow(row: EventRow): EventRecord {
+  return {
+    id: row.id,
+    occurredAtMs: row.occurred_at_ms,
+    providerId: row.provider_id,
+    type: row.type,
+    severity: row.severity,
+    reasonCode: row.reason_code,
+    data: parseJson(row.data_json),
+  };
+}
+
+function schedulePolicyFromRow(row: SchedulePolicyRow): SchedulePolicyRecord {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    kind: row.kind,
+    enabled: row.enabled === 1,
+    timezone: row.timezone,
+    config: parseJson(row.config_json),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function actionIntentFromRow(row: ActionIntentRow): ActionIntentRecord {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    policyId: row.policy_id,
+    actionType: row.action_type,
+    dedupeKey: row.dedupe_key,
+    state: row.state,
+    scheduledForMs: row.scheduled_for_ms,
+    notBeforeMs: row.not_before_ms,
+    expiresAtMs: row.expires_at_ms,
+    attemptCount: row.attempt_count,
+    reasonCode: row.reason_code,
+    explanation: parseJson(row.explanation_json),
+    lastErrorCode: row.last_error_code,
+    createdAtMs: row.created_at_ms,
+    startedAtMs: row.started_at_ms,
+    finishedAtMs: row.finished_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function booleanToInteger(value: boolean): 0 | 1 {
+  return value ? 1 : 0;
+}
+
+function boundedLimit(value: number | undefined): number {
+  if (value === undefined) return 100;
+  return Math.max(1, Math.min(1000, Math.trunc(value)));
+}
+
+function stringifyJson(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new TypeError('storage JSON value cannot be undefined');
+  return serialized;
+}
+
+function parseJson<T>(value: string): T {
+  return JSON.parse(value) as T;
+}
+
+function epochMs(value: string): number {
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) throw new RangeError(`invalid UTC instant: ${value}`);
+  return milliseconds;
+}
+
+function instant(value: number): string {
+  return new Date(value).toISOString();
+}

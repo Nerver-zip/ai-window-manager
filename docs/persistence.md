@@ -32,6 +32,20 @@ A daily low-priority maintenance pass deletes eligible rows in bounded batches. 
 
 SQLite online backup or a brief application stop + copy of DB plus WAL-safe procedure. Documentation should prefer `VACUUM INTO`/SQLite backup API once implemented. Never copy only the main DB file while ignoring active WAL semantics.
 
-## Schema
+## Schema and repositories
 
-See `migrations/001_initial.sql`. The schema keeps evidence for reset/start/usage facts and a unique `dedupe_key` on action intents.
+The forward-only schema currently consists of:
+
+- `migrations/001_initial.sql` for the base current-state/history tables;
+- `migrations/002_window_fact_evidence.sql` for provenance columns on every persisted window fact, including phase.
+
+`src/storage/database.ts` applies numbered migrations transactionally, records the
+applied version and timestamp in `schema_migrations`, enables WAL, foreign keys
+and a bounded busy timeout, and resolves migrations from the packaged application
+path rather than relying only on the process working directory.
+
+`src/storage/repositories.ts` provides repositories for providers, current
+provider state, window samples, events, settings, schedule policies and action
+intents. Provider observations are validated at the persistence boundary, window
+samples round-trip evidence/source/confidence metadata, and action-intent
+creation uses a transaction plus the database `UNIQUE(dedupe_key)` constraint.
