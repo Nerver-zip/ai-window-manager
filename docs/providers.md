@@ -33,8 +33,9 @@ The words below are contractual classifications, not rhetorical labels:
 
 SPIKE-001 confirmed that the documented app-server stdio/JSONL lifecycle and
 `account/rateLimits/read` are suitable for a future read-only adapter. The
-adapter still requires a dedicated persistent `CODEX_HOME` and official
-client-owned authentication; no production adapter is enabled by this spike.
+adapter is now implemented as CODEX-001 in `src/providers/codex/`, remains
+monitor-only, and still requires a dedicated persistent `CODEX_HOME` and
+official client-owned authentication. It is not enabled by default.
 
 ### Observed / internal
 
@@ -69,7 +70,10 @@ public_usage_api      = false
 internal_usage_api    = observed but intentionally unused by default
 ```
 
-The Codex adapter must degrade to monitor-only if the official client cannot be initialized safely on the server.
+The implemented Codex adapter declares `windowTrigger.supported = false` and
+degrades to a bounded `AUTH_REQUIRED`/`UNAVAILABLE`/`ERROR` observation if the
+official client cannot be initialized safely on the server. It never calls
+`/api/codex/usage` or `/wham/usage`.
 
 ## Google Antigravity
 

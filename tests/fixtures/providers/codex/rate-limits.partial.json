@@ -1,0 +1,13 @@
+{
+  "rateLimits": {
+    "limitId": "codex",
+    "primary": {
+      "usedPercent": 0,
+      "windowDurationMins": null,
+      "resetsAt": null
+    },
+    "secondary": null
+  },
+  "rateLimitsByLimitId": null,
+  "accountId": null
+}
