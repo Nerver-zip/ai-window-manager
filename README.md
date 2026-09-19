@@ -1,0 +1,125 @@
+# AI Window Manager
+
+Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
+
+> Status: architecture-first scaffold. The FakeProvider vertical slice and core contracts are present; real provider automation is intentionally gated behind the research/compliance decisions in `docs/`.
+
+## Product boundary
+
+AI Window Manager does one thing well:
+
+```text
+observe window
+    ↓
+normalize state
+    ↓
+calculate timing
+    ↓
+perform the smallest supported action (when allowed)
+    ↓
+record result
+    ↓
+show state, history, metrics, and configuration
+```
+
+It is **not** an agent orchestrator, LLM router, prompt manager, universal API proxy, billing platform, task manager, conversation dashboard, or multi-user SaaS.
+
+## Architecture in one screen
+
+```text
+                     private LAN / VPN / reverse proxy
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ one Docker service                                          │
+│                                                             │
+│  Fastify HTTP + SSR UI ──────┐                              │
+│                              │                              │
+│  reconciler/scheduler ───────┼── normalized domain ─ SQLite │
+│             │                │                              │
+│             └─ provider adapters                            │
+│                  ├─ FakeProvider                            │
+│                  ├─ Codex (official client surface)         │
+│                  └─ Antigravity (official CLI only; gated)  │
+│                                                             │
+│  /healthz        /metrics        structured logs            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+One application process owns state and scheduling. Official provider CLIs/app-server processes may be launched as tightly scoped child processes; they are implementation details, not independent services.
+
+## Chosen stack
+
+- Node.js 24 target + TypeScript.
+- Fastify for the small HTTP surface.
+- Server-rendered HTML + tiny browser JS; no SPA framework.
+- SQLite at `/data/window-manager.db`.
+- `better-sqlite3` for a deliberately synchronous, local DB API.
+- Zod for boundary/config validation.
+- Prometheus text exposition through `prom-client`.
+- Vitest for unit/integration tests.
+- pnpm.
+- one hardened Docker image / one Compose service.
+
+See [`docs/PLAN.md`](docs/PLAN.md) for the full A–Z implementation plan and [`docs/architecture.md`](docs/architecture.md) for the shorter canonical architecture.
+
+## Quick start: scaffold
+
+Prerequisites: Node 24+, pnpm 10+, or Docker.
+
+```bash
+cp .env.example .env
+pnpm install
+pnpm validate
+pnpm dev
+```
+
+Open `http://127.0.0.1:8787/`.
+
+Docker:
+
+```bash
+docker compose up --build -d
+docker compose ps
+```
+
+The Compose default publishes the service only on `127.0.0.1`. Set `AWM_HOST_BIND` deliberately for LAN/Tailscale access.
+
+Keep `pnpm-lock.yaml` synchronized with `package.json`; CI and Docker builds use frozen-lockfile installation.
+
+## Current implementation status
+
+Included now:
+
+- domain contracts for evidence, windows, capabilities, and provider actions;
+- injectable clock;
+- pure scheduler decision seam;
+- FakeProvider;
+- SQLite schema and migration runner;
+- health, metrics, provider-list API and minimal overview page;
+- Docker/Compose hardening baseline;
+- CI/validation scaffolding;
+- provider research and compliance classification;
+- ADRs, roadmap, backlog and agent skills.
+
+Intentionally **not** implemented yet:
+
+- Codex authentication/real inspection/trigger;
+- Antigravity real adapter;
+- UI settings editor;
+- production scheduler action execution;
+- complete history charts.
+
+Those are implementation-roadmap work, not omissions from the planning deliverable.
+
+## First commands for an implementation agent
+
+1. Read `AGENTS.md`.
+2. Read `docs/product-boundaries.md` and `docs/PLAN.md`.
+3. Read the applicable `.agents/skills/*/SKILL.md`.
+4. Pick one issue from `docs/BACKLOG.md` and implement the smallest vertical slice.
+5. Run `pnpm validate` before completion.
+
+## Research snapshot
+
+Provider research was refreshed on **2026-09-14**. Provider behavior is intentionally treated as a changing external contract; see `docs/providers.md` and `docs/research/sources.md`.

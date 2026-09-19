@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker build -t ai-window-manager:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name awm-ci -p 127.0.0.1:8787:8787 ai-window-manager:ci
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8787/healthz >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs awm-ci
+          exit 1

@@ -1,0 +1,33 @@
+import { z } from 'zod';
+
+const envSchema = z.object({
+  AWM_BIND: z.string().default('0.0.0.0'),
+  AWM_PORT: z.coerce.number().int().min(1).max(65535).default(8787),
+  AWM_DB_PATH: z.string().default('./data/window-manager.db'),
+  AWM_LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+    .default('info'),
+  AWM_TIMEZONE: z
+    .string()
+    .refine(isValidTimeZone, { message: 'AWM_TIMEZONE must be a valid IANA timezone' })
+    .default('America/Sao_Paulo'),
+  AWM_FAKE_PROVIDER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+});
+
+function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type AppConfig = z.infer<typeof envSchema>;
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  return envSchema.parse(env);
+}

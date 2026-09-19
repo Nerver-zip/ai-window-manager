@@ -1,0 +1,178 @@
+# GitHub-style implementation backlog
+
+Each item is intentionally small enough for one agent. Dependencies are explicit. Items in the same parallel group may run concurrently once their dependencies are met.
+
+## SPIKE-001 — Validate Codex app-server inspection/auth flow
+
+**Context**: official Codex protocol exposes account rate limits; integration details must be proven in the target container model.  
+**Scope**: run official Codex app-server/client in a dedicated test home, authenticate through supported flow, read rate limits, document process lifecycle and sanitized schema. No trigger.  
+**Files/components**: `docs/providers.md`, `docs/research/`, `tests/fixtures/providers/codex/`, future `src/providers/codex/`.  
+**Implementation notes**: do not call `/api/codex/usage` directly from AWM.  
+**Acceptance**: documented reproducible read path; no workstation-home mount; exact fields/nullable behavior captured; if infeasible, adapter remains monitor-only/unavailable.  
+**Tests**: sanitized offline fixture parser plan.  
+**Dependencies**: none.  
+**Parallel**: with SPIKE-002/003 and core-domain issues.
+
+## SPIKE-002 — Determine Antigravity quota output contract
+
+**Context**: official `/usage` exists, but machine-readable quota contract is unclear.  
+**Scope**: test documented official CLI standalone/headless usage command; capture sanitized outputs across active/inactive/limit states if possible. No token extraction/internal endpoints.  
+**Acceptance**: either a robust official-CLI inspection strategy with parser contract, or explicit `UNKNOWN`/monitor-only result.  
+**Tests**: fixture parse/malformed cases if parsing is viable.  
+**Dependencies**: none.
+
+## SPIKE-003 — Prove safe Antigravity auth persistence in Linux container
+
+**Context**: CLI uses OS keyring/DBus.  
+**Scope**: determine documented/secure way to persist official CLI auth across container restarts without mounting full host home or extracting tokens.  
+**Acceptance**: reproducible secure procedure or explicit decision that real Antigravity adapter cannot run in base container yet.  
+**Dependencies**: none.
+
+## CORE-001 — Finalize evidence/window domain types
+
+**Scope**: implement validated domain types and invariants for facts, provider health, window phase, observations and capabilities.  
+**Files**: `src/domain/**`, unit tests.  
+**Acceptance**: partial windows representable; exact vs inferred data preserved; ratios validated.  
+**Dependencies**: none.  
+**Parallel**: STORAGE-001, OPS-001.
+
+## CORE-002 — Expand FakeProvider scenario engine
+
+**Scope**: configurable duration/usage/state/failures/action outcomes.  
+**Files**: `src/providers/fake-provider.ts`, tests/fixtures.  
+**Acceptance**: scheduler/UI can simulate inactive → active → reset and uncertain trigger without real quota.  
+**Dependencies**: CORE-001.
+
+## STORAGE-001 — Complete DB migration runner and repositories
+
+**Scope**: migration ledger, WAL pragmas, provider state/events/window samples/settings/action-intent repositories.  
+**Acceptance**: blank DB migrates; reopen preserves state; transactions cover intent creation.  
+**Dependencies**: none for runner; align DTOs with CORE-001.  
+**Parallel**: CORE-001.
+
+## STORAGE-002 — Implement retention maintenance
+
+**Scope**: bounded deletes for samples/events based on documented classes.  
+**Acceptance**: current state/open intents preserved; retention test uses FakeClock.  
+**Dependencies**: STORAGE-001.
+
+## SCHED-001 — Implement pure target-reset decision engine
+
+**Scope**: candidate trigger, confidence/staleness gates, explanation object, tolerance window.  
+**Acceptance**: table tests around 07:59/08:00/08:01 example and unknown duration/reset.  
+**Dependencies**: CORE-001.
+
+## SCHED-002 — Implement durable reconcile loop
+
+**Scope**: polling due calculation, inspections, decision call, event persistence; no real triggers yet.  
+**Acceptance**: restart-safe; no `sleep` in tests; duplicate ticks produce one intent.  
+**Dependencies**: STORAGE-001, SCHED-001, CORE-002.
+
+## SCHED-003 — Implement action-intent execution/recovery
+
+**Scope**: claim, dispatch, confirm, uncertain recovery, retry classes, missed-action skip.  
+**Acceptance**: DB unique dedupe protects duplicate trigger; crash-at-each-stage integration tests.  
+**Dependencies**: SCHED-002.
+
+## TIME-001 — Implement IANA local schedule conversion
+
+**Scope**: wall-clock target occurrence, DST nonexistent/ambiguous rules, monotonic jump detection seam.  
+**Acceptance**: tested on at least one spring-forward and fall-back zone plus America/Sao_Paulo normal day.  
+**Dependencies**: SCHED-001.  
+**Parallel**: SCHED-002 after stable interface.
+
+## CODEX-001 — Implement Codex read-only adapter
+
+**Scope**: official client/app-server only, lifecycle, timeout, validated rate-limit response, normalized multi-window observation.  
+**Acceptance**: monitor-only real provider works; partial/null fields degrade safely; offline contract tests.  
+**Dependencies**: SPIKE-001, CORE-001.
+
+## CODEX-002 — Implement opt-in Codex trigger
+
+**Context**: official docs say first message after prior 5h window ends starts a new window.  
+**Scope**: minimal ordinary official-client turn, empty workspace/scoped permissions, persisted intent, confirmation read.  
+**Acceptance**: explicit quota-consuming flag; never uses banked reset; uncertain transport result cannot blind-retry; manual live acceptance procedure documented.  
+**Dependencies**: CODEX-001, SCHED-003, compliance review.
+
+## ANT-001 — Implement Antigravity read-only adapter if spikes pass
+
+**Scope**: official `agy` CLI only; parser based on documented/proven output; no extracted tokens.  
+**Acceptance**: health/auth states clear, parser fails closed, monitor-only.  
+**Dependencies**: SPIKE-002, SPIKE-003, CORE-001.
+
+## ANT-002 — Reassess Antigravity trigger semantics
+
+**Scope**: research/controlled experiment only; do not ship automation by default.  
+**Success**: official documentation found **or** controlled evidence + explicit policy review justify capability; otherwise record `canTriggerWindow=false`.  
+**Dependencies**: ANT-001.  
+**MVP note**: may close as “not supported”.
+
+## WEB-001 — Implement overview SSR
+
+**Scope**: provider cards, stale/evidence labels, reset/remaining/next-decision explanation.  
+**Acceptance**: works with FakeProvider and unavailable provider; no secret fields.  
+**Dependencies**: CORE-001, STORAGE-001.  
+**Parallel**: SCHED-001.
+
+## WEB-002 — Implement settings/schedule forms
+
+**Scope**: runtime DB config, validated intervals/timezone, CSRF/Origin protection.  
+**Acceptance**: env does not silently override DB after bootstrap; secrets absent.  
+**Dependencies**: STORAGE-001, TIME-001, SEC-001.
+
+## WEB-003 — Implement small history view
+
+**Scope**: bounded timeline + usage series; server-rendered/simple SVG.  
+**Acceptance**: useful on mobile/desktop without SPA dependency.  
+**Dependencies**: STORAGE-001.
+
+## API-001 — Complete `/api/v1` read endpoints
+
+**Scope**: providers/history/settings schemas and bounds.  
+**Acceptance**: deterministic JSON, no secret/raw provider payload exposure.  
+**Dependencies**: STORAGE-001, CORE-001.
+
+## API-002 — Implement trigger/inspect command endpoints
+
+**Scope**: create intent/reconcile hint; no hidden direct side effect in handler.  
+**Acceptance**: CSRF/origin, capability checks, auditable event.  
+**Dependencies**: SCHED-003, SEC-001.
+
+## METRICS-001 — Complete Prometheus metrics
+
+**Scope**: documented gauges/counters, stale behavior, bounded labels.  
+**Acceptance**: no account IDs/error strings/dedupe keys as labels.  
+**Dependencies**: CORE-001.  
+**Parallel**: WEB work.
+
+## STATS-001 — Deterministic usage aggregates/recommendation
+
+**Scope**: per-day/window/hour aggregates and simple work-window recommendation.  
+**Acceptance**: explanation shows inputs; no ML/LLM.  
+**Dependencies**: enough history schema + TIME-001.  
+**MVP priority**: low; basic aggregates can ship, recommendation may be v1.x.
+
+## SEC-001 — HTTP hardening and CSRF
+
+**Scope**: CSP/security headers, escaped rendering, Origin+CSRF for mutations, request limits.  
+**Acceptance**: state-changing route rejects cross-origin request; provider text cannot inject HTML.  
+**Dependencies**: web server baseline.
+
+## OPS-001 — Finish production Docker hardening
+
+**Scope**: multi-stage image, non-root, read-only rootfs, tmpfs, healthcheck, graceful shutdown, Compose loopback default.  
+**Acceptance**: clean build/up healthy; restart persistence; no secret in image.  
+**Dependencies**: scaffold baseline.  
+**Parallel**: core domain.
+
+## CI-001 — Complete validation + Docker smoke workflow
+
+**Scope**: format/lint/type/test/build; Compose config; image build; health smoke.  
+**Acceptance**: one canonical CI gate matches `pnpm validate`.  
+**Dependencies**: OPS-001.
+
+## DOC-001 — Reconcile docs after first vertical slice
+
+**Scope**: architecture/provider/scheduling/deployment docs, screenshots optional.  
+**Acceptance**: no plan claim contradicts code; research dates current.  
+**Dependencies**: first FakeProvider vertical slice.

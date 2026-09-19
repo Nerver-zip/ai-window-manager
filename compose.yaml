@@ -1,0 +1,39 @@
+services:
+  ai-window-manager:
+    build:
+      context: .
+    image: ai-window-manager:dev
+    restart: unless-stopped
+    environment:
+      AWM_BIND: 0.0.0.0
+      AWM_PORT: 8787
+      AWM_DB_PATH: /data/window-manager.db
+      AWM_LOG_LEVEL: ${AWM_LOG_LEVEL:-info}
+      AWM_TIMEZONE: ${AWM_TIMEZONE:-America/Sao_Paulo}
+      AWM_FAKE_PROVIDER_ENABLED: ${AWM_FAKE_PROVIDER_ENABLED:-true}
+    ports:
+      - '${AWM_HOST_BIND:-127.0.0.1}:${AWM_HOST_PORT:-8787}:8787'
+    volumes:
+      - awm-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+volumes:
+  awm-data:

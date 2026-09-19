@@ -1,0 +1,32 @@
+# MVP HTTP API
+
+The API exists to support the small UI and local automation/inspection. It is not a public platform API.
+
+Proposed final MVP endpoints:
+
+```text
+GET  /healthz
+GET  /metrics
+GET  /
+GET  /schedule
+GET  /history
+GET  /settings
+
+GET  /api/v1/providers
+GET  /api/v1/providers/:id
+GET  /api/v1/history?provider=&type=&from=&to=&limit=
+GET  /api/v1/settings
+PUT  /api/v1/settings
+POST /api/v1/providers/:id/trigger
+POST /api/v1/providers/:id/inspect
+```
+
+Notes:
+
+- `POST trigger` creates/advances a durable action intent; it does not directly hide a provider side effect inside the HTTP handler.
+- `inspect` queues/requests an immediate reconcile hint; the response may be `202 Accepted` rather than block on a provider CLI.
+- runtime settings endpoint never accepts or returns secret values.
+- JSON is versioned under `/api/v1` even though the HTML routes are not.
+- pagination is simple bounded `limit` + cursor/id if history grows; no GraphQL.
+
+The scaffold initially implements only health, metrics and provider listing. Remaining endpoints are backlog items.
