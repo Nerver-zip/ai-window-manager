@@ -43,6 +43,7 @@ afterEach(async () => {
 function createApp(
   seed: (repositories: StorageRepositories, clock: FakeClock) => void,
   adapter: ProviderAdapter | undefined = inspectionSpy('fake'),
+  requestReconcile?: () => void,
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-web-'));
   const dbPath = path.join(dir, 'awm.db');
@@ -56,6 +57,7 @@ function createApp(
     repositories,
     adapters: adapter ? new Map([[adapter.id, adapter]]) : new Map(),
     clock,
+    ...(requestReconcile ? { requestReconcile } : {}),
   });
   resources.push({ app, db, dir });
   return { app, clock, repositories };
@@ -307,5 +309,115 @@ describe('web server persisted overview', () => {
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ status: 'error' });
     await app.close();
+  });
+
+  it('serves provider detail, bounded history and allowlisted settings from SQLite', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.settings.set('timezone', 'America/Sao_Paulo', Date.parse(NOW));
+      repositories.settings.set('secret_token', 'synthetic-not-a-secret', Date.parse(NOW));
+      repositories.events.append({
+        occurredAtMs: Date.parse(NOW),
+        providerId: 'fake',
+        type: 'provider_inspected',
+        severity: 'info',
+        reasonCode: null,
+        data: { health: 'UP' },
+      });
+    });
+
+    expect((await app.inject('/api/v1/providers/fake')).statusCode).toBe(200);
+    const history = await app.inject('/api/v1/history?provider=fake&limit=1');
+    expect(history.statusCode).toBe(200);
+    const historyBody = JSON.parse(history.body) as { events: unknown[] };
+    expect(historyBody.events).toHaveLength(1);
+    const settings = await app.inject('/api/v1/settings');
+    expect(settings.statusCode).toBe(200);
+    expect(settings.body).toContain('America/Sao_Paulo');
+    expect(settings.body).not.toContain('synthetic-not-a-secret');
+  });
+
+  it('protects inspect and trigger commands with Origin and CSRF without provider I/O in handlers', async () => {
+    const inspected = { count: 0 };
+    const triggered = { count: 0 };
+    let reconcileRequested = 0;
+    const commandAdapter: ProviderAdapter = {
+      id: 'fake',
+      capabilities: () => ({
+        ...capabilities,
+        windowTrigger: { supported: true, contract: 'official_supported', consumesQuota: false },
+      }),
+      health: () => Promise.resolve('UP'),
+      inspect: () => {
+        inspected.count += 1;
+        return Promise.reject(new Error('handler must not inspect'));
+      },
+      triggerWindow: () => {
+        triggered.count += 1;
+        return Promise.reject(new Error('handler must not trigger'));
+      },
+    };
+    const { app } = createApp(
+      (repositories) => {
+        seedObservedProvider(repositories);
+        const provider = repositories.providers.get('fake');
+        if (!provider) throw new Error('provider missing');
+        repositories.providers.upsert({ ...provider, mode: 'automation' });
+      },
+      commandAdapter,
+      () => {
+        reconcileRequested += 1;
+      },
+    );
+
+    const page = await app.inject({ method: 'GET', url: '/', headers: { host: 'localhost:8787' } });
+    const setCookie = page.headers['set-cookie'];
+    const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0];
+    const token = cookie?.split('=')[1];
+    expect(cookie).toContain('awm_csrf=');
+    expect(token).toBeTruthy();
+
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/fake/inspect',
+      headers: { host: 'localhost:8787', origin: 'https://evil.example', cookie },
+    });
+    expect(missing.statusCode).toBe(403);
+
+    const missingCsrf = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/fake/inspect',
+      headers: { host: 'localhost:8787', origin: 'http://localhost:8787', cookie },
+    });
+    expect(missingCsrf.statusCode).toBe(403);
+
+    const inspect = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/fake/inspect',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'x-csrf-token': token,
+      },
+    });
+    expect(inspect.statusCode).toBe(202);
+    expect(reconcileRequested).toBe(1);
+    expect(inspected.count).toBe(0);
+
+    const trigger = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/fake/trigger',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'x-csrf-token': token,
+        'content-type': 'application/json',
+      },
+      payload: { idempotencyKey: 'server-test' },
+    });
+    expect(trigger.statusCode).toBe(202);
+    expect(triggered.count).toBe(0);
   });
 });

@@ -11,6 +11,15 @@ import type {
   StorageRepositories,
 } from '../storage/repositories.js';
 import { registry } from '../metrics/metrics.js';
+import { createCommandApi } from './api-commands.js';
+import { createReadApi } from './api-read.js';
+import {
+  DEFAULT_HTTP_BODY_LIMIT_BYTES,
+  ensureCsrfToken,
+  getSecurityHeaders,
+  validateCsrf,
+  validateMutationOrigin,
+} from './security.js';
 
 const DECISION_EVENT_TYPES = new Set([
   'action_intent_planned',
@@ -42,6 +51,7 @@ export interface BuildServerInput {
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
   clock: Clock;
+  requestReconcile?: () => void;
 }
 
 type ProviderHealthRead = ProviderStateRecord['health'] | 'UNKNOWN';
@@ -84,16 +94,51 @@ interface ProviderRead {
 export function buildServer(input: BuildServerInput) {
   const app = Fastify({
     logger: { level: input.config.AWM_LOG_LEVEL },
-    bodyLimit: 64 * 1024,
+    bodyLimit: DEFAULT_HTTP_BODY_LIMIT_BYTES,
   });
 
-  app.addHook('onSend', async (_request, reply, payload) => {
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header(
-      'Content-Security-Policy',
-      "default-src 'self'; base-uri 'none'; frame-ancestors 'none'",
-    );
+  const readApi = createReadApi({
+    repositories: input.repositories,
+    clock: input.clock,
+    adapters: input.adapters,
+  });
+  const commandApi = createCommandApi({
+    repositories: input.repositories,
+    adapters: input.adapters,
+    clock: input.clock,
+    requestReconcile: input.requestReconcile,
+  });
+
+  app.addHook('onSend', async (request, reply, payload) => {
+    const headers = getSecurityHeaders({
+      noStore: request.url.startsWith('/api/') || request.url === '/metrics',
+    });
+    for (const [name, value] of Object.entries(headers)) reply.header(name, value);
     return payload;
+  });
+
+  app.addHook('preHandler', async (request, reply) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return;
+    const origin = validateMutationOrigin(request.method, request.headers.origin, {
+      expectedOrigin: expectedOrigin(request, input.config.AWM_PORT),
+    });
+    if (!origin.ok) {
+      return reply.code(403).send({
+        accepted: false,
+        error: { code: 'ORIGIN_REJECTED', message: 'mutation origin is not allowed' },
+      });
+    }
+    const csrf = validateCsrf({
+      cookieHeader: request.headers.cookie,
+      headerToken: request.headers['x-csrf-token'],
+      formToken: bodyCsrfToken(request.body),
+    });
+    if (!csrf.ok) {
+      return reply.code(403).send({
+        accepted: false,
+        error: { code: 'CSRF_REJECTED', message: 'csrf validation failed' },
+      });
+    }
   });
 
   app.get('/healthz', async (_request, reply) => {
@@ -110,17 +155,61 @@ export function buildServer(input: BuildServerInput) {
     return registry.metrics();
   });
 
-  app.get('/api/v1/providers', () => ({
-    providers: readProviders(input),
-  }));
+  app.get('/api/v1/providers', () => readApi.getProviders().body);
+
+  app.get('/api/v1/providers/:id', async (request, reply) => {
+    const result = readApi.getProvider((request.params as { id?: unknown }).id);
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  app.get('/api/v1/history', async (request, reply) => {
+    const result = readApi.getHistory(request.query);
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  app.get('/api/v1/settings', () => readApi.getSettings().body);
+
+  app.post('/api/v1/providers/:id/inspect', async (request, reply) => {
+    const result = commandApi.inspect((request.params as { id?: unknown }).id);
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  app.post('/api/v1/providers/:id/trigger', async (request, reply) => {
+    const result = commandApi.trigger((request.params as { id?: unknown }).id, request.body);
+    return reply.code(result.statusCode).send(result.body);
+  });
 
   app.get('/', async (_request, reply) => {
     const providers = readProviders(input);
     reply.type('text/html; charset=utf-8');
+    const csrf = ensureCsrfToken(_request.headers.cookie, {
+      secure: _request.protocol === 'https',
+    });
+    if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     return renderOverview(providers);
   });
 
   return app;
+}
+
+function expectedOrigin(
+  request: {
+    protocol: string;
+    headers: Record<string, string | string[] | undefined>;
+  },
+  fallbackPort: number,
+): string {
+  const forwardedProto = request.headers['x-forwarded-proto'];
+  const protocol = forwardedProto === 'https' || request.protocol === 'https' ? 'https' : 'http';
+  const host =
+    typeof request.headers.host === 'string' ? request.headers.host : `127.0.0.1:${fallbackPort}`;
+  return `${protocol}://${host}`;
+}
+
+function bodyCsrfToken(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+  const token = (body as Record<string, unknown>).csrfToken;
+  return typeof token === 'string' ? token : undefined;
 }
 
 function readProviders(input: BuildServerInput): ProviderRead[] {
