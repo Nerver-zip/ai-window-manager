@@ -25,6 +25,11 @@ Why: target reset 13:00 - observed 5h window
 
 If data is inferred, render `~13:04` and the evidence/confidence label. If stale, visually say `last observed 12m ago` instead of presenting old data as live.
 
+The overview is backed by persisted `provider_state`, recent scheduler/events,
+and action-intent records. Opening `/` or `/api/v1/providers` does not call a
+provider adapter. A provider with no persisted observation renders health,
+freshness and window facts as `unknown` rather than fabricated zeroes.
+
 ## Schedule
 
 - desired reset local time;
