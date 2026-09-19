@@ -27,4 +27,21 @@ describe('openDatabase', () => {
     ).toBe(0);
     reopened.close();
   });
+
+  it('creates the metadata table without migrations when the directory is absent', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-no-migrations-'));
+    dirs.push(dir);
+    const originalCwd = process.cwd();
+    process.chdir(dir);
+
+    try {
+      const db = openDatabase(path.join(dir, 'awm.db'));
+      expect(
+        (db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
+      ).toBe(0);
+      db.close();
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
 });

@@ -1,0 +1,14 @@
+title = "AI Window Manager Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated local artifacts are not source-controlled application inputs."
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)coverage/''',
+  '''(^|/)data/''',
+  '''(^|/)\.pnpm-store/''',
+]

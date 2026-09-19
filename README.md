@@ -87,6 +87,8 @@ The Compose default publishes the service only on `127.0.0.1`. Set `AWM_HOST_BIN
 
 Keep `pnpm-lock.yaml` synchronized with `package.json`; CI and Docker builds use frozen-lockfile installation.
 
+`pnpm validate` is the canonical local quality gate. It checks formatting, lint, type safety, tests with minimum global coverage of 90% for lines, statements, functions, and branches, the production build, and Gitleaks secret scanning. Install Gitleaks locally; CI runs the security gate on pushes and pull requests.
+
 ## Current implementation status
 
 Included now:

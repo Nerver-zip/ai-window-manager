@@ -10,7 +10,7 @@
 
 ```bash
 cp .env.example .env
-pnpm install  # first run creates pnpm-lock.yaml
+pnpm install
 pnpm dev
 ```
 
@@ -21,7 +21,9 @@ pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:coverage
 pnpm build
+pnpm secret:scan
 ```
 
 Or:
@@ -29,6 +31,8 @@ Or:
 ```bash
 pnpm validate
 ```
+
+`pnpm validate` is the canonical completion gate. It runs format checking, lint, strict typechecking, the coverage-enforced test suite, the build, and Gitleaks. Install Gitleaks before running it locally. `pnpm test:coverage` requires at least 90% global lines, statements, functions, and branches and writes text/LCOV reports under the ignored `coverage/` directory.
 
 ## Development provider
 

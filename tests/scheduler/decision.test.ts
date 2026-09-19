@@ -57,4 +57,41 @@ describe('decideTargetReset', () => {
       }),
     ).toEqual({ kind: 'noop', reasonCode: 'WINDOW_DURATION_CONFIDENCE_TOO_LOW' });
   });
+
+  it('refuses a window when its duration is unknown', () => {
+    const window = inactiveFiveHourWindow();
+    delete window.durationSeconds;
+
+    expect(
+      decideTargetReset({
+        now: new Date('2026-09-14T11:00:00.000Z'),
+        providerId: 'codex',
+        policyId: 'daily-13',
+        targetResetAt: new Date('2026-09-14T16:00:00.000Z'),
+        window,
+      }),
+    ).toEqual({ kind: 'noop', reasonCode: 'WINDOW_DURATION_UNKNOWN' });
+  });
+
+  it('refuses an active window and a missed target', () => {
+    expect(
+      decideTargetReset({
+        now: new Date('2026-09-14T11:00:00.000Z'),
+        providerId: 'codex',
+        policyId: 'daily-13',
+        targetResetAt: new Date('2026-09-14T16:00:00.000Z'),
+        window: { ...inactiveFiveHourWindow(), phase: 'ACTIVE' },
+      }),
+    ).toEqual({ kind: 'noop', reasonCode: 'WINDOW_NOT_INACTIVE' });
+
+    expect(
+      decideTargetReset({
+        now: new Date('2026-09-14T11:01:00.000Z'),
+        providerId: 'codex',
+        policyId: 'daily-13',
+        targetResetAt: new Date('2026-09-14T16:00:00.000Z'),
+        window: inactiveFiveHourWindow(),
+      }),
+    ).toEqual({ kind: 'noop', reasonCode: 'TARGET_MISSED' });
+  });
 });

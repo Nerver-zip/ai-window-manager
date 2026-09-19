@@ -10,6 +10,10 @@
 - no Docker socket;
 - no account rotation or token scraping.
 
+## Secret scanning
+
+Gitleaks uses its upstream default rules through `.gitleaks.toml`. The local `pnpm secret:scan` command and the GitHub Actions security job scan repository content and available history; a finding fails the gate. Do not add real credentials to source, fixtures, examples, `.env` files, logs, or documentation. Synthetic test values must be unmistakably non-secret.
+
 ### Codex
 
 Preferred design: a dedicated Codex client home/state area owned by the container user, authenticated through an official Codex login/device/app-server flow. AI Window Manager talks to the official client protocol and does not copy a workstation auth file back and forth. This avoids shared refresh-token races and reduces coupling to raw token formats.

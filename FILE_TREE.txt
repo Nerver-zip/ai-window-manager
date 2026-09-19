@@ -12,6 +12,7 @@
 .dockerignore
 .editorconfig
 .env.example
+.gitleaks.toml
 .github/workflows/ci.yml
 .gitignore
 .prettierignore
@@ -44,11 +45,13 @@ docs/providers.md
 docs/research/sources.md
 docs/scheduling.md
 docs/security.md
+docs/testing.md
 docs/source-request.md
 docs/ui.md
 eslint.config.js
 migrations/001_initial.sql
 package.json
+scripts/secret-scan.sh
 scripts/validate.sh
 src/config.ts
 src/domain/types.ts

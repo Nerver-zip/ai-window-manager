@@ -51,6 +51,8 @@ If a proposed change broadens the product beyond usage-window observation/timing
 - Normal tests must never spend real provider quota. Use FakeProvider and sanitized fixtures.
 - Schema migrations are forward-only and must be tested on a blank DB and previous schema fixture when applicable.
 - Do not weaken lint/typecheck/tests/security settings to pass validation.
+- Coverage is a permanent quality gate: global lines, statements, functions, and branches must each remain at or above 90%. Do not lower thresholds, exclude relevant production code, remove tests, or skip tests to make a change pass.
+- Gitleaks is a mandatory secret-scanning gate. Never disable it to accommodate a finding; fixtures and examples must use clearly synthetic values and never real credentials.
 - Do not claim provider behavior, tests, CI, or deployment success without evidence.
 
 ## Canonical validation
@@ -58,6 +60,8 @@ If a proposed change broadens the product beyond usage-window observation/timing
 ```bash
 pnpm validate
 ```
+
+`pnpm validate` is the local completion gate and includes formatting, lint, strict typechecking, the 90% coverage-enforced test suite, the production build, and Gitleaks secret scanning. CI runs the equivalent quality, security, and Docker gates.
 
 Container changes additionally require:
 
