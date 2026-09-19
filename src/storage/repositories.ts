@@ -428,7 +428,7 @@ export class ActionIntentRepository {
   }
 
   listOpen(providerId?: string): ActionIntentRecord[] {
-    const states = ['planned', 'executing', 'uncertain', 'failed_retryable'];
+    const states = ['planned', 'executing', 'succeeded', 'uncertain', 'failed_retryable'];
     const placeholders = states.map(() => '?').join(', ');
     const params: Array<string> = [...states];
     let query = `SELECT * FROM action_intents WHERE state IN (${placeholders})`;
@@ -438,6 +438,162 @@ export class ActionIntentRepository {
     }
     query += ' ORDER BY scheduled_for_ms, id';
     return (this.db.prepare(query).all(...params) as ActionIntentRow[]).map(actionIntentFromRow);
+  }
+
+  countsByState(providerId: string): Partial<Record<ActionIntentState, number>> {
+    const rows = this.db
+      .prepare(
+        `SELECT state, COUNT(*) AS count
+         FROM action_intents
+         WHERE provider_id = ?
+         GROUP BY state`,
+      )
+      .all(providerId) as Array<{ state: ActionIntentState; count: number }>;
+    return Object.fromEntries(rows.map((row) => [row.state, Number(row.count)]));
+  }
+
+  claimPlanned(id: string, nowMs: number): ActionIntentRecord | undefined {
+    return this.claim(id, 'planned', nowMs);
+  }
+
+  claimRetryable(id: string, nowMs: number): ActionIntentRecord | undefined {
+    return this.claim(id, 'failed_retryable', nowMs);
+  }
+
+  markSucceededIfExecuting(id: string, updatedAtMs: number): boolean {
+    return this.transition(id, ['executing'], 'succeeded', updatedAtMs);
+  }
+
+  markUncertainIfExecuting(
+    id: string,
+    updatedAtMs: number,
+    lastErrorCode: string | null = 'ACTION_DISPATCH_UNCERTAIN',
+  ): boolean {
+    return this.transition(id, ['executing'], 'uncertain', updatedAtMs, { lastErrorCode });
+  }
+
+  markUncertainIfSucceeded(
+    id: string,
+    updatedAtMs: number,
+    lastErrorCode: string | null = 'ACTION_CONFIRMATION_FAILED',
+  ): boolean {
+    return this.transition(id, ['succeeded'], 'uncertain', updatedAtMs, { lastErrorCode });
+  }
+
+  markConfirmedIfSucceededOrUncertain(id: string, updatedAtMs: number): boolean {
+    return this.transition(id, ['succeeded', 'uncertain'], 'confirmed', updatedAtMs, {
+      finishedAtMs: updatedAtMs,
+      lastErrorCode: null,
+    });
+  }
+
+  markRetryableIfExecuting(
+    id: string,
+    updatedAtMs: number,
+    retryAtMs: number,
+    lastErrorCode: string,
+  ): boolean {
+    return this.transition(id, ['executing'], 'failed_retryable', updatedAtMs, {
+      notBeforeMs: retryAtMs,
+      lastErrorCode,
+    });
+  }
+
+  markRetryableIfPlannedOrRetryable(
+    id: string,
+    updatedAtMs: number,
+    retryAtMs: number,
+    lastErrorCode: string,
+  ): boolean {
+    return this.transition(id, ['planned', 'failed_retryable'], 'failed_retryable', updatedAtMs, {
+      notBeforeMs: retryAtMs,
+      lastErrorCode,
+    });
+  }
+
+  markTerminalIfExecuting(id: string, updatedAtMs: number, lastErrorCode: string): boolean {
+    return this.transition(id, ['executing'], 'failed_terminal', updatedAtMs, {
+      finishedAtMs: updatedAtMs,
+      lastErrorCode,
+    });
+  }
+
+  markSkippedIfPlanned(id: string, updatedAtMs: number, reasonCode: string): boolean {
+    return this.transition(id, ['planned'], 'skipped', updatedAtMs, {
+      finishedAtMs: updatedAtMs,
+      lastErrorCode: reasonCode,
+    });
+  }
+
+  markSkippedIfPlannedOrRetryable(id: string, updatedAtMs: number, reasonCode: string): boolean {
+    return this.transition(id, ['planned', 'failed_retryable'], 'skipped', updatedAtMs, {
+      finishedAtMs: updatedAtMs,
+      lastErrorCode: reasonCode,
+    });
+  }
+
+  recoverExecuting(id: string, updatedAtMs: number): boolean {
+    return this.transition(id, ['executing'], 'uncertain', updatedAtMs, {
+      lastErrorCode: 'ACTION_RECOVERY_REQUIRED',
+    });
+  }
+
+  private claim(
+    id: string,
+    expectedState: Extract<ActionIntentState, 'planned' | 'failed_retryable'>,
+    nowMs: number,
+  ): ActionIntentRecord | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE action_intents SET
+          state = 'executing',
+          attempt_count = attempt_count + 1,
+          started_at_ms = COALESCE(started_at_ms, @nowMs),
+          updated_at_ms = @nowMs
+         WHERE id = @id
+           AND state = @expectedState
+           AND (not_before_ms IS NULL OR not_before_ms <= @nowMs)
+           AND (expires_at_ms IS NULL OR expires_at_ms > @nowMs)`,
+      )
+      .run({ id, expectedState, nowMs });
+    return result.changes === 1 ? this.get(id) : undefined;
+  }
+
+  private transition(
+    id: string,
+    expectedStates: readonly ActionIntentState[],
+    nextState: ActionIntentState,
+    updatedAtMs: number,
+    details: {
+      lastErrorCode?: string | null;
+      notBeforeMs?: number | null;
+      finishedAtMs?: number | null;
+    } = {},
+  ): boolean {
+    const placeholders = expectedStates.map((_state, index) => `@expected${index}`).join(', ');
+    const result = this.db
+      .prepare(
+        `UPDATE action_intents SET
+          state = @nextState,
+          not_before_ms = CASE WHEN @hasNotBefore = 1 THEN @notBeforeMs ELSE not_before_ms END,
+          last_error_code = CASE WHEN @hasLastError = 1 THEN @lastErrorCode ELSE last_error_code END,
+          finished_at_ms = CASE WHEN @hasFinishedAt = 1 THEN @finishedAtMs ELSE finished_at_ms END,
+          updated_at_ms = @updatedAtMs
+         WHERE id = @id AND state IN (${placeholders})`,
+      )
+      .run({
+        id,
+        nextState,
+        updatedAtMs,
+        hasNotBefore: Object.hasOwn(details, 'notBeforeMs') ? 1 : 0,
+        notBeforeMs: details.notBeforeMs ?? null,
+        hasLastError: Object.hasOwn(details, 'lastErrorCode') ? 1 : 0,
+        lastErrorCode: details.lastErrorCode ?? null,
+        hasFinishedAt: Object.hasOwn(details, 'finishedAtMs') ? 1 : 0,
+        finishedAtMs: details.finishedAtMs ?? null,
+        ...Object.fromEntries(expectedStates.map((state, index) => [`expected${index}`, state])),
+      });
+    return result.changes === 1;
   }
 
   setState(
