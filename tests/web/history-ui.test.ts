@@ -86,9 +86,9 @@ describe('history UI helpers', () => {
       },
     ]);
 
-    expect(html).toContain('Latest usage: <strong>Not available yet</strong>');
-    expect(html).toContain('Some observations are unavailable');
-    expect(html).not.toContain('Latest usage: <strong>0%');
+    expect(html).toContain('<span>Latest used</span><strong>Not available yet</strong>');
+    expect(html).toContain('Missing values remain unknown');
+    expect(html).not.toContain('<span>Latest used</span><strong>0%');
   });
 
   it('fails closed for unsafe chart identity and unknown remaining data', () => {
@@ -103,11 +103,11 @@ describe('history UI helpers', () => {
       },
     ]);
 
-    expect(html).toContain('<h3 id="history-chart-unknown-usage-window">Unknown');
-    expect(html).toContain('Remaining: <strong>Not available yet</strong>');
-    expect(html).toContain('; 1 unavailable');
+    expect(html).toContain('<h3 id="chart-unknown-usage-window-title">Unknown');
+    expect(html).toContain('<span>Remaining</span><strong>Not available yet</strong>');
+    expect(html).toContain('1 missing');
     expect(html).not.toContain('<provider>');
-    expect(html).toContain('class="chart-line"');
+    expect(html).toContain('class="chart-line chart-series-1"');
   });
 
   it('escapes reason text and never renders raw event payloads', () => {
@@ -176,12 +176,12 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('value="30d" selected');
     expect(html).toContain('value="fake" selected');
-    expect(html).toContain('viewBox="0 0 360 146"');
+    expect(html).toContain('viewBox="0 0 640 230"');
     expect(html).toContain('viewport');
     expect(html).toContain('history-toolbar');
-    expect(html).toContain('class="card chart"');
+    expect(html).toContain('class="card chart-card"');
     expect(html).toContain('class="timeline"');
-    expect(html).toContain('class="chart-line"');
+    expect(html).toContain('class="chart-line chart-series-1"');
     expect(html).toContain('2 events');
     expect(html).toContain('Timeline');
     expect(html).toContain('Usage');
@@ -211,7 +211,7 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('08:00 UTC');
     expect(html).toContain('11:00 UTC');
-    expect(html).toContain('Used %');
+    expect(html).toContain('>Used<');
     expect(html).toContain('aria-label="History pages"');
     expect(html).toContain('rel="prev"');
     expect(html).toContain('rel="next"');
@@ -233,7 +233,7 @@ describe('history UI helpers', () => {
     expect(view.series).toEqual([]);
     const html = renderHistoryPage({ now: NOW, providers: [], events: [], samples: [] });
     expect(html).toContain('empty-state');
-    expect(html).toContain('Saved usage samples will appear here');
+    expect(html).toContain('Saved observations will appear here');
     expect(html).not.toContain('<style');
   });
 

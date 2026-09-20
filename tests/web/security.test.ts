@@ -170,6 +170,7 @@ describe('HTTP security helpers', () => {
   it('preserves the CSP/body-limit baseline and adds privacy headers', () => {
     expect(DEFAULT_HTTP_BODY_LIMIT_BYTES).toBe(64 * 1024);
     expect(CONTENT_SECURITY_POLICY).toContain("style-src 'self'");
+    expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self'");
     expect(getSecurityHeaders()).toEqual({
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,

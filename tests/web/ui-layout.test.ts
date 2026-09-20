@@ -17,8 +17,9 @@ describe('shared application shell', () => {
       );
       expect(html).toContain(`${page} · AI Window Manager`);
       expect(html).toContain('href="/assets/app.css"');
+      expect(html).toContain('<script defer src="/assets/app.js"></script>');
       expect(html).toContain('Skip to content');
-      expect(html).not.toMatch(/<style|<script|style=/);
+      expect(html).not.toMatch(/<style|<script>|style=/);
     },
   );
   it('escapes all untrusted heading text and preserves readable descriptions', () => {
@@ -36,6 +37,10 @@ describe('shared application shell', () => {
     expect(APP_CSS).toContain('@media (max-width: 700px)');
     expect(APP_CSS).toContain(':focus-visible');
     expect(APP_CSS).toContain('min-height: 44px');
+    expect(APP_CSS).toContain('.chart-tooltip[data-position="center"]');
+    expect(APP_CSS).toContain('.chart-point-hit:hover .chart-point-active');
+    expect(APP_CSS).toContain('stroke-width: 1.6');
+    expect(APP_CSS).toContain('.chart-svg { height: 205px; }');
     expect(APP_CSS).toContain('prefers-reduced-motion');
     expect(APP_CSS).not.toMatch(/@import|https?:/);
   });

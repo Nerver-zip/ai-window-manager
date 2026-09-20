@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { renderAppShell } from './ui/layout.js';
 import { APP_CSS } from './ui/styles.js';
+import { APP_JS } from './ui/chart-interactions.js';
 import type { AppConfig } from '../config.js';
 import type { ProviderCapabilities, ProviderObservation, WindowSnapshot } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
@@ -136,6 +137,9 @@ export function buildServer(input: BuildServerInput) {
   });
   app.get('/assets/app.css', async (_request, reply) =>
     reply.type('text/css; charset=utf-8').send(APP_CSS),
+  );
+  app.get('/assets/app.js', async (_request, reply) =>
+    reply.type('application/javascript; charset=utf-8').send(APP_JS),
   );
   const commandApi = createCommandApi({
     repositories: input.repositories,

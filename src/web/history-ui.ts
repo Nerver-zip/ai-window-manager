@@ -15,6 +15,7 @@ import {
   severityLabel,
   windowDisplayName,
 } from './ui/presentation.js';
+import { formatRatioPercent, renderChartEmptyState, renderTimeSeriesChart } from './ui/charts.js';
 
 export const HISTORY_RANGES = [
   { value: '24h', label: '24h', durationMs: 24 * 60 * 60 * 1000 },
@@ -239,7 +240,7 @@ export function renderHistoryPage(input: HistoryPageInput): string {
       </div>
     </form>
     <div class="history-sections">
-      ${renderUsageSeries(view.series)}
+      ${renderUsageSeries(view.series, view.range)}
       ${renderTimeline(view.events, pagination)}
     </div>
   </div>`;
@@ -303,21 +304,21 @@ export function renderTimeline(
   </section>`;
 }
 
-export function renderUsageSeries(series: readonly HistoryUsageSeries[]): string {
+export function renderUsageSeries(
+  series: readonly HistoryUsageSeries[],
+  range: HistoryRange = '24h',
+): string {
   if (series.length === 0) {
     return `<section class="history-section" aria-labelledby="usage-title">
       <div class="section-heading">
         <div><span class="eyebrow">Window samples</span><h2 id="usage-title">Usage</h2></div>
       </div>
-      <div class="empty-state card" role="status">
-        <strong>No usage samples in this range</strong>
-        <p class="unknown">Saved usage samples will appear here after the provider is checked.</p>
-      </div>
+      ${renderChartEmptyState()}
     </section>`;
   }
 
   const visibleSeries = series.slice(0, MAX_USAGE_SERIES);
-  const charts = visibleSeries.map((item) => renderUsageChart(item)).join('');
+  const charts = visibleSeries.map((item) => renderUsageChart(item, range)).join('');
   return `<section class="history-section" aria-labelledby="usage-title">
     <div class="section-heading">
       <div><span class="eyebrow">Window samples</span><h2 id="usage-title">Usage</h2></div>
@@ -327,7 +328,7 @@ export function renderUsageSeries(series: readonly HistoryUsageSeries[]): string
   </section>`;
 }
 
-function renderUsageChart(series: HistoryUsageSeries): string {
+function renderUsageChart(series: HistoryUsageSeries, range: HistoryRange): string {
   const providerId = safeProviderId(series.providerId) ?? 'unknown';
   const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
   const providerLabel = providerDisplayName(providerId);
@@ -337,25 +338,6 @@ function renderUsageChart(series: HistoryUsageSeries): string {
     usageRatio: ratioOrNull(point.usageRatio),
     remainingRatio: ratioOrNull(point.remainingRatio),
   }));
-  const segments: Array<Array<{ x: number; y: number }>> = [];
-  let segment: Array<{ x: number; y: number }> = [];
-  points.forEach((point, index) => {
-    if (point.usageRatio === null) {
-      if (segment.length > 0) segments.push(segment);
-      segment = [];
-      return;
-    }
-    segment.push({ x: chartX(index, points.length), y: chartY(point.usageRatio) });
-  });
-  if (segment.length > 0) segments.push(segment);
-  const polyline = segments
-    .map(
-      (plotted) =>
-        `<polyline class="chart-line" points="${plotted
-          .map((point) => `${point.x},${point.y}`)
-          .join(' ')}" />`,
-    )
-    .join('');
   const unknownCount = points.filter((point) => point.usageRatio === null).length;
   const latestPoint = [...points].reverse().find((point) => point.usageRatio !== null);
   const latest = latestPoint?.usageRatio;
@@ -367,57 +349,33 @@ function renderUsageChart(series: HistoryUsageSeries): string {
     latestRemaining === undefined || latestRemaining === null
       ? 'Not available yet'
       : `${Math.round(latestRemaining * 100)}%`;
-  const unknownText = unknownCount > 0 ? `; ${unknownCount} unavailable` : '';
-  const chartTitleId = `history-chart-${displaySlug(providerLabel)}-${displaySlug(windowLabel)}`;
-  const firstPoint = points[0];
-  const lastPoint = points.at(-1);
-  const latestIndex = findLastKnownUsageIndex(points);
-  const latestMarker =
-    latestIndex === -1
-      ? ''
-      : `<circle class="chart-point" cx="${chartX(latestIndex, points.length)}" cy="${chartY(
-          points[latestIndex]?.usageRatio ?? 0,
-        )}" r="3.5" />`;
-  const sampleText = `${points.length} sample${points.length === 1 ? '' : 's'}`;
+  const sampleText = `${points.length} observation${points.length === 1 ? '' : 's'}`;
 
-  return `<article class="card chart" aria-labelledby="${escapeAttribute(chartTitleId)}">
-    <header class="card-header">
-      <div class="chart-heading">
-        <span class="eyebrow">Usage window</span>
-        <h3 id="${escapeAttribute(chartTitleId)}">${escapeHtml(providerLabel)} <span class="chart-divider">/</span> ${escapeHtml(
-          windowLabel,
-        )}</h3>
-      </div>
-      <div class="chart-summary">
-        <p class="chart-stat">Latest usage: <strong>${escapeHtml(latestText)}</strong>${escapeHtml(
-          unknownText,
-        )}</p>
-        <p class="chart-stat">Remaining: <strong>${escapeHtml(remainingText)}</strong></p>
-      </div>
-    </header>
-    <div class="chart-scroll">
-      <svg class="chart-svg" viewBox="0 0 360 146" role="img" aria-labelledby="${escapeAttribute(
-        chartTitleId,
-      )}" aria-label="Usage over time for ${escapeAttribute(`${providerLabel} ${windowLabel}`)}">
-        <line class="chart-gridline" x1="34" y1="14" x2="352" y2="14" />
-        <line class="chart-gridline" x1="34" y1="62" x2="352" y2="62" />
-        <line class="chart-gridline" x1="34" y1="110" x2="352" y2="110" />
-        <line class="chart-axis" x1="34" y1="110" x2="352" y2="110" />
-        <text class="chart-axis-label" x="4" y="17">100%</text>
-        <text class="chart-axis-label" x="10" y="65">50%</text>
-        <text class="chart-axis-label" x="15" y="113">0%</text>
-        <text class="chart-axis-label chart-axis-time" x="34" y="133">${escapeHtml(
-          formatChartTime(firstPoint?.observedAt),
-        )}</text>
-        <text class="chart-axis-label chart-axis-time" x="352" y="133" text-anchor="end">${escapeHtml(
-          formatChartTime(lastPoint?.observedAt),
-        )}</text>
-        ${polyline}
-        ${latestMarker}
-      </svg>
-    </div>
-    <p class="chart-legend"><strong>Used %</strong> · older → newer · ${sampleText}${unknownText ? escapeHtml(unknownText) : ''}. Some observations are unavailable.</p>
-  </article>`;
+  return renderTimeSeriesChart({
+    id: `${providerLabel}-${windowLabel}`,
+    title: `${providerLabel} / ${windowLabel}`,
+    range,
+    summary: [
+      { label: 'Latest used', value: latestText },
+      { label: 'Remaining', value: remainingText },
+    ],
+    series: [
+      {
+        key: 'used',
+        label: 'Used',
+        colorIndex: 1,
+        unit: '%',
+        points: points.map((point) => ({ observedAt: point.observedAt, value: point.usageRatio })),
+      },
+    ],
+    yAxis: {
+      min: 0,
+      max: 1,
+      ticks: [1, 0.75, 0.5, 0.25, 0],
+      format: formatRatioPercent,
+    },
+    footer: `${sampleText}${unknownCount > 0 ? ` · ${unknownCount} missing` : ''} · Missing values remain unknown · older → newer`,
+  });
 }
 
 function sanitizeEvent(event: HistoryTimelineEvent): HistoryTimelineItem | null {
@@ -481,14 +439,6 @@ function safeDisplayText(value: string): string {
     .slice(0, 96);
 }
 
-function displaySlug(value: string): string {
-  const slug = value
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-  return slug || 'unknown';
-}
-
 function ratioOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
     ? value
@@ -505,28 +455,6 @@ function formatTimestamp(value: string): string {
   return Number.isFinite(timestamp)
     ? new Date(timestamp).toISOString().replace('T', ' ').replace('.000Z', ' UTC')
     : 'unknown';
-}
-
-function chartX(index: number, length: number): number {
-  return length <= 1 ? 193 : 34 + Math.round((index / (length - 1)) * 318);
-}
-
-function chartY(value: number): number {
-  return Math.round(110 - value * 96);
-}
-
-function findLastKnownUsageIndex(points: readonly HistoryUsagePoint[]): number {
-  for (let index = points.length - 1; index >= 0; index -= 1) {
-    if (points[index]?.usageRatio !== null && points[index]?.usageRatio !== undefined) return index;
-  }
-  return -1;
-}
-
-function formatChartTime(value: string | undefined): string {
-  if (!value) return 'unknown';
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return 'unknown';
-  return new Date(timestamp).toISOString().slice(11, 16) + ' UTC';
 }
 
 function normalizePagination(value: HistoryPagination | undefined): HistoryPagination {

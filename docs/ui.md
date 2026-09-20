@@ -75,16 +75,18 @@ Keep it small:
 
 - recent lifecycle/action timeline;
 - usage over time per five-hour/weekly bucket;
-- compact SVG usage series with explicit 0–100% axes, UTC time bounds and unknown values;
+- compact shared SVG usage series with quiet horizontal grid lines, explicit 0–100% axes, contextual UTC ticks and unknown values;
+- keyboard- and pointer-inspectable points with a compact same-origin tooltip showing the exact observation time and value;
 - simple day/hour aggregates after sufficient data (deferred).
 
 No enterprise dashboard, no Grafana clone.
 
 ## Frontend technology
 
-Server-rendered HTML with a shared dark operations shell and one same-origin
-stylesheet at `/assets/app.css`. The current pages use native forms and SVG
-history charts without inline styles or scripts, so the CSP remains strict and
-the browser does not become another state owner. No React, client router or
-large component framework. Add a small chart library only if hand-written SVG
-becomes a maintenance burden.
+Server-rendered HTML with a shared dark operations shell, one same-origin
+stylesheet at `/assets/app.css` and a small progressive-enhancement script at
+`/assets/app.js`. Chart markup is produced by the shared `ui/charts.ts` layer:
+it owns dimensions, axes, grid treatment, labels, colors, null gaps, legends and
+accessible point metadata. The script only reveals the tooltip for the point
+being inspected; the server remains the owner of data and page state. No React,
+client router or large component framework is used.

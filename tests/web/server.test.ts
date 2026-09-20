@@ -174,7 +174,8 @@ describe('web server persisted overview', () => {
       expect(response.statusCode).toBe(200);
       expect(response.headers['content-type']).toContain('text/html');
       expect(response.body).toContain('href="/assets/app.css"');
-      expect(response.body).not.toMatch(/<style|style=|<script/);
+      expect(response.body).toContain('<script defer src="/assets/app.js"></script>');
+      expect(response.body).not.toMatch(/<style|style=|<script>/);
       expect(response.body).toContain('aria-current="page"');
     },
   );
@@ -251,13 +252,18 @@ describe('web server persisted overview', () => {
     expect(page.statusCode).toBe(200);
     expect(page.headers['content-type']).toContain('text/html');
     expect(page.body).toContain('href="/assets/app.css"');
-    expect(page.body).not.toMatch(/<style|style=|<script/);
+    expect(page.body).toContain('<script defer src="/assets/app.js"></script>');
+    expect(page.body).not.toMatch(/<style|style=|<script>/);
     expect(page.body).toContain('value="25"');
     expect(page.body).toContain('<progress');
     const css = await app.inject('/assets/app.css');
     expect(css.statusCode).toBe(200);
     expect(css.headers['content-type']).toContain('text/css');
     expect(css.headers['content-security-policy']).not.toContain('unsafe-inline');
+    const javascript = await app.inject('/assets/app.js');
+    expect(javascript.statusCode).toBe(200);
+    expect(javascript.headers['content-type']).toContain('application/javascript');
+    expect(javascript.body).toContain('data-chart-point');
     expect(page.body).toContain('Status</dt><dd>Connected');
     expect(page.body).toContain('Remaining');
     expect(page.body).toContain('75%');
