@@ -12,8 +12,8 @@ services:
       AWM_TIMEZONE: ${AWM_TIMEZONE:-America/Sao_Paulo}
       AWM_FAKE_PROVIDER_ENABLED: ${AWM_FAKE_PROVIDER_ENABLED:-true}
       AWM_CODEX_ENABLED: ${AWM_CODEX_ENABLED:-false}
-      AWM_CODEX_HOME: ${AWM_CODEX_HOME:-/data/codex}
-      AWM_CODEX_EXECUTABLE: ${AWM_CODEX_EXECUTABLE:-codex}
+      AWM_CODEX_HOME: ${AWM_CODEX_HOME:-/codex-state}
+      AWM_CODEX_EXECUTABLE: ${AWM_CODEX_EXECUTABLE:-/opt/codex/bin/codex}
       AWM_RECONCILE_INTERVAL_SECONDS: ${AWM_RECONCILE_INTERVAL_SECONDS:-30}
       AWM_EXECUTOR_INTERVAL_SECONDS: ${AWM_EXECUTOR_INTERVAL_SECONDS:-5}
       AWM_RETENTION_INTERVAL_SECONDS: ${AWM_RETENTION_INTERVAL_SECONDS:-86400}
@@ -21,6 +21,7 @@ services:
       - '${AWM_HOST_BIND:-127.0.0.1}:${AWM_HOST_PORT:-8787}:8787'
     volumes:
       - awm-data:/data
+      - awm-codex-state:/codex-state
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
@@ -43,3 +44,4 @@ services:
 
 volumes:
   awm-data:
+  awm-codex-state:
