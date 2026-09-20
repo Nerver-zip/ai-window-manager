@@ -151,7 +151,7 @@ export class ActionExecutor {
       this.markSkipped(intent, nowMs, ActionReasonCode.ProviderUnavailable, report);
       return;
     }
-    if (!adapter.capabilities().windowTrigger.supported) {
+    if (!triggerCapabilityAvailable(adapter)) {
       this.markSkipped(intent, nowMs, ActionReasonCode.CapabilityUnavailable, report);
       return;
     }
@@ -180,9 +180,14 @@ export class ActionExecutor {
       this.actionEvent(claimed, 'action_dispatch_started', 'ACTION_DISPATCH_STARTED'),
     );
 
+    if (typeof adapter.triggerWindow !== 'function') {
+      this.markSkipped(intent, nowMs, ActionReasonCode.CapabilityUnavailable, report);
+      return;
+    }
+
     let result: ProviderActionResult;
     try {
-      result = await adapter.triggerWindow!(
+      result = await adapter.triggerWindow(
         {},
         {
           intentId: claimed.id,
@@ -481,6 +486,14 @@ function safeErrorCode(error: unknown): string | undefined {
 
 function isDefinitelyPreDispatch(errorCode: string | undefined): boolean {
   return errorCode !== undefined && definitelyPreDispatchErrors.has(errorCode);
+}
+
+function triggerCapabilityAvailable(adapter: ProviderAdapter): boolean {
+  try {
+    return adapter.capabilities().windowTrigger.supported;
+  } catch {
+    return false;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

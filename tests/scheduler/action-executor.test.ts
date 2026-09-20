@@ -191,6 +191,17 @@ describe('ActionExecutor', () => {
     await unsupported.executor({ adapters: new Map([['fake', unsupportedAdapter]]) }).executeDue();
     expect(unsupported.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
     expect(unsupported.triggerCount).toBe(0);
+
+    const throwing = setup();
+    const throwingAdapter: ProviderAdapter = {
+      ...throwing.adapter,
+      capabilities: () => {
+        throw new Error('capabilities unavailable');
+      },
+    };
+    await throwing.executor({ adapters: new Map([['fake', throwingAdapter]]) }).executeDue();
+    expect(throwing.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
+    expect(throwing.triggerCount).toBe(0);
   });
 
   it('keeps uncertain outcomes uncertain and never blindly retries', async () => {
@@ -226,6 +237,25 @@ describe('ActionExecutor', () => {
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('executing');
     await context.executor().executeDue();
 
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+  });
+
+  it('recovers a crash immediately before dispatch without dispatching', async () => {
+    const context = setup();
+    let crashed = false;
+    const onPhase = (phase: ActionExecutorPhase) => {
+      if (phase === 'before_dispatch' && !crashed) {
+        crashed = true;
+        throw new Error('simulated crash before dispatch');
+      }
+    };
+
+    await expect(context.executor({ onPhase }).executeDue()).rejects.toThrow(
+      'simulated crash before dispatch',
+    );
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('executing');
+    await context.executor().executeDue();
     expect(context.triggerCount).toBe(0);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
   });
@@ -287,6 +317,26 @@ describe('ActionExecutor', () => {
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
     await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
 
+    expect(context.triggerCount).toBe(1);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
+  it('recovers a crash during confirmation without redispatching', async () => {
+    const context = setup();
+    let crashed = false;
+    const onPhase = (phase: ActionExecutorPhase) => {
+      if (phase === 'during_confirmation' && !crashed) {
+        crashed = true;
+        throw new Error('simulated confirmation crash');
+      }
+    };
+
+    await expect(context.executor({ onPhase }).executeDue()).rejects.toThrow(
+      'simulated confirmation crash',
+    );
+    expect(context.triggerCount).toBe(1);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('succeeded');
+    await context.executor().executeDue();
     expect(context.triggerCount).toBe(1);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
   });
