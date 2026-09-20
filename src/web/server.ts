@@ -6,6 +6,7 @@ import type { Clock } from '../scheduler/clock.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type {
   ActionIntentRecord,
+  EventRecord,
   ProviderRecord,
   ProviderStateRecord,
   StorageRepositories,
@@ -20,6 +21,13 @@ import {
   type SchedulePolicyView,
   type SettingsProviderView,
 } from './settings-ui.js';
+import {
+  MAX_HISTORY_EVENTS,
+  MAX_USAGE_POINTS,
+  renderHistoryPage,
+  type HistoryTimelineEvent,
+  type HistoryUsageSample,
+} from './history-ui.js';
 import {
   DEFAULT_HTTP_BODY_LIMIT_BYTES,
   ensureCsrfToken,
@@ -193,6 +201,28 @@ export function buildServer(input: BuildServerInput) {
   });
 
   app.get('/api/v1/settings', () => readApi.getSettings().body);
+
+  app.get('/history', async (request, reply) => {
+    const query = asRecord(request.query);
+    const providerId = stringValue(query.provider) ?? undefined;
+    const providers = input.repositories.providers.list();
+    const selectedProviders = providerId
+      ? providers.filter((provider) => provider.id === providerId)
+      : providers;
+    const events = input.repositories.events.list(providerId, { limit: MAX_HISTORY_EVENTS });
+    const samples = selectedProviders.flatMap((provider) =>
+      input.repositories.windowSamples.list(provider.id, { limit: MAX_USAGE_POINTS * 8 }),
+    );
+
+    reply.type('text/html; charset=utf-8');
+    return renderHistoryPage({
+      now: input.clock.now(),
+      filter: { range: query.range, ...(providerId ? { providerId } : {}) },
+      providers: providers.map((provider) => ({ id: provider.id, label: provider.id })),
+      events: events.map(historyTimelineEvent),
+      samples: samples.map(historyUsageSample),
+    });
+  });
 
   app.get('/settings', async (request, reply) => {
     const csrf = ensureCsrfToken(request.headers.cookie, {
@@ -498,7 +528,28 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function renderOverview(providers: ProviderRead[]): string {
   const cards = providers.map(renderProviderCard).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Window Manager</title><style>body{font:16px system-ui;max-width:980px;margin:3rem auto;padding:0 1rem;background:#111;color:#eee}article{border:1px solid #444;border-radius:12px;padding:1rem;margin:1rem 0}dl{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr;gap:.45rem 1rem}dt{color:#aaa}dd{margin:0}code{background:#222;padding:.2rem .4rem;border-radius:4px}.muted{color:#aaa}.stale{border-color:#d58b32}.warning{color:#ffbf69}.unknown{color:#aaa}a{color:#8ecbff}</style></head><body><h1>AI Window Manager</h1><p class="muted">Persisted provider overview</p>${cards || '<p class="unknown">No providers configured.</p>'}<p><a href="/settings">settings</a> · <a href="/schedule">schedule</a> · <a href="/api/v1/providers">JSON providers</a> · <a href="/metrics">metrics</a></p></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Window Manager</title><style>body{font:16px system-ui;max-width:980px;margin:3rem auto;padding:0 1rem;background:#111;color:#eee}article{border:1px solid #444;border-radius:12px;padding:1rem;margin:1rem 0}dl{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr;gap:.45rem 1rem}dt{color:#aaa}dd{margin:0}code{background:#222;padding:.2rem .4rem;border-radius:4px}.muted{color:#aaa}.stale{border-color:#d58b32}.warning{color:#ffbf69}.unknown{color:#aaa}a{color:#8ecbff}</style></head><body><h1>AI Window Manager</h1><p class="muted">Persisted provider overview</p>${cards || '<p class="unknown">No providers configured.</p>'}<p><a href="/settings">settings</a> · <a href="/schedule">schedule</a> · <a href="/history">history</a> · <a href="/api/v1/providers">JSON providers</a> · <a href="/metrics">metrics</a></p></body></html>`;
+}
+
+function historyTimelineEvent(event: EventRecord): HistoryTimelineEvent {
+  return {
+    id: event.id ?? 0,
+    occurredAt: new Date(event.occurredAtMs).toISOString(),
+    providerId: event.providerId,
+    type: event.type,
+    severity: event.severity,
+    reasonCode: event.reasonCode,
+  };
+}
+
+function historyUsageSample(snapshot: WindowSnapshot): HistoryUsageSample {
+  return {
+    providerId: snapshot.providerId,
+    windowKind: snapshot.windowKind,
+    observedAt: snapshot.observedAt,
+    usageRatio: snapshot.usageRatio?.value ?? null,
+    remainingRatio: snapshot.remainingRatio?.value ?? null,
+  };
 }
 
 function renderProviderCard(provider: ProviderRead): string {

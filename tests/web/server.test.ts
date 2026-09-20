@@ -314,6 +314,10 @@ describe('web server persisted overview', () => {
   it('serves provider detail, bounded history and allowlisted settings from SQLite', async () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories);
+      const current = observation();
+      const window = current.windows[0];
+      if (!window) throw new Error('test observation window missing');
+      repositories.windowSamples.insert(window);
       repositories.settings.set('timezone', 'America/Sao_Paulo', Date.parse(NOW));
       repositories.settings.set('secret_token', 'synthetic-not-a-secret', Date.parse(NOW));
       repositories.events.append({
@@ -331,6 +335,13 @@ describe('web server persisted overview', () => {
     expect(history.statusCode).toBe(200);
     const historyBody = JSON.parse(history.body) as { events: unknown[] };
     expect(historyBody.events).toHaveLength(1);
+    const historyPage = await app.inject('/history?range=24h&provider=fake');
+    expect(historyPage.statusCode).toBe(200);
+    expect(historyPage.headers['content-type']).toContain('text/html');
+    expect(historyPage.body).toContain('Timeline');
+    expect(historyPage.body).toContain('Usage');
+    expect(historyPage.body).toContain('25%');
+    expect(historyPage.body).not.toContain('synthetic-not-a-secret');
     const settings = await app.inject('/api/v1/settings');
     expect(settings.statusCode).toBe(200);
     expect(settings.body).toContain('America/Sao_Paulo');
