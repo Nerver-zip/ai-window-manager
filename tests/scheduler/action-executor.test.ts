@@ -241,13 +241,13 @@ describe('ActionExecutor', () => {
     let dispatches = 0;
     const adapter: ProviderAdapter = {
       ...context.adapter,
-      triggerWindow: async () => {
+      triggerWindow: () => {
         dispatches += 1;
-        return {
+        return Promise.resolve({
           status: 'failed',
           occurredAt: context.clock.now().toISOString(),
           errorCode: 'PROCESS_START_FAILED',
-        };
+        });
       },
     };
 
@@ -267,10 +267,12 @@ describe('ActionExecutor', () => {
     const context = setup();
     const adapter: ProviderAdapter = {
       ...context.adapter,
-      triggerWindow: async () => {
-        throw Object.assign(new Error('provider unavailable before send'), {
-          code: 'PROVIDER_NOT_AVAILABLE',
-        });
+      triggerWindow: () => {
+        return Promise.reject(
+          Object.assign(new Error('provider unavailable before send'), {
+            code: 'PROVIDER_NOT_AVAILABLE',
+          }),
+        );
       },
     };
 
@@ -287,9 +289,9 @@ describe('ActionExecutor', () => {
     let dispatches = 0;
     const adapter: ProviderAdapter = {
       ...context.adapter,
-      triggerWindow: async () => {
+      triggerWindow: () => {
         dispatches += 1;
-        throw Object.assign(new Error('response timeout'), { code: 'ETIMEDOUT' });
+        return Promise.reject(Object.assign(new Error('response timeout'), { code: 'ETIMEDOUT' }));
       },
     };
 
