@@ -19,6 +19,10 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  AWM_CODEX_TRIGGER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   AWM_CODEX_HOME: z.string().default('./data/codex'),
   AWM_CODEX_EXECUTABLE: z.string().default('codex'),
   AWM_RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),

@@ -18,7 +18,10 @@ Stable reasons currently include `TARGET_RESET_WINDOW_MATCH`,
 
 ### Manual
 
-`Trigger now` creates an action intent only if the provider reports `canTriggerWindow=true`, the user has enabled automation for that provider, and a fresh preflight inspection says an action is eligible.
+`Trigger now` creates an action intent only if the provider reports
+`canTriggerWindow=true`, the user has enabled automation for that provider, and
+a fresh preflight inspection says an action is eligible. For Codex this also
+requires `AWM_CODEX_TRIGGER_ENABLED=true`.
 
 ### Target reset
 
@@ -81,7 +84,11 @@ planned
   └─> failed_retryable / failed_terminal
 ```
 
-For quota-affecting `trigger_window`, a transport timeout after dispatch is **uncertain**, not `failed_retryable`. The daemon reconciles with a fresh usage observation before considering any further action.
+For quota-affecting `trigger_window`, a transport timeout after dispatch is
+**uncertain**, not `failed_retryable`. The daemon reconciles with a fresh usage
+observation before considering any further action. A Codex `turn/completed`
+notification is the provider action confirmation; it does not authorize a
+second turn.
 
 ## Retries
 

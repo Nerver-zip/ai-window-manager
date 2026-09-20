@@ -1,4 +1,7 @@
+import { chmodSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
+  ProviderActionResultSchema,
   ProviderIdSchema,
   StaleAfterSecondsSchema,
   parseProviderObservation,
@@ -12,6 +15,7 @@ import type {
   ProviderObservation,
   WindowPhase,
   WindowSnapshot,
+  ProviderActionResult,
 } from '../../domain/types.js';
 import type { ProviderAdapter, ProviderContext } from '../provider.js';
 import {
@@ -30,6 +34,7 @@ import {
 const DEFAULT_STALE_AFTER_SECONDS = 300;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const MAX_REQUEST_TIMEOUT_MS = 60_000;
+export const CODEX_TRIGGER_MESSAGE = 'Hi!';
 
 export interface CodexProviderOptions {
   codexHome: string;
@@ -37,6 +42,8 @@ export interface CodexProviderOptions {
   executable?: string;
   staleAfterSeconds?: number;
   requestTimeoutMs?: number;
+  triggerEnabled?: boolean;
+  triggerWorkspace?: string;
   now?: () => Date;
   spawnProcess?: CodexProcessFactory;
 }
@@ -100,6 +107,7 @@ function windowSnapshot(
   windowKind: string,
   window: CodexRateLimitWindow,
   observedAt: string,
+  inferPhase: boolean,
 ): WindowSnapshot {
   const duration = durationSeconds(window);
   const resetAt =
@@ -124,6 +132,11 @@ function windowSnapshot(
   if (duration !== undefined && resetAt !== undefined) {
     const startedAt = new Date(new Date(resetAt).getTime() - duration * 1000);
     snapshot.startedAt = fact(startedAt.toISOString(), 'inferred', 'high', observedAt);
+  }
+  if (inferPhase && resetAt !== undefined) {
+    const phase =
+      new Date(resetAt).getTime() <= new Date(observedAt).getTime() ? 'INACTIVE' : 'ACTIVE';
+    snapshot.phase = fact(phase, 'inferred', 'high', observedAt);
   }
   return snapshot;
 }
@@ -166,6 +179,8 @@ export class CodexProvider implements ProviderAdapter {
   private readonly codexHome: string;
   private readonly staleAfterSeconds: number;
   private readonly requestTimeoutMs: number;
+  private readonly triggerEnabled: boolean;
+  private readonly triggerWorkspace: string;
   private readonly now: () => Date;
   private readonly spawnProcess: CodexProcessFactory | undefined;
   private currentHealth: ProviderHealth = 'UNAVAILABLE';
@@ -189,6 +204,8 @@ export class CodexProvider implements ProviderAdapter {
         `CodexProvider requestTimeoutMs must be between 1 and ${MAX_REQUEST_TIMEOUT_MS}`,
       );
     }
+    this.triggerEnabled = options.triggerEnabled ?? false;
+    this.triggerWorkspace = resolve(options.triggerWorkspace ?? '/tmp/awm-codex-trigger');
     this.now = options.now ?? (() => new Date());
     this.spawnProcess = options.spawnProcess;
   }
@@ -206,10 +223,12 @@ export class CodexProvider implements ProviderAdapter {
         notes: 'resetAt is preserved only when returned by the official client',
       },
       windowTrigger: {
-        supported: false,
-        contract: 'unknown',
-        consumesQuota: 'unknown',
-        notes: 'CODEX-001 is monitor-only; no action method is exposed',
+        supported: this.triggerEnabled,
+        contract: 'official_supported',
+        consumesQuota: true,
+        notes: this.triggerEnabled
+          ? 'Enabled opt-in ordinary official app-server turn; sends a fixed minimal Hi! message'
+          : 'Disabled by AWM_CODEX_TRIGGER_ENABLED; no quota-consuming action is available',
       },
     };
   }
@@ -266,6 +285,7 @@ export class CodexProvider implements ProviderAdapter {
             uniqueWindowKind(base, slot, usedWindowKinds),
             rateWindow,
             observedAt,
+            this.triggerEnabled,
           ),
         );
       }
@@ -280,4 +300,76 @@ export class CodexProvider implements ProviderAdapter {
       ...(windows.length === 0 ? { summary: 'CODEX_NO_RATE_LIMIT_WINDOWS' } : {}),
     });
   }
+
+  async triggerWindow(
+    ctx: ProviderContext,
+    request: Parameters<NonNullable<ProviderAdapter['triggerWindow']>>[1],
+  ): Promise<ProviderActionResult> {
+    void request;
+    const occurredAt = this.now();
+    if (!Number.isFinite(occurredAt.getTime())) {
+      return actionResult('rejected', 'CODEX_INVALID_TIME', undefined, new Date(0));
+    }
+    if (!this.triggerEnabled) {
+      return actionResult('rejected', 'CODEX_TRIGGER_DISABLED', undefined, occurredAt);
+    }
+
+    try {
+      mkdirSync(this.triggerWorkspace, { recursive: true, mode: 0o700 });
+      chmodSync(this.triggerWorkspace, 0o700);
+      const clientOptions: CodexAppServerClientOptions = {
+        executable: this.executable,
+        codexHome: this.codexHome,
+        requestTimeoutMs: this.requestTimeoutMs,
+        ...(this.spawnProcess ? { spawnProcess: this.spawnProcess } : {}),
+      };
+      const client = new CodexAppServerClient(clientOptions);
+      await client.sendMessage(CODEX_TRIGGER_MESSAGE, this.triggerWorkspace, ctx.signal);
+      return actionResult('succeeded', undefined, 'CODEX_TURN_COMPLETED', occurredAt);
+    } catch (error) {
+      return triggerFailureResult(error, occurredAt);
+    }
+  }
+}
+
+function actionResult(
+  status: ProviderActionResult['status'],
+  errorCode: string | undefined,
+  confirmationHint: string | undefined,
+  occurredAt: Date,
+): ProviderActionResult {
+  const raw = {
+    status,
+    occurredAt: occurredAt.toISOString(),
+    ...(confirmationHint ? { confirmationHint } : {}),
+    ...(errorCode ? { errorCode } : {}),
+  };
+  return ProviderActionResultSchema.parse(raw) as ProviderActionResult;
+}
+
+function triggerFailureResult(error: unknown, occurredAt: Date): ProviderActionResult {
+  if (!(error instanceof CodexTransportError)) {
+    return actionResult('uncertain', 'CODEX_TURN_OUTCOME_UNKNOWN', undefined, occurredAt);
+  }
+
+  if (error.code === 'AUTH_REQUIRED') {
+    return actionResult('failed', 'AUTH_REQUIRED', undefined, occurredAt);
+  }
+
+  if (error.stage === 'initialize' || error.stage === 'thread_start') {
+    if (error.code === 'PROTOCOL_ERROR') {
+      return actionResult('rejected', 'CODEX_THREAD_START_REJECTED', undefined, occurredAt);
+    }
+    return actionResult('failed', 'PROCESS_START_FAILED', undefined, occurredAt);
+  }
+
+  if (error.stage === 'turn_start' && error.code === 'PROTOCOL_ERROR') {
+    return actionResult('rejected', 'CODEX_TURN_START_REJECTED', undefined, occurredAt);
+  }
+
+  if (error.code === 'TURN_FAILED') {
+    return actionResult('uncertain', 'CODEX_TURN_FAILED', undefined, occurredAt);
+  }
+
+  return actionResult('uncertain', 'CODEX_TURN_OUTCOME_UNKNOWN', undefined, occurredAt);
 }

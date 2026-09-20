@@ -24,9 +24,11 @@ Manager talks to the official client protocol and does not copy a workstation
 auth file back and forth. This avoids shared refresh-token races and reduces
 coupling to raw token formats.
 
-SPIKE-004 did not collect authenticated before/after lifecycle evidence, so
-automatic Codex triggering remains disabled. Do not infer an inactive window
-from zero usage, full remaining quota or an elapsed reset timestamp.
+The quota-consuming trigger gate defaults to disabled. When an operator enables
+`AWM_CODEX_TRIGGER_ENABLED=true` and provider automation, the adapter sends one
+fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
+is explicitly marked inferred; it must not be treated as an official lifecycle
+field. A timeout after dispatch is uncertain and cannot be retried blindly.
 
 ### Antigravity
 

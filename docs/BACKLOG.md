@@ -76,7 +76,7 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## SCHED-003 — Implement action-intent execution/recovery
 
-**Status: complete (2026-09-19) for the safe executor boundary; Codex/Antigravity trigger adapters remain deferred.**
+**Status: complete (2026-09-19) for the safe executor boundary; Antigravity trigger adapters remain deferred.**
 
 **Scope**: claim, dispatch, confirm, uncertain recovery, retry classes, missed-action skip.  
 **Acceptance**: DB unique dedupe protects duplicate trigger; crash-at-each-stage integration tests.  
@@ -101,12 +101,12 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## CODEX-002 — Implement opt-in Codex trigger
 
-**Status: blocked by SPIKE-004 and explicit compliance/live-evidence review.**
+**Status: implementation complete (2026-09-19); live authenticated acceptance pending.**
 
 **Context**: official docs say first message after prior 5h window ends starts a new window.  
 **Scope**: minimal ordinary official-client turn, empty workspace/scoped permissions, persisted intent, confirmation read.  
 **Acceptance**: explicit quota-consuming flag; never uses banked reset; uncertain transport result cannot blind-retry; manual live acceptance procedure documented.  
-**Dependencies**: CODEX-001, SCHED-003, compliance review.
+**Dependencies**: CODEX-001, SCHED-003, explicit operator enablement and live acceptance.
 
 ## ANT-001 — Implement Antigravity read-only adapter if spikes pass
 

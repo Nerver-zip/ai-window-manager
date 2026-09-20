@@ -28,16 +28,19 @@ does not already exist, performs one reconcile, then uses one coalescing global
 reconcile interval. Runtime provider state and planned intents remain in SQLite;
 the overview/API only reads that persisted state. The image packages the
 official Codex CLI `0.155.1` at `/opt/codex/bin/codex`, verified by
-architecture-specific release checksums. Optional Codex monitoring uses the
-dedicated `AWM_CODEX_HOME=/codex-state` volume and is disabled by default. The
-image contains no Codex credentials and the provider still exposes no trigger
-capability.
+architecture-specific release checksums. The runtime image includes the
+system CA bundle required for official Codex HTTPS login and app-server
+connections. Optional Codex monitoring uses the dedicated
+`AWM_CODEX_HOME=/codex-state` volume and is disabled by default. The
+image contains no Codex credentials. Codex trigger support is separately gated
+by `AWM_CODEX_TRIGGER_ENABLED=false` and the persisted provider mode remains
+`monitor_only` until an operator explicitly changes it.
 
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight
 read-only work, closes the HTTP server, and then closes SQLite. The default
 FakeProvider remains monitor-only unless runtime automation is explicitly enabled;
-Codex has no trigger capability in this image.
+Codex has no trigger capability unless the explicit trigger gate is enabled.
 
 ## Dockge
 

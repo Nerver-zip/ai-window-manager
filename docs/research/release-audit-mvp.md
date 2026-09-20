@@ -2,20 +2,21 @@
 
 **Audit date:** 2026-09-19/20  
 **Scope:** Docker/runtime, CI, documentation, API contract, backup/restore,
-dependency/security posture and release evidence for the monitor-only MVP.
+dependency/security posture and release evidence for the monitor MVP with an
+opt-in Codex action path.
 
 ## Executive status
 
-| Area                               | Status                               | Evidence                                                                                                                                                                |
-| ---------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OPS-001 Docker hardening           | **COMPLETE**                         | Compose config/build, healthy runtime, non-root/read-only/cap-drop/no-new-privileges inspection, restart and stop/start smoke passed.                                   |
-| OPS-002 Codex runtime              | **COMPLETE**                         | Official `rust-v0.155.1` package, architecture checksum, UID 10001 and unauthenticated app-server initialize probe passed.                                              |
-| CI-001 validation and Docker smoke | **COMPLETE locally; remote pending** | `pnpm validate`, `actionlint`, Gitleaks and Docker checks passed locally; CI workflow now exercises Compose hardening and persistence. No new GitHub run was triggered. |
-| DOC-001 documentation              | **COMPLETE**                         | README, plan, backlog, API, deployment, persistence, security, providers, UI, testing and changelog reconciled.                                                         |
-| API contract                       | **COMPLETE**                         | Current route inventory is documented; nonexistent `PUT /api/v1/settings` was removed from the current contract; `/history` is implemented.                             |
-| Backup/restore                     | **COMPLETE for MVP runbook**         | WAL-safe stop/copy, integrity checks, schema version check and a disposable Compose restore drill passed.                                                               |
-| Dependency/security posture        | **PARTIAL**                          | Production audit is clean and Gitleaks passes; two moderate development-tool advisories remain for a future dependency upgrade.                                         |
-| MVP release classification         | **MONITOR-ONLY CANDIDATE**           | No generic reliability blocker remains in the locally validated tree. Codex automation is intentionally not enabled.                                                    |
+| Area                               | Status                                     | Evidence                                                                                                                                                                |
+| ---------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OPS-001 Docker hardening           | **COMPLETE**                               | Compose config/build, healthy runtime, non-root/read-only/cap-drop/no-new-privileges inspection, restart and stop/start smoke passed.                                   |
+| OPS-002 Codex runtime              | **COMPLETE**                               | Official `rust-v0.155.1` package, architecture checksum, UID 10001 and unauthenticated app-server initialize probe passed.                                              |
+| CI-001 validation and Docker smoke | **COMPLETE locally; remote pending**       | `pnpm validate`, `actionlint`, Gitleaks and Docker checks passed locally; CI workflow now exercises Compose hardening and persistence. No new GitHub run was triggered. |
+| DOC-001 documentation              | **COMPLETE**                               | README, plan, backlog, API, deployment, persistence, security, providers, UI, testing and changelog reconciled.                                                         |
+| API contract                       | **COMPLETE**                               | Current route inventory is documented; nonexistent `PUT /api/v1/settings` was removed from the current contract; `/history` is implemented.                             |
+| Backup/restore                     | **COMPLETE for MVP runbook**               | WAL-safe stop/copy, integrity checks, schema version check and a disposable Compose restore drill passed.                                                               |
+| Dependency/security posture        | **PARTIAL**                                | Production audit is clean and Gitleaks passes; two moderate development-tool advisories remain for a future dependency upgrade.                                         |
+| MVP release classification         | **MONITOR-ONLY + OPT-IN ACTION CANDIDATE** | No generic reliability blocker remains in the locally validated tree. Codex action is implemented but remains disabled by default pending live acceptance.              |
 
 ## Validation evidence
 
@@ -42,7 +43,8 @@ inside the image as UID 10001 and proved version output plus app-server
 `initialize` with a disposable empty `CODEX_HOME`.
 
 No login, account, token, turn, reset-credit operation or quota-consuming
-action was performed. Codex remains disabled by default and monitor-only.
+action was performed during this audit. Codex remains disabled by default; the
+opt-in action path is covered offline and awaits live authenticated acceptance.
 
 ## CI-001 and security
 
@@ -52,14 +54,14 @@ with a checksum, and validates Compose plus a hardened Compose runtime smoke.
 `actionlint` passed locally. No remote GitHub Actions run was triggered for the
 new local commits.
 
-The local canonical gate passed:
+The local canonical gate passed after the opt-in action-path tests were added:
 
 ```text
-27 test files / 214 tests
-Statements: 97.17%
-Branches:   90.00%
-Functions:  97.19%
-Lines:      97.17%
+27 test files / 241 tests
+Statements: 97.04%
+Branches:   90.15%
+Functions:  97.00%
+Lines:      97.04%
 ```
 
 `pnpm secret:scan` scanned 30 commits and reported no leaks. Production
@@ -118,18 +120,21 @@ The disposable project and its volumes were removed with `down --volumes`.
 The unauthenticated official app-server probe initialized successfully, then
 reported `account: null`, `requiresOpenaiAuth: true`, and an authentication
 error for `account/rateLimits/read`. No authenticated before/after lifecycle
-pair was available and no live turn was authorized. SPIKE-004 is therefore
-classified `BLOCKED`; no `INACTIVE` inference or Codex trigger capability was
-added. The release is a monitor-only candidate, not an automation release.
+pair was available and no live turn was performed during this audit. SPIKE-004
+remains classified `BLOCKED` as an evidence record, while the separately
+authorized opt-in implementation now uses reset-time phase inference and the
+official `thread/start`/`turn/start` lifecycle. The trigger gate remains off by
+default.
 
 ## Remaining risks
 
 - authenticated Codex read acceptance remains a documented manual procedure;
-- Codex lifecycle evidence required for `CODEX-002` remains blocked;
+- authenticated Codex action acceptance remains pending;
 - two moderate development-only Vitest advisories need a future dependency
   upgrade decision;
 - remote GitHub Actions for the new local commits have not been run because the
   commits were not pushed.
 
-This audit does not authorize a public release or a quota-consuming provider
-action. It establishes the locally reproducible monitor-only MVP boundary.
+This audit does not authorize default-on quota automation or a public release.
+It establishes the locally reproducible monitor baseline and the separately
+gated Codex action boundary.

@@ -6,10 +6,22 @@ const MAX_STDERR_BYTES = 4 * 1024;
 const SHUTDOWN_GRACE_MS = 250;
 
 export type CodexTransportErrorCode =
-  'AUTH_REQUIRED' | 'PROTOCOL_ERROR' | 'TIMEOUT' | 'EOF' | 'PROCESS_ERROR' | 'ABORTED';
+  | 'AUTH_REQUIRED'
+  | 'PROTOCOL_ERROR'
+  | 'TIMEOUT'
+  | 'EOF'
+  | 'PROCESS_ERROR'
+  | 'ABORTED'
+  | 'TURN_FAILED';
+
+export type CodexTransportStage =
+  'initialize' | 'rate_limits_read' | 'thread_start' | 'turn_start' | 'turn_completion';
 
 export class CodexTransportError extends Error {
-  constructor(readonly code: CodexTransportErrorCode) {
+  constructor(
+    readonly code: CodexTransportErrorCode,
+    readonly stage?: CodexTransportStage,
+  ) {
     super(`Codex app-server ${code.toLowerCase().replaceAll('_', ' ')}`);
     this.name = 'CodexTransportError';
   }
@@ -28,8 +40,23 @@ export interface CodexAppServerClientOptions {
   spawnProcess?: CodexProcessFactory;
 }
 
+export interface CodexTurnResult {
+  threadId: string;
+  turnId: string;
+}
+
 interface PendingRequest {
+  stage: CodexTransportStage;
   resolve: (value: unknown) => void;
+  reject: (error: CodexTransportError) => void;
+  timeout: NodeJS.Timeout;
+  abortListener?: () => void;
+}
+
+interface NotificationWaiter {
+  method: string;
+  predicate: (params: unknown) => boolean;
+  resolve: (params: unknown) => void;
   reject: (error: CodexTransportError) => void;
   timeout: NodeJS.Timeout;
   abortListener?: () => void;
@@ -40,6 +67,7 @@ interface JsonRpcRecord {
   result?: unknown;
   error?: unknown;
   method?: unknown;
+  params?: unknown;
 }
 
 function defaultSpawn(
@@ -54,22 +82,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function classifyProtocolError(error: unknown): CodexTransportError {
-  if (!isRecord(error)) return new CodexTransportError('PROTOCOL_ERROR');
+function classifyProtocolError(error: unknown, stage?: CodexTransportStage): CodexTransportError {
+  if (!isRecord(error)) return new CodexTransportError('PROTOCOL_ERROR', stage);
 
   const code = error.code;
   const message = error.message;
   const description = `${typeof code === 'string' || typeof code === 'number' ? code : ''} ${typeof message === 'string' ? message : ''}`;
   if (/auth|unauthori[sz]ed|login|sign.?in|credential/i.test(description)) {
-    return new CodexTransportError('AUTH_REQUIRED');
+    return new CodexTransportError('AUTH_REQUIRED', stage);
   }
-  return new CodexTransportError('PROTOCOL_ERROR');
+  return new CodexTransportError('PROTOCOL_ERROR', stage);
+}
+
+function nestedString(value: unknown, parent: string, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const nested = value[parent];
+  if (!isRecord(nested)) return undefined;
+  const result = nested[key];
+  return typeof result === 'string' && result.length > 0 && result.length <= 256
+    ? result
+    : undefined;
 }
 
 export class CodexAppServerClient {
   private readonly spawnProcess: CodexProcessFactory;
   private process: ChildProcessWithoutNullStreams | undefined;
   private readonly pending = new Map<number, PendingRequest>();
+  private readonly notificationWaiters = new Set<NotificationWaiter>();
+  private readonly bufferedNotifications = new Map<string, unknown[]>();
   private readonly decoder = new StringDecoder('utf8');
   private stdoutBuffer = '';
   private nextRequestId = 1;
@@ -93,9 +133,80 @@ export class CodexAppServerClient {
           },
         },
         signal,
+        'initialize',
       );
-      this.sendNotification('initialized');
-      return await this.request('account/rateLimits/read', undefined, signal);
+      this.sendNotification('initialized', 'initialize');
+      return await this.request('account/rateLimits/read', undefined, signal, 'rate_limits_read');
+    } finally {
+      await this.close();
+    }
+  }
+
+  async sendMessage(
+    message: string,
+    workspace: string,
+    signal?: AbortSignal,
+  ): Promise<CodexTurnResult> {
+    this.start();
+    try {
+      await this.request(
+        'initialize',
+        {
+          clientInfo: {
+            name: 'ai-window-manager',
+            title: 'AI Window Manager',
+            version: '0.1.0',
+          },
+        },
+        signal,
+        'initialize',
+      );
+      this.sendNotification('initialized', 'initialize');
+
+      const threadResponse = await this.request(
+        'thread/start',
+        {
+          ephemeral: true,
+          cwd: workspace,
+          approvalPolicy: 'never',
+          sandbox: 'read-only',
+          serviceName: 'ai-window-manager',
+        },
+        signal,
+        'thread_start',
+      );
+      const threadId = nestedString(threadResponse, 'thread', 'id');
+      if (!threadId) throw new CodexTransportError('PROTOCOL_ERROR', 'thread_start');
+
+      const turnResponse = await this.request(
+        'turn/start',
+        {
+          threadId,
+          input: [{ type: 'text', text: message }],
+          cwd: workspace,
+          approvalPolicy: 'never',
+          sandbox: 'read-only',
+        },
+        signal,
+        'turn_start',
+      );
+      const turnId = nestedString(turnResponse, 'turn', 'id');
+      if (!turnId) throw new CodexTransportError('PROTOCOL_ERROR', 'turn_start');
+
+      const completion = this.waitForNotification(
+        'turn/completed',
+        (params) => {
+          const candidateThreadId =
+            isRecord(params) && typeof params.threadId === 'string' ? params.threadId : undefined;
+          const candidateTurnId = nestedString(params, 'turn', 'id');
+          return candidateThreadId === threadId && candidateTurnId === turnId;
+        },
+        signal,
+      );
+      const completed = await completion;
+      const status = nestedString(completed, 'turn', 'status');
+      if (status !== 'completed') throw new CodexTransportError('TURN_FAILED', 'turn_completion');
+      return { threadId, turnId };
     } finally {
       await this.close();
     }
@@ -107,6 +218,7 @@ export class CodexAppServerClient {
 
     this.process = undefined;
     this.rejectPending(new CodexTransportError('EOF'));
+    this.rejectNotificationWaiters(new CodexTransportError('EOF'));
 
     if (child.exitCode !== null || child.killed) return;
 
@@ -160,20 +272,26 @@ export class CodexAppServerClient {
     });
   }
 
-  private request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
+  private request(
+    method: string,
+    params: unknown,
+    signal: AbortSignal | undefined,
+    stage: CodexTransportStage,
+  ): Promise<unknown> {
     const child = this.process;
-    if (!child) return Promise.reject(new CodexTransportError('PROCESS_ERROR'));
+    if (!child) return Promise.reject(new CodexTransportError('PROCESS_ERROR', stage));
     if (this.terminalError) return Promise.reject(this.terminalError);
-    if (signal?.aborted) return Promise.reject(new CodexTransportError('ABORTED'));
+    if (signal?.aborted) return Promise.reject(new CodexTransportError('ABORTED', stage));
 
     const id = this.nextRequestId++;
     const message = params === undefined ? { id, method } : { id, method, params };
 
     return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.rejectRequest(id, new CodexTransportError('TIMEOUT'));
+        this.rejectRequest(id, new CodexTransportError('TIMEOUT', stage));
       }, this.options.requestTimeoutMs);
       const pending: PendingRequest = {
+        stage,
         resolve: (value) => {
           clearTimeout(timeout);
           if (signal && pending.abortListener)
@@ -189,7 +307,8 @@ export class CodexAppServerClient {
         timeout,
       };
       if (signal) {
-        pending.abortListener = () => this.rejectRequest(id, new CodexTransportError('ABORTED'));
+        pending.abortListener = () =>
+          this.rejectRequest(id, new CodexTransportError('ABORTED', stage));
         signal.addEventListener('abort', pending.abortListener, { once: true });
       }
       this.pending.set(id, pending);
@@ -197,18 +316,18 @@ export class CodexAppServerClient {
       try {
         child.stdin.write(`${JSON.stringify(message)}\n`, 'utf8');
       } catch {
-        this.rejectRequest(id, new CodexTransportError('PROCESS_ERROR'));
+        this.rejectRequest(id, new CodexTransportError('PROCESS_ERROR', stage));
       }
     });
   }
 
-  private sendNotification(method: string): void {
+  private sendNotification(method: string, stage: CodexTransportStage): void {
     const child = this.process;
-    if (!child) throw new CodexTransportError('PROCESS_ERROR');
+    if (!child) throw new CodexTransportError('PROCESS_ERROR', stage);
     try {
       child.stdin.write(`${JSON.stringify({ method })}\n`, 'utf8');
     } catch {
-      throw new CodexTransportError('PROCESS_ERROR');
+      throw new CodexTransportError('PROCESS_ERROR', stage);
     }
   }
 
@@ -242,7 +361,10 @@ export class CodexAppServerClient {
     }
 
     const record = parsed as JsonRpcRecord;
-    if (record.id === undefined) return;
+    if (record.id === undefined) {
+      if (typeof record.method === 'string') this.notify(record.method, record.params);
+      return;
+    }
     if (typeof record.id !== 'number' || !Number.isInteger(record.id)) {
       this.failAll(new CodexTransportError('PROTOCOL_ERROR'));
       return;
@@ -254,7 +376,7 @@ export class CodexAppServerClient {
       return;
     }
     if ('error' in record) {
-      this.rejectRequest(record.id, classifyProtocolError(record.error));
+      this.rejectRequest(record.id, classifyProtocolError(record.error, pending.stage));
       return;
     }
     if (!('result' in record)) {
@@ -276,8 +398,104 @@ export class CodexAppServerClient {
     for (const id of this.pending.keys()) this.rejectRequest(id, error);
   }
 
+  private waitForNotification(
+    method: string,
+    predicate: (params: unknown) => boolean,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (signal?.aborted)
+      return Promise.reject(new CodexTransportError('ABORTED', 'turn_completion'));
+
+    const buffered = this.bufferedNotifications.get(method);
+    const bufferedIndex = buffered?.findIndex((params) => {
+      try {
+        return predicate(params);
+      } catch {
+        return false;
+      }
+    });
+    if (buffered && bufferedIndex !== undefined && bufferedIndex >= 0) {
+      const [params] = buffered.splice(bufferedIndex, 1);
+      if (buffered.length === 0) this.bufferedNotifications.delete(method);
+      return Promise.resolve(params);
+    }
+
+    return new Promise<unknown>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.rejectNotificationWaiter(
+          waiter,
+          new CodexTransportError('TIMEOUT', 'turn_completion'),
+        );
+      }, this.options.requestTimeoutMs);
+      const waiter: NotificationWaiter = {
+        method,
+        predicate,
+        resolve: (params) => {
+          clearTimeout(timeout);
+          if (signal && waiter.abortListener)
+            signal.removeEventListener('abort', waiter.abortListener);
+          resolve(params);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          if (signal && waiter.abortListener)
+            signal.removeEventListener('abort', waiter.abortListener);
+          reject(error);
+        },
+        timeout,
+      };
+      if (signal) {
+        waiter.abortListener = () =>
+          this.rejectNotificationWaiter(
+            waiter,
+            new CodexTransportError('ABORTED', 'turn_completion'),
+          );
+        signal.addEventListener('abort', waiter.abortListener, { once: true });
+      }
+      this.notificationWaiters.add(waiter);
+    });
+  }
+
+  private notify(method: string, params: unknown): void {
+    let delivered = false;
+    for (const waiter of [...this.notificationWaiters]) {
+      if (waiter.method !== method) continue;
+      let matches = false;
+      try {
+        matches = waiter.predicate(params);
+      } catch {
+        this.rejectNotificationWaiter(
+          waiter,
+          new CodexTransportError('PROTOCOL_ERROR', 'turn_completion'),
+        );
+        continue;
+      }
+      if (matches) {
+        this.notificationWaiters.delete(waiter);
+        waiter.resolve(params);
+        delivered = true;
+      }
+    }
+    if (!delivered) {
+      const buffered = this.bufferedNotifications.get(method) ?? [];
+      if (buffered.length < 8) buffered.push(params);
+      this.bufferedNotifications.set(method, buffered);
+    }
+  }
+
+  private rejectNotificationWaiter(waiter: NotificationWaiter, error: CodexTransportError): void {
+    if (!this.notificationWaiters.delete(waiter)) return;
+    waiter.reject(error);
+  }
+
+  private rejectNotificationWaiters(error: CodexTransportError): void {
+    for (const waiter of [...this.notificationWaiters])
+      this.rejectNotificationWaiter(waiter, error);
+  }
+
   private failAll(error: CodexTransportError): void {
     this.terminalError ??= error;
     this.rejectPending(this.terminalError);
+    this.rejectNotificationWaiters(this.terminalError);
   }
 }

@@ -10,6 +10,7 @@ describe('loadConfig', () => {
     expect(config.AWM_TIMEZONE).toBe('America/Sao_Paulo');
     expect(config.AWM_FAKE_PROVIDER_ENABLED).toBe(true);
     expect(config.AWM_CODEX_ENABLED).toBe(false);
+    expect(config.AWM_CODEX_TRIGGER_ENABLED).toBe(false);
     expect(config.AWM_CODEX_HOME).toBe('./data/codex');
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
     expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);

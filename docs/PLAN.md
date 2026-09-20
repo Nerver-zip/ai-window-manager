@@ -1,7 +1,7 @@
 # AI Window Manager — implementation plan
 
 Prepared: **2026-09-19**
-Scope: safe observation-to-action-intent vertical slice; quota-consuming provider actions remain deferred.
+Scope: safe observation-to-action-intent vertical slice; quota-consuming provider actions are explicit opt-in only.
 
 ## A. Executive summary
 
@@ -9,7 +9,7 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The current safe executor can dispatch only an explicitly enabled adapter capability; Codex and Antigravity remain monitor-only in this milestone.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The current safe executor dispatches only an explicitly enabled adapter capability; Codex has an opt-in quota-consuming path and Antigravity remains monitor-only in this milestone.
 
 ## Current milestone status
 
@@ -20,10 +20,11 @@ The executor is quota-safe by default, confirms outcomes with fresh observation,
 and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
 non-secret provider settings and target-reset schedule forms. The bounded
 history page reads persisted events/samples and does not inspect providers.
-`CODEX-002` remains blocked by SPIKE-004; Antigravity work, aggregate
-statistics and richer charting remain out of scope.
+`CODEX-002` is implemented behind an explicit trigger gate and requires live
+authenticated acceptance before production enablement. Antigravity work,
+aggregate statistics and richer charting remain out of scope.
 
-Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots. A minimal normal Codex request may therefore be a quota-consuming trigger, but SPIKE-004 did not prove automatic eligibility or confirmation in an authorized runtime. The implementation remains monitor-only; there is no dedicated zero-cost “start window” API. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
+Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
 Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. SPIKE-002 validated a structured official headless JSON/NDJSON usage path for monitor-only parsing, but SPIKE-003 found no supported safe container auth-persistence path. Google also explicitly warns that third-party software using Antigravity login violates its Terms. The design therefore forbids token extraction/direct backend impersonation and considers only the official `agy` executable. Exact inactive-window start semantics and container keyring persistence remain UNKNOWN; Antigravity stays monitor-only/disabled until the auth boundary is resolved.
 
@@ -454,8 +455,8 @@ remain capability-gated.**
 ### Phase 4 — Codex monitor
 
 **Status: CODEX-001 offline adapter and OPS-002 runtime packaging complete;
-live authenticated acceptance remains manual/pending. SPIKE-004 is blocked and
-Codex remains read-only.**
+live authenticated acceptance remains manual/pending. Trigger execution is
+explicitly disabled by default.**
 
 **Goal**: real read-only Codex state through official client surface.  
 **Components**: dedicated client state, adapter, parser/schema validation.  
@@ -464,12 +465,11 @@ Codex remains read-only.**
 
 ### Phase 5 — Codex opt-in action
 
-**Status: blocked pending SPIKE-004.**
+**Status: implementation complete; live authenticated acceptance pending.**
 
 **Goal**: position an inactive Codex window using one minimal legitimate normal
-request only if official lifecycle semantics are proven and compliance review
-approves it. Until then the adapter remains monitor-only and no quota-consuming
-action is dispatched.
+request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
+`automation`. The action sends only `Hi!` and is not enabled by default.
 
 ### Phase 6 — Antigravity monitor if feasible
 
@@ -600,4 +600,4 @@ Explicitly still not future goals: agent orchestration, prompt management, accou
 27. **Authority**: SQLite after initialization.
 28. **Threat model**: token/volume theft, LAN access, CSRF/XSS, container escape, supply-chain, malicious response, logs/crashes, Docker permissions; mitigations documented.
 29. **Skills**: provider-adapter, scheduler, testing-time, docker-deployment, database-migration, release. Generic coding skill intentionally omitted.
-30. **MVP scope**: Fake vertical slice, Codex monitor + safe opt-in trigger if spike passes, Antigravity monitor-only if official CLI path is viable, scheduler/config/history/metrics/private UI/Docker; everything broader remains out.
+30. **MVP scope**: Fake vertical slice, Codex monitor + safe opt-in trigger after explicit live acceptance, Antigravity monitor-only if official CLI path is viable, scheduler/config/history/metrics/private UI/Docker; everything broader remains out.

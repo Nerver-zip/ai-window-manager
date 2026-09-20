@@ -204,6 +204,22 @@ export class ActionExecutor {
       this.appendEventOnce(this.actionEvent(claimed, 'action_succeeded', 'ACTION_SUCCEEDED'));
       const succeeded = this.input.repositories.actionIntents.get(claimed.id);
       if (!succeeded) return;
+      if (result.confirmationHint === 'CODEX_TURN_COMPLETED') {
+        if (
+          this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+            claimed.id,
+            nowMs,
+          )
+        ) {
+          report.confirmedIntentIds.push(claimed.id);
+          this.appendEventOnce(
+            this.actionEvent(claimed, 'action_confirmed', ActionReasonCode.Confirmed, {
+              confirmationHint: result.confirmationHint,
+            }),
+          );
+        }
+        return;
+      }
       await this.phase('after_succeeded_before_confirmation', succeeded);
       await this.confirmExisting(succeeded, report);
       return;
@@ -457,6 +473,9 @@ function isEligibleForTrigger(
   intent: ActionIntentRecord,
 ): boolean {
   const window = windowFor(observation, intent);
+  if (intent.reasonCode === 'MANUAL_TRIGGER_REQUESTED') {
+    return window !== undefined && !['ACTIVE', 'EXHAUSTED'].includes(window.phase.value);
+  }
   return (
     window !== undefined &&
     ['exact', 'high'].includes(window.phase.confidence) &&

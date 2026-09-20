@@ -142,12 +142,16 @@ function registerCodexProvider(): void {
   const provider = new CodexProvider({
     codexHome: config.AWM_CODEX_HOME,
     executable: config.AWM_CODEX_EXECUTABLE,
+    triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
   });
   adapters.set(provider.id, provider);
   seedProvider({
     id: provider.id,
     kind: 'codex',
-    config: { codexHome: config.AWM_CODEX_HOME },
+    config: {
+      codexHome: config.AWM_CODEX_HOME,
+      triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
+    },
   });
 }
 

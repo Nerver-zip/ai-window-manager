@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: MVP release-candidate monitor slice. FakeProvider can execute only explicitly enabled, non-quota test actions; Codex remains read-only.
+> Status: MVP release-candidate monitor slice with an explicit, disabled-by-default Codex action path. FakeProvider remains the normal test provider.
 
 ## Product boundary
 
@@ -105,17 +105,17 @@ Included now:
 - bounded persisted history page with 24h/7d/30d and provider filters;
 - read-only command endpoints plus CSRF/Origin-protected settings and target-reset schedule forms;
 - bounded retention maintenance for samples, events and terminal intent history;
-- official Codex app-server read-only adapter with offline protocol fixtures;
-- Docker/Compose hardening baseline with the official Codex CLI `0.155.1` packaged but disabled by default;
+- official Codex app-server adapter with offline protocol fixtures and an opt-in
+  fixed `Hi!` turn;
+- Docker/Compose hardening baseline with the official Codex CLI `0.155.1` packaged and trigger execution disabled by default;
 - CI/validation scaffolding;
 - provider research and compliance classification;
 - ADRs, roadmap, backlog and agent skills.
 
 Intentionally **not** implemented yet:
 
-- Codex trigger and any quota-consuming provider action;
 - Antigravity real adapter;
-- automatic Codex trigger/lifecycle support (SPIKE-004 is blocked pending authorized live evidence);
+- live authenticated Codex acceptance and production enablement of the quota-consuming gate;
 - aggregate statistics and richer charting.
 
 Those are implementation-roadmap work, not omissions from the planning deliverable.

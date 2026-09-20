@@ -154,6 +154,68 @@ describe('ActionExecutor', () => {
     );
   });
 
+  it('accepts the Codex turn-completed confirmation as the action outcome', async () => {
+    const context = setup();
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: () =>
+        Promise.resolve({
+          status: 'succeeded' as const,
+          occurredAt: context.clock.now().toISOString(),
+          confirmationHint: 'CODEX_TURN_COMPLETED',
+        }),
+    };
+
+    const report = await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(report.confirmedIntentIds).toEqual(['intent-1']);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
+  it('allows an explicitly requested manual trigger when Codex phase is unknown', async () => {
+    const context = setup();
+    context.clock.advanceMs(31_000);
+    const nowMs = context.clock.now().getTime();
+    context.repositories.actionIntents.createIfAbsent({
+      ...context.intent,
+      id: 'manual-intent',
+      dedupeKey: 'fake:trigger_window:manual:unknown-phase',
+      reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+      scheduledForMs: nowMs,
+      expiresAtMs: nowMs + 300_000,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+      explanation: { decision: 'manual_trigger', reasonCode: 'MANUAL_TRIGGER_REQUESTED' },
+    });
+    let dispatches = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: async () => {
+        const observation = await context.fake.inspect({});
+        return {
+          ...observation,
+          windows: observation.windows.map((window) => ({
+            ...window,
+            phase: { ...window.phase, value: 'UNKNOWN', confidence: 'unknown' },
+          })),
+        };
+      },
+      triggerWindow: () => {
+        dispatches += 1;
+        return Promise.resolve({
+          status: 'succeeded' as const,
+          occurredAt: context.clock.now().toISOString(),
+          confirmationHint: 'CODEX_TURN_COMPLETED',
+        });
+      },
+    };
+
+    const report = await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(report.confirmedIntentIds).toContain('manual-intent');
+    expect(dispatches).toBe(1);
+  });
+
   it('does not duplicate side effects across repeated ticks or concurrent claims', async () => {
     const context = setup();
     const first = context.executor();

@@ -13,6 +13,237 @@ const clientOptions = {
 };
 
 describe('Codex app-server JSONL transport', () => {
+  it('starts an ephemeral thread, sends a turn, waits for completion, and cleans up', async () => {
+    const methods: Array<string | undefined> = [];
+    const turnParams: unknown[] = [];
+    let child: FakeCodexProcess | undefined;
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory(
+        (message, process) => {
+          methods.push(message.method);
+          if (message.method === 'initialize' && message.id !== undefined) {
+            process.send({ id: message.id, result: {} });
+          }
+          if (message.method === 'thread/start' && message.id !== undefined) {
+            process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+          }
+          if (message.method === 'turn/start' && message.id !== undefined) {
+            turnParams.push(message.params);
+            process.send({
+              id: message.id,
+              result: { turn: { id: 'turn-1', status: 'inProgress' } },
+            });
+            setTimeout(
+              () =>
+                process.send({
+                  method: 'turn/completed',
+                  params: {
+                    threadId: 'thread-1',
+                    turn: { id: 'turn-1', status: 'completed' },
+                  },
+                }),
+              0,
+            );
+          }
+        },
+        (created) => {
+          child = created;
+        },
+      ),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    });
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'turn/start']);
+    expect(turnParams).toEqual([
+      {
+        threadId: 'thread-1',
+        input: [{ type: 'text', text: 'Hi!' }],
+        cwd: '/tmp/awm-codex-workspace',
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+      },
+    ]);
+    expect(child?.killSignals).toEqual(['SIGTERM']);
+  });
+
+  it('consumes a completion notification buffered before the turn response', async () => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined) {
+          process.send({ id: message.id, result: {} });
+        }
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({
+            method: 'turn/completed',
+            params: {
+              threadId: 'thread-1',
+              turn: { id: 'turn-1', status: 'completed' },
+            },
+          });
+          process.send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+        }
+      }),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    });
+  });
+
+  it('ignores unrelated completion notifications while matching the requested turn', async () => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined) {
+          process.send({ id: message.id, result: {} });
+        }
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({ method: 'turn/completed', params: null });
+          process.send({
+            method: 'turn/completed',
+            params: { threadId: 'other-thread', turn: { id: 'other-turn', status: 'completed' } },
+          });
+          process.send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+          setTimeout(
+            () =>
+              process.send({
+                method: 'turn/completed',
+                params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+              }),
+            0,
+          );
+        }
+      }),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    });
+  });
+
+  it('fails closed for a failed turn completion', async () => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined) {
+          process.send({ id: message.id, result: {} });
+        }
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+          setTimeout(
+            () =>
+              process.send({
+                method: 'turn/completed',
+                params: {
+                  threadId: 'thread-1',
+                  turn: { id: 'turn-1', status: 'failed' },
+                },
+              }),
+            0,
+          );
+        }
+      }),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).rejects.toMatchObject({
+      code: 'TURN_FAILED',
+      stage: 'turn_completion',
+    });
+  });
+
+  it('does not wait indefinitely when completion is aborted', async () => {
+    const controller = new AbortController();
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined) {
+          process.send({ id: message.id, result: {} });
+        }
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+          controller.abort();
+        }
+      }),
+    });
+
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', controller.signal),
+    ).rejects.toMatchObject({ code: 'ABORTED', stage: 'turn_completion' });
+  });
+
+  it.each([
+    ['missing thread id', 'thread/start', { thread: {} }, 'thread_start'],
+    ['missing turn id', 'turn/start', { turn: {} }, 'turn_start'],
+  ] as const)('rejects %s', async (_name, method, result, stage) => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined) {
+          process.send({ id: message.id, result: {} });
+        }
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({
+            id: message.id,
+            result: method === 'thread/start' ? result : { thread: { id: 'thread-1' } },
+          });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({ id: message.id, result });
+        }
+      }),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+      stage,
+    });
+  });
+
+  it.each([
+    ['non-string thread id', 'thread/start', { thread: { id: 42 } }, 'thread_start'],
+    ['empty turn id', 'turn/start', { turn: { id: '' } }, 'turn_start'],
+  ] as const)('rejects %s as malformed protocol data', async (_name, method, result, stage) => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined)
+          process.send({ id: message.id, result: {} });
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({
+            id: message.id,
+            result: method === 'thread/start' ? result : { thread: { id: 'thread-1' } },
+          });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined)
+          process.send({ id: message.id, result });
+      }),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).rejects.toMatchObject({
+      code: 'PROTOCOL_ERROR',
+      stage,
+    });
+  });
+
   it('performs initialize, initialized, rate-limit read, and cleanup', async () => {
     const methods: Array<string | undefined> = [];
     const requestIds: Array<number | undefined> = [];
@@ -211,6 +442,18 @@ describe('Codex app-server JSONL transport', () => {
     });
 
     await expect(client.readRateLimits()).rejects.toMatchObject({ code: 'TIMEOUT' });
+  });
+
+  it('rejects a second operation while the app-server process is already active', async () => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      requestTimeoutMs: 10,
+      spawnProcess: fakeProcessFactory(() => undefined),
+    });
+
+    const first = client.readRateLimits();
+    await expect(client.readRateLimits()).rejects.toMatchObject({ code: 'PROCESS_ERROR' });
+    await expect(first).rejects.toMatchObject({ code: 'TIMEOUT' });
   });
 
   it('classifies stdout EOF while waiting for a response', async () => {

@@ -29,13 +29,15 @@ The words below are contractual classifications, not rhetorical labels:
 - A new five-hour window starts when the user sends the first Work/Codex message after the previous five-hour window ends.
 - Current allowance and reset times are surfaced in Settings → Usage; limits vary by plan and workload/model/settings affect consumption.
 - The official open-source Codex app-server protocol includes `account/rateLimits/read` and rate-limit update notifications. Its schema represents used percentage, reset time/window duration and multiple quota buckets.
+- The official app-server also exposes `thread/start`, `turn/start` and the
+  `turn/completed` lifecycle used by the opt-in Codex action adapter.
 - Codex supports authenticated ChatGPT account flows in its official client; auth ownership should remain with the official client rather than this project reimplementing OAuth.
 
 SPIKE-001 confirmed that the documented app-server stdio/JSONL lifecycle and
-`account/rateLimits/read` are suitable for a future read-only adapter. The
-adapter is now implemented as CODEX-001 in `src/providers/codex/`, remains
-monitor-only, and still requires a dedicated persistent `CODEX_HOME` and
-official client-owned authentication. It is not enabled by default.
+`account/rateLimits/read` are suitable for the adapter. The adapter is
+implemented in `src/providers/codex/`, requires a dedicated persistent
+`CODEX_HOME` and official client-owned authentication, and keeps quota action
+disabled by default.
 
 ### Observed / internal
 
@@ -46,7 +48,9 @@ official client-owned authentication. It is not enabled by default.
 ### Inferred, but not automation-proven
 
 - Because OpenAI explicitly defines the first Work/Codex message after expiry as the new window start, one ordinary minimal Codex request may position the start time. It necessarily consumes some included usage and is not a zero-cost “start window” API.
-- SPIKE-004 could not collect authenticated before/after observations in the current environment. The project therefore does not treat this inference as sufficient evidence for automatic eligibility or confirmation.
+- SPIKE-004 could not collect authenticated before/after observations in the
+  current environment. The project therefore treats reset-time phase inference
+  as an explicit operator opt-in, not as an official lifecycle guarantee.
 
 ### Unknown
 
@@ -64,17 +68,19 @@ OpenAI Terms of Use prohibit circumventing rate limits/restrictions or bypassing
 ```text
 can_query_usage       = true  (official Codex client/app-server surface)
 can_query_reset       = true  when returned by provider; nullable otherwise
-can_trigger_window    = false (SPIKE-004 lifecycle evidence is blocked)
-trigger_consumes_quota= unknown until a reviewed live experiment establishes the exact contract
+can_trigger_window    = true only with `AWM_CODEX_TRIGGER_ENABLED=true` and
+                         persisted provider mode `automation`
+trigger_consumes_quota= true (one ordinary official app-server turn; sends `Hi!`)
 public_usage_api      = false
 internal_usage_api    = observed but intentionally unused by default
 ```
 
-The implemented Codex adapter declares `windowTrigger.supported = false` and
-degrades to a bounded `AUTH_REQUIRED`/`UNAVAILABLE`/`ERROR` observation if the
-official client cannot be initialized safely on the server. It never calls
-`/api/codex/usage` or `/wham/usage`. `CODEX-002` remains deferred until
-SPIKE-004 is unblocked and reviewed.
+The implemented Codex adapter declares the trigger capability only when the
+explicit trigger gate is enabled. It degrades to a bounded
+`AUTH_REQUIRED`/`UNAVAILABLE`/`ERROR` observation if the official client cannot
+be initialized safely on the server. It never calls `/api/codex/usage` or
+`/wham/usage`. A timeout or EOF after `turn/start` is uncertain and is never
+blindly retried.
 
 ## Google Antigravity
 

@@ -10,5 +10,7 @@
 - Added a persisted bounded history page with 24h/7d/30d and provider filters.
 - Packaged the official Codex CLI `0.155.1` with release checksums in the
   hardened image; Codex remains disabled/read-only by default.
-- SPIKE-004 remains blocked pending explicitly authorized authenticated
-  lifecycle evidence; no real provider action or quota-consuming turn was run.
+- Added the opt-in official Codex app-server action path: ephemeral read-only
+  thread, fixed `Hi!` turn, completion confirmation and no blind retry after
+  uncertain transport outcomes. The trigger gate remains disabled by default;
+  authenticated live acceptance is still pending.

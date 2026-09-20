@@ -52,7 +52,10 @@ ENV NODE_ENV=production \
     AWM_CODEX_HOME=/codex-state \
     AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex
 WORKDIR /app
-RUN corepack enable \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
     && useradd --system --uid 10001 --create-home --home-dir /home/awm awm \
     && mkdir -p /data /codex-state \
     && chown -R awm:awm /data /codex-state /home/awm \
