@@ -236,6 +236,73 @@ describe('ActionExecutor', () => {
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
   });
 
+  it('moves a claimed intent to failed_retryable for a definitely pre-dispatch result', async () => {
+    const context = setup();
+    let dispatches = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: async () => {
+        dispatches += 1;
+        return {
+          status: 'failed',
+          occurredAt: context.clock.now().toISOString(),
+          errorCode: 'PROCESS_START_FAILED',
+        };
+      },
+    };
+
+    await context
+      .executor({ adapters: new Map([['fake', adapter]]), retryDelayMs: 5_000 })
+      .executeDue();
+
+    expect(dispatches).toBe(1);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_retryable',
+      notBeforeMs: context.clock.now().getTime() + 5_000,
+      lastErrorCode: 'PROCESS_START_FAILED',
+    });
+  });
+
+  it('maps a known pre-dispatch exception to retryable after claim', async () => {
+    const context = setup();
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: async () => {
+        throw Object.assign(new Error('provider unavailable before send'), {
+          code: 'PROVIDER_NOT_AVAILABLE',
+        });
+      },
+    };
+
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_retryable',
+      lastErrorCode: 'PROVIDER_NOT_AVAILABLE',
+    });
+  });
+
+  it('keeps a timeout after possible dispatch uncertain and never retries the turn', async () => {
+    const context = setup();
+    let dispatches = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: async () => {
+        dispatches += 1;
+        throw Object.assign(new Error('response timeout'), { code: 'ETIMEDOUT' });
+      },
+    };
+
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(dispatches).toBe(1);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      lastErrorCode: 'ETIMEDOUT',
+    });
+  });
+
   it('recovers a crash after claim without dispatching', async () => {
     const context = setup();
     let crashed = false;

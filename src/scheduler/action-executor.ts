@@ -349,14 +349,21 @@ export class ActionExecutor {
     report: ActionExecutorReport,
   ): void {
     const retryAtMs = nowMs + (this.input.retryDelayMs ?? 5_000);
-    if (
-      this.input.repositories.actionIntents.markRetryableIfPlannedOrRetryable(
-        intent.id,
-        nowMs,
-        retryAtMs,
-        errorCode,
-      )
-    ) {
+    const transitioned =
+      intent.state === 'executing'
+        ? this.input.repositories.actionIntents.markRetryableIfExecuting(
+            intent.id,
+            nowMs,
+            retryAtMs,
+            errorCode,
+          )
+        : this.input.repositories.actionIntents.markRetryableIfPlannedOrRetryable(
+            intent.id,
+            nowMs,
+            retryAtMs,
+            errorCode,
+          );
+    if (transitioned) {
       this.appendEventOnce(
         this.actionEvent(intent, 'action_failed_retryable', ActionReasonCode.ProviderUnavailable, {
           errorCode,
