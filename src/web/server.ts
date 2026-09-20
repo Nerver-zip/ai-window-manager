@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import { renderAppShell } from './ui/layout.js';
+import { APP_CSS } from './ui/styles.js';
 import type { AppConfig } from '../config.js';
 import type { ProviderCapabilities, ProviderObservation, WindowSnapshot } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
@@ -118,6 +120,9 @@ export function buildServer(input: BuildServerInput) {
     clock: input.clock,
     adapters: input.adapters,
   });
+  app.get('/assets/app.css', async (_request, reply) =>
+    reply.type('text/css; charset=utf-8').send(APP_CSS),
+  );
   const commandApi = createCommandApi({
     repositories: input.repositories,
     adapters: input.adapters,
@@ -297,7 +302,7 @@ export function buildServer(input: BuildServerInput) {
       secure: _request.protocol === 'https',
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
-    return renderOverview(providers);
+    return renderOverview(providers, input.clock.now());
   });
 
   return app;
@@ -364,13 +369,19 @@ function queryMessage(query: unknown): string | null {
 }
 
 function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] {
-  return input.repositories.providers.list().map((provider) => ({
-    id: provider.id,
-    kind: provider.kind,
-    enabled: provider.enabled,
-    mode: provider.mode,
-    pollIntervalSeconds: provider.pollIntervalSeconds,
-  }));
+  return input.repositories.providers.list().map((provider) => {
+    const adapter = input.adapters.get(provider.id);
+    const capabilities = adapter ? safeCapabilities(adapter) : undefined;
+    return {
+      id: provider.id,
+      kind: provider.kind,
+      enabled: provider.enabled,
+      mode: provider.mode,
+      pollIntervalSeconds: provider.pollIntervalSeconds,
+      ...(capabilities ? { capabilities } : {}),
+      windows: input.repositories.providerState.get(provider.id)?.observation?.windows ?? [],
+    };
+  });
 }
 
 function schedulePolicyView(input: BuildServerInput): SchedulePolicyView | undefined {
@@ -448,9 +459,8 @@ function freshness(state: ProviderStateRecord | undefined, nowMs: number): Fresh
 function readDecision(input: BuildServerInput, providerId: string): DecisionRead | null {
   const events = input.repositories.events.list(providerId, { limit: 100 });
   const event = events.find((candidate) => DECISION_EVENT_TYPES.has(candidate.type));
-  const intent = input.repositories.actionIntents
-    .listOpen(providerId)
-    .find((candidate) => candidate.state === 'planned');
+  const openIntents = input.repositories.actionIntents.listOpen(providerId);
+  const intent = openIntents.find((candidate) => candidate.state === 'uncertain') ?? openIntents[0];
 
   if (event) {
     const explanation = extractExplanation(event.data);
@@ -526,9 +536,14 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function renderOverview(providers: ProviderRead[]): string {
-  const cards = providers.map(renderProviderCard).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Window Manager</title><style>body{font:16px system-ui;max-width:980px;margin:3rem auto;padding:0 1rem;background:#111;color:#eee}article{border:1px solid #444;border-radius:12px;padding:1rem;margin:1rem 0}dl{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr;gap:.45rem 1rem}dt{color:#aaa}dd{margin:0}code{background:#222;padding:.2rem .4rem;border-radius:4px}.muted{color:#aaa}.stale{border-color:#d58b32}.warning{color:#ffbf69}.unknown{color:#aaa}a{color:#8ecbff}</style></head><body><h1>AI Window Manager</h1><p class="muted">Persisted provider overview</p>${cards || '<p class="unknown">No providers configured.</p>'}<p><a href="/settings">settings</a> · <a href="/schedule">schedule</a> · <a href="/history">history</a> · <a href="/api/v1/providers">JSON providers</a> · <a href="/metrics">metrics</a></p></body></html>`;
+function renderOverview(providers: ProviderRead[], now: Date): string {
+  const cards = providers.map((provider) => renderProviderCard(provider, now)).join('');
+  return renderAppShell({
+    page: 'overview',
+    title: 'Overview',
+    description: 'Your usage windows, at a glance. Quota, timing and the decisions behind them.',
+    content: `<section class="summary-grid" aria-label="Workspace summary"><div class="summary-stat"><strong>${providers.length}</strong><span>Configured providers</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.health === 'UP').length}</strong><span>Healthy providers</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.mode === 'automation').length}</strong><span>Automation enabled</span></div></section>${cards || '<section class="empty-state"><h2>No providers configured</h2><p>Enable a provider in the application configuration to begin observing usage windows.</p></section>'}`,
+  });
 }
 
 function historyTimelineEvent(event: EventRecord): HistoryTimelineEvent {
@@ -552,7 +567,7 @@ function historyUsageSample(snapshot: WindowSnapshot): HistoryUsageSample {
   };
 }
 
-function renderProviderCard(provider: ProviderRead): string {
+function renderProviderCard(provider: ProviderRead, now: Date): string {
   const staleClass = provider.freshness.stale ? ' stale' : '';
   const staleLabel = provider.freshness.stale
     ? provider.freshness.observedAt
@@ -565,17 +580,51 @@ function renderProviderCard(provider: ProviderRead): string {
       : `${provider.freshness.ageSeconds}s ago · ${staleLabel}`;
   const windows =
     provider.windows.length > 0
-      ? provider.windows.map(renderWindow).join('')
-      : '<p class="unknown">Window: unknown</p>';
+      ? `<div class="window-grid">${provider.windows.map((window) => renderWindow(window, now)).join('')}</div>`
+      : '<div class="empty-state"><h3>No observation yet</h3><p>Window: unknown</p></div>';
   const decision = provider.nextDecision
-    ? `<p><strong>Next decision:</strong> ${escapeHtml(provider.nextDecision.decision)} · ${escapeHtml(provider.nextDecision.reasonCode ?? 'unknown')}</p><p><strong>Why:</strong> <code>${escapeHtml(JSON.stringify(provider.nextDecision.explanation))}</code></p>`
-    : '<p><strong>Next decision:</strong> unknown</p><p><strong>Why:</strong> unknown</p>';
+    ? `<section class="decision-panel"><p class="eyebrow">NEXT DECISION</p><h3>${provider.nextDecision.decision === 'create_intent' ? 'Action planned' : 'No automatic action'}</h3><p>${escapeHtml(decisionDescription(provider.nextDecision.reasonCode))}</p><details><summary>Technical details</summary><code>${escapeHtml(provider.nextDecision.reasonCode ?? 'unknown')}</code><pre>${escapeHtml(JSON.stringify(provider.nextDecision.explanation, null, 2))}</pre></details></section>`
+    : '<section class="decision-panel"><p class="eyebrow">NEXT DECISION</p><h3>No scheduling decision yet</h3><p>A decision will appear after an enabled schedule is evaluated. <a href="/schedule">Review schedule</a></p></section>';
 
-  return `<article class="provider${staleClass}"><h2>${escapeHtml(provider.id)}</h2><p class="muted">Kind: ${escapeHtml(provider.kind)} · Mode: ${escapeHtml(provider.mode)} · ${provider.enabled ? 'enabled' : 'disabled'}</p><dl><dt>Health</dt><dd>${escapeHtml(provider.health)}</dd><dt>Last updated</dt><dd>${escapeHtml(freshnessLabel)}</dd><dt>Last error</dt><dd>${escapeHtml(provider.lastErrorCode ?? 'none')}</dd></dl>${windows}${decision}</article>`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div><h2>${escapeHtml(provider.id)}</h2><p class="provider-meta">${escapeHtml(provider.kind)} · ${provider.enabled ? 'enabled' : 'disabled'}</p></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(provider.health)}</span><span class="badge">${escapeHtml(provider.mode.replaceAll('_', ' '))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">Data may no longer reflect current usage.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Authentication required. Sign in through the official provider client.</p>' : ''}<details><summary>Provider details</summary><dl><dt>Health</dt><dd>${escapeHtml(provider.health)}</dd><dt>Last error</dt><dd>${escapeHtml(provider.lastErrorCode ?? 'none')}</dd></dl></details>${windows}${decision}</article>`;
 }
 
-function renderWindow(window: WindowSnapshot): string {
-  return `<section><h3>${escapeHtml(window.windowKind)}</h3><dl><dt>Phase</dt><dd>${factText(window.phase.value, window.phase.source, window.phase.confidence)}</dd><dt>Usage</dt><dd>${factRatioText(window.usageRatio)}</dd><dt>Remaining</dt><dd>${factRatioText(window.remainingRatio)}</dd><dt>Reset</dt><dd>${factInstantText(window.resetAt)}</dd><dt>Duration</dt><dd>${factNumberText(window.durationSeconds, 's')}</dd></dl></section>`;
+function decisionDescription(reason: string | null): string {
+  const descriptions: Record<string, string> = {
+    TARGET_RESET_WINDOW_MATCH:
+      'The target time matches this window. A durable action intent has been planned.',
+    TARGET_NOT_DUE: 'The candidate trigger time has not arrived yet.',
+    TARGET_MISSED:
+      'The candidate time has passed. The action was skipped to avoid an unexpected request.',
+    WINDOW_DURATION_UNKNOWN: 'Window duration is unknown. A trigger time cannot be calculated yet.',
+    WINDOW_DURATION_CONFIDENCE_TOO_LOW:
+      'Window duration confidence is too low for automatic scheduling.',
+    WINDOW_PHASE_CONFIDENCE_TOO_LOW:
+      'Window phase confidence is too low. Scheduling requires a reliable inactive state.',
+    WINDOW_NOT_INACTIVE: 'The window is not inactive. No new window needs to be started.',
+    OBSERVATION_STALE: 'The observation is stale. Waiting for fresh provider evidence.',
+    OBSERVATION_MISSING: 'Waiting for the first valid provider observation.',
+    TRIGGER_CAPABILITY_UNAVAILABLE: 'This provider does not currently support window triggering.',
+    AUTOMATION_DISABLED: 'Monitoring is enabled. Automatic actions are disabled.',
+  };
+  return (
+    descriptions[reason ?? ''] ??
+    'Review the recorded decision details for the scheduler’s explanation.'
+  );
+}
+
+function renderWindow(window: WindowSnapshot, now: Date): string {
+  const reset = factInstantText(window.resetAt);
+  const approximateReset = approximateResetText(window.resetAt, now);
+  const usage = window.usageRatio;
+  return `<section class="window-card"><div class="window-header"><h3>${window.durationSeconds ? `${formatDuration(window.durationSeconds.value)} window` : 'Usage window'}</h3><span class="badge">${escapeHtml(window.phase.value)}</span></div><p class="window-id">${escapeHtml(window.windowKind)}</p><div class="usage-value">${usage ? `${Math.round(usage.value * 100)}% <small>used</small>` : '<span class="unknown">unknown</span>'}</div>${usage ? `<progress class="quota-progress" max="100" value="${usage.value * 100}" aria-label="Usage for ${escapeHtml(window.windowKind)}">${Math.round(usage.value * 100)}%</progress>` : '<p class="muted">Usage has not been reported.</p>'}<p class="provider-meta">Remaining ${factRatioText(window.remainingRatio)}</p><dl><dt>Reset</dt><dd>${reset}${approximateReset}</dd><dt>Phase</dt><dd>${factText(window.phase.value, window.phase.source, window.phase.confidence)}</dd><dt>Duration</dt><dd>${factNumberText(window.durationSeconds, 's')}</dd></dl></section>`;
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds % 86_400 === 0) return `${seconds / 86_400}d`;
+  if (seconds % 3_600 === 0) return `${seconds / 3_600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
 }
 
 function factRatioText(fact: WindowSnapshot['usageRatio']): string {
@@ -585,7 +634,31 @@ function factRatioText(fact: WindowSnapshot['usageRatio']): string {
 }
 
 function factInstantText(fact: WindowSnapshot['resetAt']): string {
-  return fact ? factText(fact.value, fact.source, fact.confidence) : unknownText();
+  return fact
+    ? `<time datetime="${escapeHtml(fact.value)}" title="${escapeHtml(fact.value)}">${new Intl.DateTimeFormat('en', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(fact.value))} UTC</time><details><summary>Timing evidence</summary>${factText(fact.value, fact.source, fact.confidence)}</details>`
+    : unknownText();
+}
+
+function approximateResetText(fact: WindowSnapshot['resetAt'], now: Date): string {
+  if (!fact) return '';
+  const resetAtMs = Date.parse(fact.value);
+
+  const deltaSeconds = Math.round((resetAtMs - now.getTime()) / 1000);
+  const absoluteSeconds = Math.abs(deltaSeconds);
+  const [unitSeconds, unit]: [number, Intl.RelativeTimeFormatUnit] =
+    absoluteSeconds >= 86_400
+      ? [86_400, 'day']
+      : absoluteSeconds >= 3_600
+        ? [3_600, 'hour']
+        : absoluteSeconds >= 60
+          ? [60, 'minute']
+          : [1, 'second'];
+  const value = Math.round(deltaSeconds / unitSeconds);
+  const relative = new Intl.RelativeTimeFormat('en', { numeric: 'always' }).format(value, unit);
+  const text = relative.startsWith('in ')
+    ? `Reset in approximately ${relative.slice(3)}`
+    : `Reset approximately ${relative}`;
+  return `<br><span class="muted">${escapeHtml(text)}</span>`;
 }
 
 function factNumberText(fact: WindowSnapshot['durationSeconds'], suffix: string): string {

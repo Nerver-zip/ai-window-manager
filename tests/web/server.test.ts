@@ -157,6 +157,67 @@ function seedObservedProvider(
 }
 
 describe('web server persisted overview', () => {
+  it('renders an empty workspace with useful navigation', async () => {
+    const { app } = createApp(() => {});
+    const response = await app.inject('/');
+    expect(response.body).toContain('No providers configured');
+    expect(response.body).toContain('aria-current="page"');
+    expect(response.body).toContain('Configured providers');
+  });
+
+  it.each(['/settings', '/schedule', '/history'])(
+    'serves %s in the shared shell',
+    async (route) => {
+      const { app } = createApp((repositories) => seedObservedProvider(repositories));
+      const response = await app.inject(route);
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('text/html');
+      expect(response.body).toContain('href="/assets/app.css"');
+      expect(response.body).not.toMatch(/<style|style=|<script/);
+      expect(response.body).toContain('aria-current="page"');
+    },
+  );
+
+  it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
+    'shows %s and unknown quota without a fabricated zero',
+    async (health) => {
+      const { app } = createApp((repositories) => {
+        seedObservedProvider(repositories);
+        const state = repositories.providerState.get('fake');
+        if (!state?.observation) throw new Error('missing observation');
+        const window = state.observation.windows[0];
+        if (!window) throw new Error('missing window');
+        delete window.usageRatio;
+        delete window.durationSeconds;
+        repositories.providerState.upsert({ ...state, health, lastErrorCode: health });
+      });
+      const page = await app.inject('/');
+      expect(page.body).toContain(health);
+      expect(page.body).toContain('Usage has not been reported');
+      expect(page.body).not.toContain('<progress');
+    },
+  );
+
+  it('presents planned intents with human explanations and disclosure details', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.providers.upsert(providerRecord({ mode: 'automation' }));
+      repositories.events.append({
+        providerId: 'fake',
+        occurredAtMs: Date.parse(NOW),
+        type: 'action_intent_planned',
+        severity: 'info',
+        reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+        data: { explanation: { targetTriggerAt: NOW } },
+      });
+    });
+    const page = await app.inject('/');
+    expect(page.body).toContain('Action planned');
+    expect(page.body).toContain('A durable action intent has been planned');
+    expect(page.body).toContain('<summary>Technical details</summary>');
+  });
+
   it('serves persisted API and HTML without provider inspection', async () => {
     const inspected = { count: 0 };
     const { app } = createApp(
@@ -187,13 +248,65 @@ describe('web server persisted overview', () => {
     const page = await app.inject('/');
     expect(page.statusCode).toBe(200);
     expect(page.headers['content-type']).toContain('text/html');
+    expect(page.body).toContain('href="/assets/app.css"');
+    expect(page.body).not.toMatch(/<style|style=|<script/);
+    expect(page.body).toContain('value="25"');
+    expect(page.body).toContain('<progress');
+    const css = await app.inject('/assets/app.css');
+    expect(css.statusCode).toBe(200);
+    expect(css.headers['content-type']).toContain('text/css');
+    expect(css.headers['content-security-policy']).not.toContain('unsafe-inline');
     expect(page.body).toContain('Health</dt><dd>UP');
     expect(page.body).toContain('Remaining');
     expect(page.body).toContain('75%');
     expect(page.body).toContain('~2026-09-14T16:00:00.000Z');
+    expect(page.body).toContain('Reset in approximately 5 hours');
     expect(page.body).toContain('official_client_internal · high');
     expect(page.body).not.toContain('<script>persisted text</script>');
     expect(inspected.count).toBe(0);
+  });
+
+  it('renders approximate reset timing for future, past, short and long windows', async () => {
+    const { app } = createApp((repositories) => {
+      const current = observation('coverage');
+      const baseWindow = current.windows[0];
+      if (!baseWindow?.resetAt) throw new Error('coverage window missing reset fact');
+      const baseReset = baseWindow.resetAt;
+      const resetWindow = (windowKind: string, value?: string): WindowSnapshot => {
+        if (value === undefined) {
+          const withoutReset = { ...baseWindow };
+          delete withoutReset.resetAt;
+          return { ...withoutReset, windowKind };
+        }
+        return { ...baseWindow, windowKind, resetAt: { ...baseReset, value } };
+      };
+      current.windows = [
+        resetWindow('future-minute', '2026-09-14T11:05:00.000Z'),
+        resetWindow('future-second', '2026-09-14T11:00:30.000Z'),
+        resetWindow('future-day', '2026-09-16T11:00:00.000Z'),
+        resetWindow('past-hour', '2026-09-14T10:00:00.000Z'),
+        resetWindow('missing-reset'),
+      ];
+      const observedAtMs = Date.parse(NOW);
+      repositories.providers.upsert(providerRecord({ id: 'coverage' }));
+      repositories.providerState.upsert({
+        providerId: 'coverage',
+        health: 'UP',
+        observedAtMs,
+        staleAfterMs: current.staleAfterSeconds * 1000,
+        observation: current,
+        lastSuccessAtMs: observedAtMs,
+        lastErrorCode: null,
+        updatedAtMs: observedAtMs,
+      });
+    });
+
+    const page = await app.inject('/');
+    expect(page.body).toContain('Reset in approximately 5 minutes');
+    expect(page.body).toContain('Reset in approximately 30 seconds');
+    expect(page.body).toContain('Reset in approximately 2 days');
+    expect(page.body).toContain('Reset approximately 1 hour ago');
+    expect(page.body).toContain('Reset</dt><dd><span class="unknown">unknown</span>');
   });
 
   it('renders the persisted scheduler explanation and escapes its text', async () => {

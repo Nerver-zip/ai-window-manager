@@ -7,6 +7,8 @@
  * payloads.
  */
 
+import { escapeHtml, renderAppShell } from './ui/layout.js';
+
 export const HISTORY_RANGES = [
   { value: '24h', label: '24h', durationMs: 24 * 60 * 60 * 1000 },
   { value: '7d', label: '7d', durationMs: 7 * 24 * 60 * 60 * 1000 },
@@ -214,19 +216,37 @@ export function renderHistoryPage(input: HistoryPageInput): string {
     ),
   ].join('');
 
-  return pageDocument(
-    'History',
-    `<main class="history-shell">
-      <header><h1>History</h1><p class="muted">Bounded persisted observations and decisions.</p></header>
-      <form class="history-filter" method="get" action="/history">
-        <label>Range <select name="range">${rangeOptions}</select></label>
-        <label>Provider <select name="provider">${providerOptions}</select></label>
-        <button type="submit">Apply</button>
-      </form>
-      ${renderTimeline(view.events)}
+  const content = `<div class="history-page">
+    <form class="history-toolbar card" method="get" action="/history" aria-label="History filters">
+      <div class="history-toolbar-summary">
+        <span class="eyebrow">Explore</span>
+        <strong>Persisted activity</strong>
+        <span class="muted">Review provider usage and scheduler decisions.</span>
+      </div>
+      <div class="history-toolbar-fields">
+        <label class="field">
+          <span class="field-label">Time range</span>
+          <select name="range">${rangeOptions}</select>
+        </label>
+        <label class="field">
+          <span class="field-label">Provider</span>
+          <select name="provider">${providerOptions}</select>
+        </label>
+        <button class="button button-primary" type="submit">Apply filters</button>
+      </div>
+    </form>
+    <div class="history-sections">
       ${renderUsageSeries(view.series)}
-    </main>`,
-  );
+      ${renderTimeline(view.events)}
+    </div>
+  </div>`;
+
+  return renderAppShell({
+    page: 'history',
+    title: 'History',
+    description: 'Bounded persisted observations and decisions.',
+    content,
+  });
 }
 
 export function renderTimeline(
@@ -236,40 +256,80 @@ export function renderTimeline(
     .map((event) => ('displayType' in event ? event : sanitizeEvent(event)))
     .filter((event): event is HistoryTimelineItem => event !== null);
   if (safeEvents.length === 0) {
-    return '<section aria-labelledby="timeline-title"><h2 id="timeline-title">Timeline</h2><p class="unknown">unknown — no events in this range.</p></section>';
+    return `<section class="history-section card" aria-labelledby="timeline-title">
+      <div class="section-heading">
+        <div><span class="eyebrow">Activity</span><h2 id="timeline-title">Timeline</h2></div>
+      </div>
+      <div class="empty-state" role="status">
+        <strong>No events in this range</strong>
+        <p class="unknown">unknown — the persisted timeline has no matching events.</p>
+      </div>
+    </section>`;
   }
 
-  const items = safeEvents
-    .slice(0, MAX_HISTORY_EVENTS)
-    .map(
-      (event) => `<li class="event event-${event.displaySeverity}">
-        <time datetime="${escapeAttribute(event.occurredAt)}">${escapeHtml(
-          formatTimestamp(event.occurredAt),
-        )}</time>
-        <strong>${escapeHtml(event.displayType)}</strong>
-        <span class="severity">${escapeHtml(event.displaySeverity)}</span>
-        <span class="reason">${escapeHtml(event.displayReason)}</span>
-        <span class="provider">${escapeHtml(event.providerId ?? 'unknown')}</span>
-      </li>`,
-    )
+  const visibleEvents = safeEvents.slice(0, MAX_HISTORY_EVENTS);
+  const items = visibleEvents
+    .map((event) => {
+      const severity = safeSeverity(event.displaySeverity);
+      return `<li class="timeline-item event event-${severity}">
+        <span class="timeline-marker" aria-hidden="true"></span>
+        <div class="timeline-content">
+          <div class="timeline-meta">
+            <time class="timeline-time" datetime="${escapeAttribute(event.occurredAt)}">${escapeHtml(
+              formatTimestamp(event.occurredAt),
+            )}</time>
+            <span class="badge badge-${severity}">${escapeHtml(severity)}</span>
+            <span class="timeline-provider">${escapeHtml(event.providerId ?? 'unknown')}</span>
+          </div>
+          <h3 class="timeline-event">${escapeHtml(event.displayType)}</h3>
+          <p class="timeline-reason"><span class="timeline-label">Reason</span>${escapeHtml(
+            event.displayReason,
+          )}</p>
+        </div>
+      </li>`;
+    })
     .join('');
-  return `<section aria-labelledby="timeline-title"><h2 id="timeline-title">Timeline</h2><ol class="timeline">${items}</ol></section>`;
+  return `<section class="history-section card" aria-labelledby="timeline-title">
+    <div class="section-heading">
+      <div><span class="eyebrow">Activity</span><h2 id="timeline-title">Timeline</h2></div>
+      <span class="section-count">${visibleEvents.length} event${visibleEvents.length === 1 ? '' : 's'}</span>
+    </div>
+    <ol class="timeline">${items}</ol>
+  </section>`;
 }
 
 export function renderUsageSeries(series: readonly HistoryUsageSeries[]): string {
   if (series.length === 0) {
-    return '<section aria-labelledby="usage-title"><h2 id="usage-title">Usage</h2><p class="unknown">unknown — no usage samples in this range.</p></section>';
+    return `<section class="history-section" aria-labelledby="usage-title">
+      <div class="section-heading">
+        <div><span class="eyebrow">Window samples</span><h2 id="usage-title">Usage</h2></div>
+      </div>
+      <div class="empty-state card" role="status">
+        <strong>No usage samples in this range</strong>
+        <p class="unknown">unknown — persisted window samples will appear here after observation.</p>
+      </div>
+    </section>`;
   }
 
-  const charts = series
-    .slice(0, MAX_USAGE_SERIES)
-    .map((item) => renderUsageChart(item))
-    .join('');
-  return `<section aria-labelledby="usage-title"><h2 id="usage-title">Usage</h2><div class="usage-grid">${charts}</div></section>`;
+  const visibleSeries = series.slice(0, MAX_USAGE_SERIES);
+  const charts = visibleSeries.map((item) => renderUsageChart(item)).join('');
+  return `<section class="history-section" aria-labelledby="usage-title">
+    <div class="section-heading">
+      <div><span class="eyebrow">Window samples</span><h2 id="usage-title">Usage</h2></div>
+      <span class="section-count">${visibleSeries.length} series</span>
+    </div>
+    <div class="chart-grid">${charts}</div>
+  </section>`;
 }
 
 function renderUsageChart(series: HistoryUsageSeries): string {
-  const points = series.points.slice(-MAX_USAGE_POINTS);
+  const providerId = safeProviderId(series.providerId) ?? 'unknown';
+  const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
+  const points = series.points.slice(-MAX_USAGE_POINTS).map((point) => ({
+    ...point,
+    usageRatio: ratioOrNull(point.usageRatio),
+    remainingRatio: ratioOrNull(point.remainingRatio),
+  }));
   const segments: Array<Array<{ x: number; y: number }>> = [];
   let segment: Array<{ x: number; y: number }> = [];
   points.forEach((point, index) => {
@@ -284,7 +344,7 @@ function renderUsageChart(series: HistoryUsageSeries): string {
   const polyline = segments
     .map(
       (plotted) =>
-        `<polyline class="usage-line" points="${plotted
+        `<polyline class="chart-line" points="${plotted
           .map((point) => `${point.x},${point.y}`)
           .join(' ')}" />`,
     )
@@ -294,15 +354,44 @@ function renderUsageChart(series: HistoryUsageSeries): string {
   const latest = latestPoint?.usageRatio;
   const latestText =
     latest === undefined || latest === null ? 'unknown' : `${Math.round(latest * 100)}%`;
+  const latestRemainingPoint = [...points].reverse().find((point) => point.remainingRatio !== null);
+  const latestRemaining = latestRemainingPoint?.remainingRatio;
+  const remainingText =
+    latestRemaining === undefined || latestRemaining === null
+      ? 'unknown'
+      : `${Math.round(latestRemaining * 100)}%`;
   const unknownText = unknownCount > 0 ? `; ${unknownCount} unknown` : '';
+  const chartTitleId = `history-chart-${providerId}-${windowKind}`;
 
-  return `<article class="usage-card">
-    <h3>${escapeHtml(series.providerId)} / ${escapeHtml(series.windowKind)}</h3>
-    <p>Latest usage: <strong>${escapeHtml(latestText)}</strong>${escapeHtml(unknownText)}</p>
-    <div class="chart-scroll"><svg viewBox="0 0 320 96" role="img" aria-label="Usage series for ${escapeAttribute(
-      `${series.providerId} ${series.windowKind}`,
-    )}"><line class="usage-gridline" x1="0" y1="8" x2="320" y2="8" /><line class="usage-gridline" x1="0" y1="48" x2="320" y2="48" /><line class="usage-gridline" x1="0" y1="88" x2="320" y2="88" />${polyline}</svg></div>
-    <p class="chart-legend">0% to 100%; missing values remain <span class="unknown">unknown</span>.</p>
+  return `<article class="card chart" aria-labelledby="${escapeAttribute(chartTitleId)}">
+    <header class="card-header">
+      <div class="chart-heading">
+        <span class="eyebrow">Window</span>
+        <h3 id="${escapeAttribute(chartTitleId)}">${escapeHtml(providerId)} <span class="chart-divider">/</span> ${escapeHtml(
+          windowKind,
+        )}</h3>
+      </div>
+      <div class="chart-summary">
+        <p class="chart-stat">Latest usage: <strong>${escapeHtml(latestText)}</strong>${escapeHtml(
+          unknownText,
+        )}</p>
+        <p class="chart-stat">Remaining: <strong>${escapeHtml(remainingText)}</strong></p>
+      </div>
+    </header>
+    <div class="chart-scroll">
+      <svg class="chart-svg" viewBox="0 0 320 96" role="img" aria-labelledby="${escapeAttribute(
+        chartTitleId,
+      )}" aria-label="Usage series for ${escapeAttribute(`${providerId} ${windowKind}`)}">
+        <line class="chart-gridline" x1="0" y1="8" x2="320" y2="8" />
+        <line class="chart-gridline" x1="0" y1="48" x2="320" y2="48" />
+        <line class="chart-gridline" x1="0" y1="88" x2="320" y2="88" />
+        <text class="chart-axis-label" x="4" y="7">100%</text>
+        <text class="chart-axis-label" x="4" y="47">50%</text>
+        <text class="chart-axis-label" x="4" y="87">0%</text>
+        ${polyline}
+      </svg>
+    </div>
+    <p class="chart-legend">Usage ratio from 0% to 100%; missing values remain <span class="unknown">unknown</span>.</p>
   </article>`;
 }
 
@@ -407,44 +496,4 @@ function isHistoryRange(value: unknown): value is HistoryRange {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value);
-}
-
-function escapeHtml(value: unknown): string {
-  const text =
-    typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
-      ? String(value)
-      : '';
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function pageDocument(title: string, body: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>
-    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: Canvas; color: CanvasText; }
-    .history-shell { box-sizing: border-box; max-width: 72rem; margin: 0 auto; padding: 1rem; }
-    .muted, .chart-legend { color: GrayText; }
-    .history-filter { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .75rem; align-items: end; margin: 1rem 0 1.5rem; }
-    label { display: grid; gap: .25rem; }
-    select, button { min-height: 2.4rem; padding: .35rem .55rem; font: inherit; }
-    button { cursor: pointer; }
-    .timeline { display: grid; gap: .5rem; padding: 0; margin: 0 0 1.5rem; list-style: none; }
-    .event { display: grid; grid-template-columns: minmax(9rem, auto) minmax(10rem, 1fr) auto auto auto; gap: .5rem; align-items: baseline; padding: .6rem .7rem; border-inline-start: .25rem solid GrayText; background: color-mix(in srgb, CanvasText 7%, Canvas); }
-    .event-warn { border-color: darkorange; }
-    .event-error { border-color: crimson; }
-    .severity, .reason, .provider { font-size: .85rem; color: GrayText; }
-    .usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem; }
-    .usage-card { min-width: 0; padding: .75rem; border: 1px solid GrayText; border-radius: .4rem; }
-    .usage-card h3 { margin: 0; overflow-wrap: anywhere; font-size: 1rem; }
-    .chart-scroll { overflow-x: auto; }
-    svg { display: block; width: 100%; min-width: 16rem; height: 6rem; }
-    .usage-gridline { stroke: GrayText; stroke-dasharray: 2 3; opacity: .45; }
-    .usage-line { fill: none; stroke: Highlight; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
-    .unknown { color: darkorange; }
-    @media (max-width: 40rem) { .event { grid-template-columns: 1fr 1fr; } .event time, .event .reason { grid-column: 1 / -1; } }
-  </style></head><body>${body}</body></html>`;
 }

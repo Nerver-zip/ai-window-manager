@@ -68,4 +68,9 @@ No enterprise dashboard, no Grafana clone.
 
 ## Frontend technology
 
-Server-rendered HTML/CSS with a tiny local browser script for periodic refresh/forms. No React, client router or large component framework. Charts can start as compact SVG/HTML; add a small chart library only if hand-written SVG becomes a maintenance burden.
+Server-rendered HTML with a shared dark operations shell and one same-origin
+stylesheet at `/assets/app.css`. The current pages use native forms and SVG
+history charts without inline styles or scripts, so the CSP remains strict and
+the browser does not become another state owner. No React, client router or
+large component framework. Add a small chart library only if hand-written SVG
+becomes a maintenance burden.

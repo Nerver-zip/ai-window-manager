@@ -137,6 +137,7 @@ describe('HTTP security helpers', () => {
 
   it('accepts a valid header or form token and compares using a safe equality path', () => {
     const token = ensureCsrfToken(undefined).token;
+    const differentToken = `${token.slice(0, -1)}${token.endsWith('A') ? 'B' : 'A'}`;
     const cookie = `${CSRF_COOKIE_NAME}=${token}`;
     expect(validateCsrf({ cookieHeader: cookie, headerToken: token })).toEqual({
       ok: true,
@@ -150,7 +151,7 @@ describe('HTTP security helpers', () => {
       ok: true,
       reason: CsrfReasonCode.Valid,
     });
-    expect(validateCsrf({ cookieHeader: cookie, headerToken: `${token.slice(0, -1)}A` })).toEqual({
+    expect(validateCsrf({ cookieHeader: cookie, headerToken: differentToken })).toEqual({
       ok: false,
       reason: CsrfReasonCode.TokenMismatch,
     });
@@ -158,7 +159,7 @@ describe('HTTP security helpers', () => {
       validateCsrf({
         cookieHeader: cookie,
         headerToken: token,
-        formToken: `${token.slice(0, -1)}A`,
+        formToken: differentToken,
       }),
     ).toEqual({
       ok: false,
@@ -168,6 +169,7 @@ describe('HTTP security helpers', () => {
 
   it('preserves the CSP/body-limit baseline and adds privacy headers', () => {
     expect(DEFAULT_HTTP_BODY_LIMIT_BYTES).toBe(64 * 1024);
+    expect(CONTENT_SECURITY_POLICY).toContain("style-src 'self'");
     expect(getSecurityHeaders()).toEqual({
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,

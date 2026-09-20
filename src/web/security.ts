@@ -6,7 +6,7 @@ export const CSRF_HEADER_NAME = 'x-csrf-token';
 export const CSRF_TOKEN_BYTES = 32;
 
 export const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+  "default-src 'self'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 const CSRF_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 

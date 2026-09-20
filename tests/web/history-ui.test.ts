@@ -6,10 +6,12 @@ import {
   buildBoundedHistoryView,
   buildUsageSeries,
   filterHistoryEvents,
+  getHistoryRange,
   renderHistoryPage,
   renderTimeline,
   renderUsageSeries,
   type HistoryTimelineEvent,
+  type HistoryRange,
   type HistoryUsageSample,
 } from '../../src/web/history-ui.js';
 
@@ -41,12 +43,14 @@ function sample(overrides: Partial<HistoryUsageSample> = {}): HistoryUsageSample
 describe('history UI helpers', () => {
   it('exposes bounded range labels and filters events by range and provider', () => {
     expect(HISTORY_RANGES.map((range) => range.label)).toEqual(['24h', '7d', '30d']);
+    expect(getHistoryRange('invalid' as HistoryRange).value).toBe('24h');
 
     const events = filterHistoryEvents(
       [
         event({ id: 1, occurredAt: '2026-09-19T11:00:00.000Z', providerId: 'fake' }),
         event({ id: 2, occurredAt: '2026-09-18T11:00:00.000Z', providerId: 'codex' }),
         event({ id: 3, occurredAt: '2026-09-01T11:00:00.000Z', providerId: 'fake' }),
+        event({ id: 4, occurredAt: '2026-09-19T13:00:00.000Z', providerId: 'fake' }),
       ],
       NOW,
       { range: '7d', providerId: 'fake' },
@@ -85,6 +89,25 @@ describe('history UI helpers', () => {
     expect(html).toContain('Latest usage: <strong>unknown</strong>');
     expect(html).toContain('missing values remain');
     expect(html).not.toContain('Latest usage: <strong>0%');
+  });
+
+  it('fails closed for unsafe chart identity and unknown remaining data', () => {
+    const html = renderUsageSeries([
+      {
+        providerId: '<provider>',
+        windowKind: 'five hour',
+        points: [
+          { observedAt: '2026-09-19T10:00:00.000Z', usageRatio: 0.2, remainingRatio: null },
+          { observedAt: '2026-09-19T11:00:00.000Z', usageRatio: 2, remainingRatio: null },
+        ],
+      },
+    ]);
+
+    expect(html).toContain('<h3 id="history-chart-unknown-unknown">unknown');
+    expect(html).toContain('Remaining: <strong>unknown</strong>');
+    expect(html).toContain('; 1 unknown');
+    expect(html).not.toContain('<provider>');
+    expect(html).toContain('class="chart-line"');
   });
 
   it('escapes reason text and never renders raw event payloads', () => {
@@ -136,7 +159,7 @@ describe('history UI helpers', () => {
     expect(html).toContain('>unknown<');
   });
 
-  it('renders a compact mobile-safe page with provider filtering and no JSON dump', () => {
+  it('renders the shared-shell history page with responsive semantic sections', () => {
     const html = renderHistoryPage({
       now: NOW,
       filter: { range: '30d', providerId: 'fake' },
@@ -144,7 +167,10 @@ describe('history UI helpers', () => {
         { id: 'fake', label: 'Fake provider' },
         { id: 'codex', label: 'Codex' },
       ],
-      events: [event({ reasonCode: 'WINDOW_NOT_INACTIVE' })],
+      events: [
+        event({ reasonCode: 'WINDOW_NOT_INACTIVE' }),
+        event({ id: 2, reasonCode: 'TARGET_NOT_DUE' }),
+      ],
       samples: [sample()],
     });
 
@@ -152,8 +178,15 @@ describe('history UI helpers', () => {
     expect(html).toContain('value="fake" selected');
     expect(html).toContain('viewBox="0 0 320 96"');
     expect(html).toContain('viewport');
+    expect(html).toContain('history-toolbar');
+    expect(html).toContain('class="card chart"');
+    expect(html).toContain('class="timeline"');
+    expect(html).toContain('class="chart-line"');
+    expect(html).toContain('2 events');
     expect(html).toContain('Timeline');
     expect(html).toContain('Usage');
+    expect(html).not.toContain('<style');
+    expect(html).not.toContain(' style=');
     expect(html).not.toContain('{"');
     expect(html).not.toContain('accountId');
   });
@@ -171,9 +204,10 @@ describe('history UI helpers', () => {
     expect(view.providerId).toBeNull();
     expect(view.events).toEqual([]);
     expect(view.series).toEqual([]);
-    expect(renderHistoryPage({ now: NOW, providers: [], events: [], samples: [] })).toContain(
-      'unknown',
-    );
+    const html = renderHistoryPage({ now: NOW, providers: [], events: [], samples: [] });
+    expect(html).toContain('empty-state');
+    expect(html).toContain('unknown');
+    expect(html).not.toContain('<style');
   });
 
   it('deduplicates provider options and rejects unsafe provider keys', () => {
@@ -182,6 +216,7 @@ describe('history UI helpers', () => {
       providers: [
         { id: 'fake', label: '\u0000' },
         { id: 'fake', label: 'duplicate' },
+        { id: 'codex' },
         { id: 'bad/id', label: 'unsafe' },
       ],
       events: [],
@@ -189,6 +224,7 @@ describe('history UI helpers', () => {
     });
 
     expect(html).toContain('value="fake">fake</option>');
+    expect(html).toContain('value="codex">codex</option>');
     expect(html).not.toContain('duplicate');
     expect(html).not.toContain('bad/id');
   });
