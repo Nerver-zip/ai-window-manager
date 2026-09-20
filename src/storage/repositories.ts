@@ -96,6 +96,9 @@ export interface SettingRecord<T = unknown> {
 
 export interface ListOptions {
   limit?: number;
+  offset?: number;
+  /** Inclusive lower bound for UTC epoch milliseconds. */
+  afterMs?: number;
   beforeMs?: number;
 }
 
@@ -241,8 +244,13 @@ export class WindowSampleRepository {
 
   list(providerId: string, options: ListOptions = {}): WindowSnapshot[] {
     const limit = boundedLimit(options.limit);
+    const offset = boundedOffset(options.offset);
     const clauses = ['provider_id = @providerId'];
-    const params: Record<string, string | number> = { providerId, limit };
+    const params: Record<string, string | number> = { providerId, limit, offset };
+    if (options.afterMs !== undefined) {
+      clauses.push('observed_at_ms >= @afterMs');
+      params.afterMs = options.afterMs;
+    }
     if (options.beforeMs !== undefined) {
       clauses.push('observed_at_ms < @beforeMs');
       params.beforeMs = options.beforeMs;
@@ -252,7 +260,7 @@ export class WindowSampleRepository {
         `SELECT * FROM window_samples
          WHERE ${clauses.join(' AND ')}
          ORDER BY observed_at_ms DESC, id DESC
-         LIMIT @limit`,
+         LIMIT @limit OFFSET @offset`,
       )
       .all(params) as WindowSampleRow[];
     return rows.map(windowSnapshotFromRow);
@@ -287,11 +295,16 @@ export class EventRepository {
 
   list(providerId?: string, options: ListOptions = {}): EventRecord[] {
     const limit = boundedLimit(options.limit);
+    const offset = boundedOffset(options.offset);
     const clauses: string[] = [];
-    const params: Record<string, string | number> = { limit };
+    const params: Record<string, string | number> = { limit, offset };
     if (providerId !== undefined) {
       clauses.push('provider_id = @providerId');
       params.providerId = providerId;
+    }
+    if (options.afterMs !== undefined) {
+      clauses.push('occurred_at_ms >= @afterMs');
+      params.afterMs = options.afterMs;
     }
     if (options.beforeMs !== undefined) {
       clauses.push('occurred_at_ms < @beforeMs');
@@ -302,7 +315,7 @@ export class EventRepository {
       .prepare(
         `SELECT * FROM events ${where}
          ORDER BY occurred_at_ms DESC, id DESC
-         LIMIT @limit`,
+         LIMIT @limit OFFSET @offset`,
       )
       .all(params) as EventRow[];
     return rows.map(eventFromRow);
@@ -933,6 +946,11 @@ function booleanToInteger(value: boolean): 0 | 1 {
 function boundedLimit(value: number | undefined): number {
   if (value === undefined) return 100;
   return Math.max(1, Math.min(1000, Math.trunc(value)));
+}
+
+function boundedOffset(value: number | undefined): number {
+  if (value === undefined) return 0;
+  return Math.max(0, Math.min(1_000_000, Math.trunc(value)));
 }
 
 function stringifyJson(value: unknown): string {

@@ -24,8 +24,10 @@ import {
   type SettingsProviderView,
 } from './settings-ui.js';
 import {
-  MAX_HISTORY_EVENTS,
+  getHistoryRange,
+  HISTORY_PAGE_SIZE,
   MAX_USAGE_POINTS,
+  normalizeHistoryRange,
   renderHistoryPage,
   type HistoryTimelineEvent,
   type HistoryUsageSample,
@@ -37,6 +39,18 @@ import {
   validateCsrf,
   validateMutationOrigin,
 } from './security.js';
+import {
+  durationLabel,
+  effectiveModeLabel,
+  errorLabel,
+  factQualifier,
+  healthLabel,
+  isEstimatedSource,
+  phaseLabel,
+  providerDisplayName,
+  reasonLabel,
+  windowDisplayName,
+} from './ui/presentation.js';
 
 const DECISION_EVENT_TYPES = new Set([
   'action_intent_planned',
@@ -210,22 +224,40 @@ export function buildServer(input: BuildServerInput) {
   app.get('/history', async (request, reply) => {
     const query = asRecord(request.query);
     const providerId = stringValue(query.provider) ?? undefined;
+    const range = normalizeHistoryRange(query.range);
+    const page = positivePage(query.page);
+    const now = input.clock.now();
+    const nowMs = now.getTime();
+    const offset = (page - 1) * HISTORY_PAGE_SIZE;
     const providers = input.repositories.providers.list();
     const selectedProviders = providerId
       ? providers.filter((provider) => provider.id === providerId)
       : providers;
-    const events = input.repositories.events.list(providerId, { limit: MAX_HISTORY_EVENTS });
+    const events = input.repositories.events.list(providerId, {
+      limit: HISTORY_PAGE_SIZE + 1,
+      offset,
+      afterMs: nowMs - getHistoryRange(range).durationMs,
+      beforeMs: nowMs + 1,
+    });
+    const hasNext = events.length > HISTORY_PAGE_SIZE;
     const samples = selectedProviders.flatMap((provider) =>
       input.repositories.windowSamples.list(provider.id, { limit: MAX_USAGE_POINTS * 8 }),
     );
 
     reply.type('text/html; charset=utf-8');
     return renderHistoryPage({
-      now: input.clock.now(),
-      filter: { range: query.range, ...(providerId ? { providerId } : {}) },
+      now,
+      filter: { range, ...(providerId ? { providerId } : {}) },
       providers: providers.map((provider) => ({ id: provider.id, label: provider.id })),
-      events: events.map(historyTimelineEvent),
+      events: events.slice(0, HISTORY_PAGE_SIZE).map(historyTimelineEvent),
       samples: samples.map(historyUsageSample),
+      pagination: {
+        page,
+        pageSize: HISTORY_PAGE_SIZE,
+        hasNext,
+        ...(page > 1 ? { previousHref: historyPageHref(range, providerId, page - 1) } : {}),
+        ...(hasNext ? { nextHref: historyPageHref(range, providerId, page + 1) } : {}),
+      },
     });
   });
 
@@ -332,6 +364,17 @@ function parseFormBody(body: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const [key, value] of new URLSearchParams(body)) values[key] = value;
   return values;
+}
+
+function positivePage(value: unknown): number {
+  const parsed = typeof value === 'string' ? Number(value) : NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 50_000) : 1;
+}
+
+function historyPageHref(range: string, providerId: string | undefined, page: number): string {
+  const params = new URLSearchParams({ range, page: String(page) });
+  if (providerId) params.set('provider', providerId);
+  return `/history?${params.toString()}`;
 }
 
 function normalizeProviderSettingsBody(body: unknown): unknown {
@@ -541,8 +584,8 @@ function renderOverview(providers: ProviderRead[], now: Date): string {
   return renderAppShell({
     page: 'overview',
     title: 'Overview',
-    description: 'Your usage windows, at a glance. Quota, timing and the decisions behind them.',
-    content: `<section class="summary-grid" aria-label="Workspace summary"><div class="summary-stat"><strong>${providers.length}</strong><span>Configured providers</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.health === 'UP').length}</strong><span>Healthy providers</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.mode === 'automation').length}</strong><span>Automation enabled</span></div></section>${cards || '<section class="empty-state"><h2>No providers configured</h2><p>Enable a provider in the application configuration to begin observing usage windows.</p></section>'}`,
+    description: 'See what is connected, how much remains, and what happens next.',
+    content: `<section class="summary-grid" aria-label="Workspace summary"><div class="summary-stat"><strong>${providers.length}</strong><span>Providers monitored</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.health === 'UP').length}</strong><span>Connected providers</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.mode === 'automation').length}</strong><span>Automatic actions</span></div></section>${cards || '<section class="empty-state"><h2>No providers are being monitored</h2><p>Add a provider in the service configuration to start seeing usage windows here.</p></section>'}`,
   });
 }
 
@@ -580,51 +623,27 @@ function renderProviderCard(provider: ProviderRead, now: Date): string {
       : `${provider.freshness.ageSeconds}s ago · ${staleLabel}`;
   const windows =
     provider.windows.length > 0
-      ? `<div class="window-grid">${provider.windows.map((window) => renderWindow(window, now)).join('')}</div>`
-      : '<div class="empty-state"><h3>No observation yet</h3><p>Window: unknown</p></div>';
+      ? `<div class="window-grid">${provider.windows.map((window) => renderWindow(provider.id, window, now)).join('')}</div>`
+      : '<div class="empty-state"><h3>Waiting for the first update</h3><p>Usage windows will appear after the provider is checked.</p></div>';
   const decision = provider.nextDecision
-    ? `<section class="decision-panel"><p class="eyebrow">NEXT DECISION</p><h3>${provider.nextDecision.decision === 'create_intent' ? 'Action planned' : 'No automatic action'}</h3><p>${escapeHtml(decisionDescription(provider.nextDecision.reasonCode))}</p><details><summary>Technical details</summary><code>${escapeHtml(provider.nextDecision.reasonCode ?? 'unknown')}</code><pre>${escapeHtml(JSON.stringify(provider.nextDecision.explanation, null, 2))}</pre></details></section>`
-    : '<section class="decision-panel"><p class="eyebrow">NEXT DECISION</p><h3>No scheduling decision yet</h3><p>A decision will appear after an enabled schedule is evaluated. <a href="/schedule">Review schedule</a></p></section>';
+    ? `<section class="decision-panel"><p class="eyebrow">NEXT STEP</p><h3>${provider.nextDecision.decision === 'create_intent' ? 'Automatic action planned' : 'No automatic action planned'}</h3><p>${escapeHtml(decisionDescription(provider.nextDecision.reasonCode))}</p></section>`
+    : '<section class="decision-panel"><p class="eyebrow">NEXT STEP</p><h3>Waiting for a schedule</h3><p>Set a reset time on the <a href="/schedule">Schedule</a> page to see what happens next.</p></section>';
 
-  return `<article class="provider${staleClass}"><header class="provider-header"><div><h2>${escapeHtml(provider.id)}</h2><p class="provider-meta">${escapeHtml(provider.kind)} · ${provider.enabled ? 'enabled' : 'disabled'}</p></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(provider.health)}</span><span class="badge">${escapeHtml(provider.mode.replaceAll('_', ' '))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">Data may no longer reflect current usage.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Authentication required. Sign in through the official provider client.</p>' : ''}<details><summary>Provider details</summary><dl><dt>Health</dt><dd>${escapeHtml(provider.health)}</dd><dt>Last error</dt><dd>${escapeHtml(provider.lastErrorCode ?? 'none')}</dd></dl></details>${windows}${decision}</article>`;
+  const displayName = providerDisplayName(provider.id, provider.kind);
+  const monitoringState = provider.enabled ? 'Monitoring enabled' : 'Monitoring paused';
+  return `<article class="provider${staleClass}"><header class="provider-header"><div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(monitoringState)}</p></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(healthLabel(provider.health))}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">This information is out of date. Automatic planning is paused until a fresh update arrives.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Sign-in is required in the official provider client.</p>' : ''}<details><summary>Connection details</summary><dl><dt>Status</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>${windows}${decision}</article>`;
 }
 
 function decisionDescription(reason: string | null): string {
-  const descriptions: Record<string, string> = {
-    TARGET_RESET_WINDOW_MATCH:
-      'The target time matches this window. A durable action intent has been planned.',
-    TARGET_NOT_DUE: 'The candidate trigger time has not arrived yet.',
-    TARGET_MISSED:
-      'The candidate time has passed. The action was skipped to avoid an unexpected request.',
-    WINDOW_DURATION_UNKNOWN: 'Window duration is unknown. A trigger time cannot be calculated yet.',
-    WINDOW_DURATION_CONFIDENCE_TOO_LOW:
-      'Window duration confidence is too low for automatic scheduling.',
-    WINDOW_PHASE_CONFIDENCE_TOO_LOW:
-      'Window phase confidence is too low. Scheduling requires a reliable inactive state.',
-    WINDOW_NOT_INACTIVE: 'The window is not inactive. No new window needs to be started.',
-    OBSERVATION_STALE: 'The observation is stale. Waiting for fresh provider evidence.',
-    OBSERVATION_MISSING: 'Waiting for the first valid provider observation.',
-    TRIGGER_CAPABILITY_UNAVAILABLE: 'This provider does not currently support window triggering.',
-    AUTOMATION_DISABLED: 'Monitoring is enabled. Automatic actions are disabled.',
-  };
-  return (
-    descriptions[reason ?? ''] ??
-    'Review the recorded decision details for the scheduler’s explanation.'
-  );
+  return reasonLabel(reason);
 }
 
-function renderWindow(window: WindowSnapshot, now: Date): string {
+function renderWindow(providerId: string, window: WindowSnapshot, now: Date): string {
   const reset = factInstantText(window.resetAt);
   const approximateReset = approximateResetText(window.resetAt, now);
   const usage = window.usageRatio;
-  return `<section class="window-card"><div class="window-header"><h3>${window.durationSeconds ? `${formatDuration(window.durationSeconds.value)} window` : 'Usage window'}</h3><span class="badge">${escapeHtml(window.phase.value)}</span></div><p class="window-id">${escapeHtml(window.windowKind)}</p><div class="usage-value">${usage ? `${Math.round(usage.value * 100)}% <small>used</small>` : '<span class="unknown">unknown</span>'}</div>${usage ? `<progress class="quota-progress" max="100" value="${usage.value * 100}" aria-label="Usage for ${escapeHtml(window.windowKind)}">${Math.round(usage.value * 100)}%</progress>` : '<p class="muted">Usage has not been reported.</p>'}<p class="provider-meta">Remaining ${factRatioText(window.remainingRatio)}</p><dl><dt>Reset</dt><dd>${reset}${approximateReset}</dd><dt>Phase</dt><dd>${factText(window.phase.value, window.phase.source, window.phase.confidence)}</dd><dt>Duration</dt><dd>${factNumberText(window.durationSeconds, 's')}</dd></dl></section>`;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds % 86_400 === 0) return `${seconds / 86_400}d`;
-  if (seconds % 3_600 === 0) return `${seconds / 3_600}h`;
-  if (seconds % 60 === 0) return `${seconds / 60}m`;
-  return `${seconds}s`;
+  const label = windowDisplayName(providerId, window.windowKind, window.durationSeconds?.value);
+  return `<section class="window-card"><div class="window-header"><h3>${escapeHtml(label)}</h3><span class="badge">${escapeHtml(phaseLabel(window.phase.value))}</span></div><p class="window-id">Usage limits</p><div class="usage-value">${usage ? `${Math.round(usage.value * 100)}% <small>used</small>` : unknownText()}</div>${usage ? `<progress class="quota-progress" max="100" value="${usage.value * 100}" aria-label="Usage for ${escapeHtml(label)}">${Math.round(usage.value * 100)}%</progress>` : '<p class="muted">Usage has not been reported yet.</p>'}<p class="provider-meta">Remaining ${factRatioText(window.remainingRatio)}</p><dl><dt>Reset</dt><dd>${reset}${approximateReset}</dd><dt>Phase</dt><dd>${factText(phaseLabel(window.phase.value), window.phase.source, window.phase.confidence)}</dd><dt>Duration</dt><dd>${factNumberText(window.durationSeconds)}</dd></dl></section>`;
 }
 
 function factRatioText(fact: WindowSnapshot['usageRatio']): string {
@@ -635,7 +654,7 @@ function factRatioText(fact: WindowSnapshot['usageRatio']): string {
 
 function factInstantText(fact: WindowSnapshot['resetAt']): string {
   return fact
-    ? `<time datetime="${escapeHtml(fact.value)}" title="${escapeHtml(fact.value)}">${new Intl.DateTimeFormat('en', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(fact.value))} UTC</time><details><summary>Timing evidence</summary>${factText(fact.value, fact.source, fact.confidence)}</details>`
+    ? `<time datetime="${escapeHtml(fact.value)}" title="${escapeHtml(fact.value)}">${new Intl.DateTimeFormat('en', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(fact.value))} UTC</time><details><summary>Why this time is shown</summary><span class="muted">${escapeHtml(factQualifier(fact.source, fact.confidence))}</span></details>`
     : unknownText();
 }
 
@@ -661,17 +680,23 @@ function approximateResetText(fact: WindowSnapshot['resetAt'], now: Date): strin
   return `<br><span class="muted">${escapeHtml(text)}</span>`;
 }
 
-function factNumberText(fact: WindowSnapshot['durationSeconds'], suffix: string): string {
-  return fact ? factText(`${fact.value}${suffix}`, fact.source, fact.confidence) : unknownText();
+function factNumberText(fact: WindowSnapshot['durationSeconds'], suffix = ''): string {
+  return fact
+    ? factText(
+        suffix ? `${fact.value}${suffix}` : durationLabel(fact.value),
+        fact.source,
+        fact.confidence,
+      )
+    : unknownText();
 }
 
 function factText(value: string, source: string, confidence: string): string {
-  const prefix = source === 'inferred' || source === 'estimated' ? '~' : '';
-  return `${escapeHtml(`${prefix}${value}`)} <span class="muted">(${escapeHtml(source)} · ${escapeHtml(confidence)})</span>`;
+  const prefix = isEstimatedSource(source) ? 'Approximately ' : '';
+  return `${escapeHtml(`${prefix}${value}`)} <span class="muted">(${escapeHtml(factQualifier(source, confidence))})</span>`;
 }
 
 function unknownText(): string {
-  return '<span class="unknown">unknown</span>';
+  return '<span class="unknown">Not available yet</span>';
 }
 
 function escapeHtml(value: string): string {

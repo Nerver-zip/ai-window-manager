@@ -113,3 +113,7 @@ The reconciler writes a successful normalized observation, all of its window
 samples and a bounded inspection event together. Inspection failures update
 health/error metadata while retaining the previous normalized observation; no
 fabricated empty observation replaces last-known-good state.
+
+The server-rendered history view queries events by UTC range in bounded pages
+of 20 using the event timestamp index/order; pagination changes the read window
+only and does not alter retention or append-only history semantics.

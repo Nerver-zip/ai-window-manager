@@ -86,8 +86,8 @@ describe('history UI helpers', () => {
       },
     ]);
 
-    expect(html).toContain('Latest usage: <strong>unknown</strong>');
-    expect(html).toContain('missing values remain');
+    expect(html).toContain('Latest usage: <strong>Not available yet</strong>');
+    expect(html).toContain('Some observations are unavailable');
     expect(html).not.toContain('Latest usage: <strong>0%');
   });
 
@@ -103,9 +103,9 @@ describe('history UI helpers', () => {
       },
     ]);
 
-    expect(html).toContain('<h3 id="history-chart-unknown-unknown">unknown');
-    expect(html).toContain('Remaining: <strong>unknown</strong>');
-    expect(html).toContain('; 1 unknown');
+    expect(html).toContain('<h3 id="history-chart-unknown-usage-window">Unknown');
+    expect(html).toContain('Remaining: <strong>Not available yet</strong>');
+    expect(html).toContain('; 1 unavailable');
     expect(html).not.toContain('<provider>');
     expect(html).toContain('class="chart-line"');
   });
@@ -120,8 +120,8 @@ describe('history UI helpers', () => {
 
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).not.toContain('<img');
-    expect(html).toContain('Unknown event');
-    expect(html).toContain('unknown');
+    expect(html).toContain('Activity update');
+    expect(html).toContain('Not available');
   });
 
   it('normalizes unknown event metadata to safe explicit values', () => {
@@ -135,9 +135,9 @@ describe('history UI helpers', () => {
       }),
     ]);
 
-    expect(html).toContain('Custom Event');
-    expect(html).toContain('>info<');
-    expect(html).toContain('>unknown<');
+    expect(html).toContain('Activity update');
+    expect(html).toContain('>Info<');
+    expect(html).toContain('>Not available<');
   });
 
   it('renders already projected items with an unknown timestamp without throwing', () => {
@@ -176,7 +176,7 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('value="30d" selected');
     expect(html).toContain('value="fake" selected');
-    expect(html).toContain('viewBox="0 0 320 96"');
+    expect(html).toContain('viewBox="0 0 360 146"');
     expect(html).toContain('viewport');
     expect(html).toContain('history-toolbar');
     expect(html).toContain('class="card chart"');
@@ -189,6 +189,33 @@ describe('history UI helpers', () => {
     expect(html).not.toContain(' style=');
     expect(html).not.toContain('{"');
     expect(html).not.toContain('accountId');
+  });
+
+  it('renders explicit chart time bounds and accessible history pagination', () => {
+    const html = renderHistoryPage({
+      now: NOW,
+      providers: [{ id: 'fake' }],
+      events: [event({ id: 21 }), event({ id: 22 })],
+      samples: [
+        sample({ observedAt: '2026-09-19T08:00:00.000Z', usageRatio: 0.1 }),
+        sample({ observedAt: '2026-09-19T11:00:00.000Z', usageRatio: 0.4 }),
+      ],
+      pagination: {
+        page: 2,
+        pageSize: 20,
+        hasNext: true,
+        previousHref: '/history?range=24h&page=1',
+        nextHref: '/history?range=24h&page=3',
+      },
+    });
+
+    expect(html).toContain('08:00 UTC');
+    expect(html).toContain('11:00 UTC');
+    expect(html).toContain('Used %');
+    expect(html).toContain('aria-label="History pages"');
+    expect(html).toContain('rel="prev"');
+    expect(html).toContain('rel="next"');
+    expect(html).toContain('page 2');
   });
 
   it('fails closed to an empty bounded view for invalid range and invalid samples', () => {
@@ -206,7 +233,7 @@ describe('history UI helpers', () => {
     expect(view.series).toEqual([]);
     const html = renderHistoryPage({ now: NOW, providers: [], events: [], samples: [] });
     expect(html).toContain('empty-state');
-    expect(html).toContain('unknown');
+    expect(html).toContain('Saved usage samples will appear here');
     expect(html).not.toContain('<style');
   });
 
@@ -223,8 +250,8 @@ describe('history UI helpers', () => {
       samples: [],
     });
 
-    expect(html).toContain('value="fake">fake</option>');
-    expect(html).toContain('value="codex">codex</option>');
+    expect(html).toContain('value="fake">Test provider</option>');
+    expect(html).toContain('value="codex">Codex</option>');
     expect(html).not.toContain('duplicate');
     expect(html).not.toContain('bad/id');
   });

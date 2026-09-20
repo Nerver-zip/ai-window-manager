@@ -66,7 +66,7 @@ describe('settings and schedule pages', () => {
       headers: { host: 'localhost:8787' },
     });
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('Poll interval');
+    expect(page.body).toContain('Refresh interval');
     const cookie = headerValue(page.headers['set-cookie']);
     const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
     if (!token) throw new Error('csrf token missing');

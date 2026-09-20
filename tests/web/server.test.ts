@@ -160,9 +160,9 @@ describe('web server persisted overview', () => {
   it('renders an empty workspace with useful navigation', async () => {
     const { app } = createApp(() => {});
     const response = await app.inject('/');
-    expect(response.body).toContain('No providers configured');
+    expect(response.body).toContain('No providers are being monitored');
     expect(response.body).toContain('aria-current="page"');
-    expect(response.body).toContain('Configured providers');
+    expect(response.body).toContain('Providers monitored');
   });
 
   it.each(['/settings', '/schedule', '/history'])(
@@ -180,7 +180,7 @@ describe('web server persisted overview', () => {
   );
 
   it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
-    'shows %s and unknown quota without a fabricated zero',
+    'shows a human status for %s without a fabricated zero',
     async (health) => {
       const { app } = createApp((repositories) => {
         seedObservedProvider(repositories);
@@ -193,8 +193,10 @@ describe('web server persisted overview', () => {
         repositories.providerState.upsert({ ...state, health, lastErrorCode: health });
       });
       const page = await app.inject('/');
-      expect(page.body).toContain(health);
-      expect(page.body).toContain('Usage has not been reported');
+      expect(page.body).toContain(
+        health === 'AUTH_REQUIRED' ? 'Sign-in required' : 'Needs attention',
+      );
+      expect(page.body).toContain('Usage has not been reported yet');
       expect(page.body).not.toContain('<progress');
     },
   );
@@ -213,9 +215,9 @@ describe('web server persisted overview', () => {
       });
     });
     const page = await app.inject('/');
-    expect(page.body).toContain('Action planned');
-    expect(page.body).toContain('A durable action intent has been planned');
-    expect(page.body).toContain('<summary>Technical details</summary>');
+    expect(page.body).toContain('Automatic action planned');
+    expect(page.body).toContain('The window can start before the target reset.');
+    expect(page.body).not.toContain('<summary>Technical details</summary>');
   });
 
   it('serves persisted API and HTML without provider inspection', async () => {
@@ -256,12 +258,14 @@ describe('web server persisted overview', () => {
     expect(css.statusCode).toBe(200);
     expect(css.headers['content-type']).toContain('text/css');
     expect(css.headers['content-security-policy']).not.toContain('unsafe-inline');
-    expect(page.body).toContain('Health</dt><dd>UP');
+    expect(page.body).toContain('Status</dt><dd>Connected');
     expect(page.body).toContain('Remaining');
     expect(page.body).toContain('75%');
-    expect(page.body).toContain('~2026-09-14T16:00:00.000Z');
+    expect(page.body).toContain('Why this time is shown');
     expect(page.body).toContain('Reset in approximately 5 hours');
-    expect(page.body).toContain('official_client_internal · high');
+    expect(page.body).toContain('Reported by provider · Good confidence');
+    expect(page.body).not.toContain('official_client_internal');
+    expect(page.body).not.toContain('five_hour');
     expect(page.body).not.toContain('<script>persisted text</script>');
     expect(inspected.count).toBe(0);
   });
@@ -306,7 +310,7 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Reset in approximately 30 seconds');
     expect(page.body).toContain('Reset in approximately 2 days');
     expect(page.body).toContain('Reset approximately 1 hour ago');
-    expect(page.body).toContain('Reset</dt><dd><span class="unknown">unknown</span>');
+    expect(page.body).toContain('Reset</dt><dd><span class="unknown">Not available yet</span>');
   });
 
   it('renders the persisted scheduler explanation and escapes its text', async () => {
@@ -348,9 +352,9 @@ describe('web server persisted overview', () => {
     expect(api.body).not.toContain('ignoredSecret');
 
     const page = await app.inject('/');
-    expect(page.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(page.body).not.toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(page.body).not.toContain('<script>alert(1)</script>');
-    expect(page.body).toContain('WINDOW_DURATION_CONFIDENCE_TOO_LOW');
+    expect(page.body).toContain('The window duration is not reliable enough yet.');
   });
 
   it('shows explicit stale and unknown values for missing or old state', async () => {
@@ -377,11 +381,11 @@ describe('web server persisted overview', () => {
     const page = await app.inject('/');
     expect(page.body).toContain('STALE');
     expect(page.body).toContain('STALE · never observed');
-    expect(page.body).toContain('Window: unknown');
-    expect(page.body).toContain('Health</dt><dd>UNKNOWN');
-    expect(page.body).toContain('&lt;unsafe-kind&gt;');
+    expect(page.body).toContain('Waiting for the first update');
+    expect(page.body).toContain('Waiting for first observation');
+    expect(page.body).not.toContain('&lt;unsafe-kind&gt;');
     expect(page.body).not.toContain('<unsafe-kind>');
-    expect(page.body).toContain('unknown');
+    expect(page.body).toContain('Usage windows will appear after the provider is checked.');
   });
 
   it('keeps health and metrics side-effect free', async () => {
@@ -441,6 +445,16 @@ describe('web server persisted overview', () => {
         reasonCode: null,
         data: { health: 'UP' },
       });
+      for (let index = 1; index <= 21; index += 1) {
+        repositories.events.append({
+          occurredAtMs: Date.parse(NOW) - index * 1_000,
+          providerId: 'fake',
+          type: 'scheduler_noop',
+          severity: 'info',
+          reasonCode: 'TARGET_NOT_DUE',
+          data: {},
+        });
+      }
     });
 
     expect((await app.inject('/api/v1/providers/fake')).statusCode).toBe(200);
@@ -454,6 +468,10 @@ describe('web server persisted overview', () => {
     expect(historyPage.body).toContain('Timeline');
     expect(historyPage.body).toContain('Usage');
     expect(historyPage.body).toContain('25%');
+    expect(historyPage.body).toContain('page=2');
+    const historyPageTwo = await app.inject('/history?range=24h&provider=fake&page=2');
+    expect(historyPageTwo.statusCode).toBe(200);
+    expect(historyPageTwo.body).toContain('rel="prev"');
     expect(historyPage.body).not.toContain('synthetic-not-a-secret');
     const settings = await app.inject('/api/v1/settings');
     expect(settings.statusCode).toBe(200);

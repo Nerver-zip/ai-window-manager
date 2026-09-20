@@ -49,7 +49,7 @@ describe('settings UI helpers', () => {
     });
     expect(html).toContain('value="false" selected');
     expect(html).toContain('value="automation" selected');
-    expect(html).toContain('Capability summary');
+    expect(html).toContain('What this provider supports');
   });
 
   it('renders only safe fields with hidden CSRF inputs and escaped values', () => {
@@ -60,9 +60,11 @@ describe('settings UI helpers', () => {
     });
 
     expect(html).toContain('name="csrfToken"');
-    expect(html).toContain('fake&lt;&amp;');
+    expect(html).toContain('action="/settings/providers/fake%3C%26"');
     expect(html).toContain('&lt;script&gt;bad&lt;/script&gt;');
     expect(html).toContain('name="pollIntervalSeconds"');
+    expect(html).not.toContain('account/rateLimits/read');
+    expect(html).not.toContain('AWM_CODEX_TRIGGER_ENABLED');
     expect(html).not.toContain('apiKey');
     expect(html).not.toContain('<script>bad</script>');
     expect(html).toContain('href="/assets/app.css"');
@@ -84,10 +86,12 @@ describe('settings UI helpers', () => {
       providers: [{ ...provider, capabilities: unsupported }],
     });
     expect(html).toContain('value="automation" disabled');
-    expect(html).toContain('does not advertise a supported trigger capability');
+    expect(html).toContain(
+      'Automatic actions are unavailable because this provider does not support them.',
+    );
 
     const unknown = renderSettingsPage({ csrfToken, providers: [provider] });
-    expect(unknown).toContain('Capability data is unavailable');
+    expect(unknown).toContain('We could not verify this provider yet');
     expect(unknown).toContain('value="automation" disabled');
   });
 
@@ -127,10 +131,10 @@ describe('settings UI helpers', () => {
 
     expect(html).toContain('value="five_hour"');
     expect(html).toContain('value="America/Sao_Paulo"');
-    expect(html).toContain('2026-09-19T16:00:00.000Z');
-    expect(html).toContain('Candidate trigger');
+    expect(html).not.toContain('2026-09-19T16:00:00.000Z');
+    expect(html).toContain('Planned start');
     expect(html).toContain('08:00');
-    expect(html).toContain('5h window');
+    expect(html).toContain('5 hours');
     expect(html).toContain('data-resolution="exact"');
   });
 
@@ -156,8 +160,8 @@ describe('settings UI helpers', () => {
       referenceInstant: new Date('2026-09-19T15:00:00.000Z'),
     });
 
-    expect(html).toContain('Automation eligible');
-    expect(html).toContain('automation ready');
+    expect(html).toContain('Automatic actions available');
+    expect(html).not.toContain('automation ready');
   });
 });
 
@@ -174,7 +178,8 @@ describe('schedule preview', () => {
       instantIso: '2026-09-19T16:00:00.000Z',
       resolution: 'exact',
     });
-    expect(renderSchedulePreview(preview)).toContain('2026-09-19T16:00:00.000Z');
+    expect(renderSchedulePreview(preview)).not.toContain('2026-09-19T16:00:00.000Z');
+    expect(renderSchedulePreview(preview)).toContain('No time adjustment was needed.');
   });
 
   it.each([
@@ -243,7 +248,9 @@ describe('schedule preview', () => {
       },
       referenceInstant: new Date('2026-09-19T15:00:00.000Z'),
     });
-    expect(html).toContain('Candidate withheld');
+    expect(html).toContain(
+      'The start time will appear when the window duration is reliable enough.',
+    );
     expect(html).not.toContain('08:00');
   });
 });

@@ -33,9 +33,9 @@ describe('shared application shell', () => {
     expect(escapeHtml('&<>"\'')).toBe('&amp;&lt;&gt;&quot;&#39;');
   });
   it('defines mobile, focus, reduced-motion and bounded graph styling without remote dependencies', () => {
-    expect(APP_CSS).toContain('@media(max-width:700px)');
+    expect(APP_CSS).toContain('@media (max-width: 700px)');
     expect(APP_CSS).toContain(':focus-visible');
-    expect(APP_CSS).toContain('min-height:44px');
+    expect(APP_CSS).toContain('min-height: 44px');
     expect(APP_CSS).toContain('prefers-reduced-motion');
     expect(APP_CSS).not.toMatch(/@import|https?:/);
   });

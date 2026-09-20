@@ -8,6 +8,13 @@
  */
 
 import { escapeHtml, renderAppShell } from './ui/layout.js';
+import {
+  eventLabel,
+  providerDisplayName,
+  reasonLabel,
+  severityLabel,
+  windowDisplayName,
+} from './ui/presentation.js';
 
 export const HISTORY_RANGES = [
   { value: '24h', label: '24h', durationMs: 24 * 60 * 60 * 1000 },
@@ -19,6 +26,7 @@ export type HistoryRange = (typeof HISTORY_RANGES)[number]['value'];
 export type HistorySeverity = 'debug' | 'info' | 'warn' | 'error';
 
 export const MAX_HISTORY_EVENTS = 100;
+export const HISTORY_PAGE_SIZE = 20;
 export const MAX_USAGE_SERIES = 16;
 export const MAX_USAGE_POINTS = 96;
 
@@ -75,6 +83,15 @@ export interface HistoryPageInput {
   providers: readonly HistoryProviderOption[];
   events: readonly HistoryTimelineEvent[];
   samples: readonly HistoryUsageSample[];
+  pagination?: HistoryPagination;
+}
+
+export interface HistoryPagination {
+  page: number;
+  pageSize: number;
+  hasNext: boolean;
+  previousHref?: string;
+  nextHref?: string;
 }
 
 export interface BoundedHistoryView {
@@ -83,21 +100,6 @@ export interface BoundedHistoryView {
   events: HistoryTimelineItem[];
   series: HistoryUsageSeries[];
 }
-
-const EVENT_TYPE_LABELS: Readonly<Record<string, string>> = {
-  action_claimed: 'Action claimed',
-  action_confirmed: 'Action confirmed',
-  action_intent_planned: 'Action intent planned',
-  action_succeeded: 'Action succeeded',
-  action_uncertain: 'Action outcome uncertain',
-  provider_inspected: 'Provider inspected',
-  provider_inspection_failed: 'Provider inspection failed',
-  provider_auth_required: 'Provider authentication required',
-  schedule_missed: 'Schedule missed',
-  scheduler_noop: 'Scheduler decision',
-  settings_changed: 'Settings changed',
-  schedule_changed: 'Schedule changed',
-};
 
 const SAFE_CODE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/;
 const SAFE_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -200,6 +202,7 @@ export function buildBoundedHistoryView(input: HistoryPageInput): BoundedHistory
 
 export function renderHistoryPage(input: HistoryPageInput): string {
   const view = buildBoundedHistoryView(input);
+  const pagination = normalizePagination(input.pagination);
   const providers = safeProviderOptions(input.providers);
   const selectedProvider = view.providerId ?? '';
   const rangeOptions = HISTORY_RANGES.map(
@@ -220,8 +223,8 @@ export function renderHistoryPage(input: HistoryPageInput): string {
     <form class="history-toolbar card" method="get" action="/history" aria-label="History filters">
       <div class="history-toolbar-summary">
         <span class="eyebrow">Explore</span>
-        <strong>Persisted activity</strong>
-        <span class="muted">Review provider usage and scheduler decisions.</span>
+        <strong>Activity history</strong>
+        <span class="muted">Review saved provider updates and why decisions were made.</span>
       </div>
       <div class="history-toolbar-fields">
         <label class="field">
@@ -237,20 +240,21 @@ export function renderHistoryPage(input: HistoryPageInput): string {
     </form>
     <div class="history-sections">
       ${renderUsageSeries(view.series)}
-      ${renderTimeline(view.events)}
+      ${renderTimeline(view.events, pagination)}
     </div>
   </div>`;
 
   return renderAppShell({
     page: 'history',
     title: 'History',
-    description: 'Bounded persisted observations and decisions.',
+    description: 'See usage changes and why the system made a decision.',
     content,
   });
 }
 
 export function renderTimeline(
   events: readonly (HistoryTimelineItem | HistoryTimelineEvent)[],
+  pagination?: HistoryPagination,
 ): string {
   const safeEvents = events
     .map((event) => ('displayType' in event ? event : sanitizeEvent(event)))
@@ -261,8 +265,8 @@ export function renderTimeline(
         <div><span class="eyebrow">Activity</span><h2 id="timeline-title">Timeline</h2></div>
       </div>
       <div class="empty-state" role="status">
-        <strong>No events in this range</strong>
-        <p class="unknown">unknown — the persisted timeline has no matching events.</p>
+        <strong>No activity in this range</strong>
+        <p class="unknown">Saved activity will appear here after the provider is checked.</p>
       </div>
     </section>`;
   }
@@ -278,11 +282,11 @@ export function renderTimeline(
             <time class="timeline-time" datetime="${escapeAttribute(event.occurredAt)}">${escapeHtml(
               formatTimestamp(event.occurredAt),
             )}</time>
-            <span class="badge badge-${severity}">${escapeHtml(severity)}</span>
-            <span class="timeline-provider">${escapeHtml(event.providerId ?? 'unknown')}</span>
+            <span class="badge badge-${severity}">${escapeHtml(severityLabel(severity))}</span>
+            <span class="timeline-provider">${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
           </div>
           <h3 class="timeline-event">${escapeHtml(event.displayType)}</h3>
-          <p class="timeline-reason"><span class="timeline-label">Reason</span>${escapeHtml(
+          <p class="timeline-reason"><span class="timeline-label">Why</span>${escapeHtml(
             event.displayReason,
           )}</p>
         </div>
@@ -292,9 +296,10 @@ export function renderTimeline(
   return `<section class="history-section card" aria-labelledby="timeline-title">
     <div class="section-heading">
       <div><span class="eyebrow">Activity</span><h2 id="timeline-title">Timeline</h2></div>
-      <span class="section-count">${visibleEvents.length} event${visibleEvents.length === 1 ? '' : 's'}</span>
+      <span class="section-count">${visibleEvents.length} event${visibleEvents.length === 1 ? '' : 's'} · page ${normalizePagination(pagination).page}</span>
     </div>
     <ol class="timeline">${items}</ol>
+    ${renderHistoryPagination(pagination, visibleEvents.length)}
   </section>`;
 }
 
@@ -306,7 +311,7 @@ export function renderUsageSeries(series: readonly HistoryUsageSeries[]): string
       </div>
       <div class="empty-state card" role="status">
         <strong>No usage samples in this range</strong>
-        <p class="unknown">unknown — persisted window samples will appear here after observation.</p>
+        <p class="unknown">Saved usage samples will appear here after the provider is checked.</p>
       </div>
     </section>`;
   }
@@ -316,7 +321,7 @@ export function renderUsageSeries(series: readonly HistoryUsageSeries[]): string
   return `<section class="history-section" aria-labelledby="usage-title">
     <div class="section-heading">
       <div><span class="eyebrow">Window samples</span><h2 id="usage-title">Usage</h2></div>
-      <span class="section-count">${visibleSeries.length} series</span>
+      <span class="section-count">${visibleSeries.length} window${visibleSeries.length === 1 ? '' : 's'}</span>
     </div>
     <div class="chart-grid">${charts}</div>
   </section>`;
@@ -325,6 +330,8 @@ export function renderUsageSeries(series: readonly HistoryUsageSeries[]): string
 function renderUsageChart(series: HistoryUsageSeries): string {
   const providerId = safeProviderId(series.providerId) ?? 'unknown';
   const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
+  const providerLabel = providerDisplayName(providerId);
+  const windowLabel = windowDisplayName(providerId, windowKind);
   const points = series.points.slice(-MAX_USAGE_POINTS).map((point) => ({
     ...point,
     usageRatio: ratioOrNull(point.usageRatio),
@@ -353,22 +360,32 @@ function renderUsageChart(series: HistoryUsageSeries): string {
   const latestPoint = [...points].reverse().find((point) => point.usageRatio !== null);
   const latest = latestPoint?.usageRatio;
   const latestText =
-    latest === undefined || latest === null ? 'unknown' : `${Math.round(latest * 100)}%`;
+    latest === undefined || latest === null ? 'Not available yet' : `${Math.round(latest * 100)}%`;
   const latestRemainingPoint = [...points].reverse().find((point) => point.remainingRatio !== null);
   const latestRemaining = latestRemainingPoint?.remainingRatio;
   const remainingText =
     latestRemaining === undefined || latestRemaining === null
-      ? 'unknown'
+      ? 'Not available yet'
       : `${Math.round(latestRemaining * 100)}%`;
-  const unknownText = unknownCount > 0 ? `; ${unknownCount} unknown` : '';
-  const chartTitleId = `history-chart-${providerId}-${windowKind}`;
+  const unknownText = unknownCount > 0 ? `; ${unknownCount} unavailable` : '';
+  const chartTitleId = `history-chart-${displaySlug(providerLabel)}-${displaySlug(windowLabel)}`;
+  const firstPoint = points[0];
+  const lastPoint = points.at(-1);
+  const latestIndex = findLastKnownUsageIndex(points);
+  const latestMarker =
+    latestIndex === -1
+      ? ''
+      : `<circle class="chart-point" cx="${chartX(latestIndex, points.length)}" cy="${chartY(
+          points[latestIndex]?.usageRatio ?? 0,
+        )}" r="3.5" />`;
+  const sampleText = `${points.length} sample${points.length === 1 ? '' : 's'}`;
 
   return `<article class="card chart" aria-labelledby="${escapeAttribute(chartTitleId)}">
     <header class="card-header">
       <div class="chart-heading">
-        <span class="eyebrow">Window</span>
-        <h3 id="${escapeAttribute(chartTitleId)}">${escapeHtml(providerId)} <span class="chart-divider">/</span> ${escapeHtml(
-          windowKind,
+        <span class="eyebrow">Usage window</span>
+        <h3 id="${escapeAttribute(chartTitleId)}">${escapeHtml(providerLabel)} <span class="chart-divider">/</span> ${escapeHtml(
+          windowLabel,
         )}</h3>
       </div>
       <div class="chart-summary">
@@ -379,19 +396,27 @@ function renderUsageChart(series: HistoryUsageSeries): string {
       </div>
     </header>
     <div class="chart-scroll">
-      <svg class="chart-svg" viewBox="0 0 320 96" role="img" aria-labelledby="${escapeAttribute(
+      <svg class="chart-svg" viewBox="0 0 360 146" role="img" aria-labelledby="${escapeAttribute(
         chartTitleId,
-      )}" aria-label="Usage series for ${escapeAttribute(`${providerId} ${windowKind}`)}">
-        <line class="chart-gridline" x1="0" y1="8" x2="320" y2="8" />
-        <line class="chart-gridline" x1="0" y1="48" x2="320" y2="48" />
-        <line class="chart-gridline" x1="0" y1="88" x2="320" y2="88" />
-        <text class="chart-axis-label" x="4" y="7">100%</text>
-        <text class="chart-axis-label" x="4" y="47">50%</text>
-        <text class="chart-axis-label" x="4" y="87">0%</text>
+      )}" aria-label="Usage over time for ${escapeAttribute(`${providerLabel} ${windowLabel}`)}">
+        <line class="chart-gridline" x1="34" y1="14" x2="352" y2="14" />
+        <line class="chart-gridline" x1="34" y1="62" x2="352" y2="62" />
+        <line class="chart-gridline" x1="34" y1="110" x2="352" y2="110" />
+        <line class="chart-axis" x1="34" y1="110" x2="352" y2="110" />
+        <text class="chart-axis-label" x="4" y="17">100%</text>
+        <text class="chart-axis-label" x="10" y="65">50%</text>
+        <text class="chart-axis-label" x="15" y="113">0%</text>
+        <text class="chart-axis-label chart-axis-time" x="34" y="133">${escapeHtml(
+          formatChartTime(firstPoint?.observedAt),
+        )}</text>
+        <text class="chart-axis-label chart-axis-time" x="352" y="133" text-anchor="end">${escapeHtml(
+          formatChartTime(lastPoint?.observedAt),
+        )}</text>
         ${polyline}
+        ${latestMarker}
       </svg>
     </div>
-    <p class="chart-legend">Usage ratio from 0% to 100%; missing values remain <span class="unknown">unknown</span>.</p>
+    <p class="chart-legend"><strong>Used %</strong> · older → newer · ${sampleText}${unknownText ? escapeHtml(unknownText) : ''}. Some observations are unavailable.</p>
   </article>`;
 }
 
@@ -409,9 +434,9 @@ function sanitizeEvent(event: HistoryTimelineEvent): HistoryTimelineItem | null 
     type: type ?? 'unknown',
     severity,
     reasonCode: reason,
-    displayType: (type && EVENT_TYPE_LABELS[type]) ?? humanizeCode(type),
+    displayType: eventLabel(type ?? ''),
     displaySeverity: severity,
-    displayReason: reason ?? 'unknown',
+    displayReason: reasonLabel(reason),
   };
 }
 
@@ -423,8 +448,8 @@ function safeProviderOptions(
     const id = safeProviderId(provider.id);
     if (id === null || seen.has(id)) return [];
     seen.add(id);
-    const label = safeDisplayText(provider.label ?? id);
-    return [{ id, label: label || id }];
+    const label = safeDisplayText(provider.label ?? providerDisplayName(id));
+    return [{ id, label: label || providerDisplayName(id) }];
   });
 }
 
@@ -456,6 +481,14 @@ function safeDisplayText(value: string): string {
     .slice(0, 96);
 }
 
+function displaySlug(value: string): string {
+  const slug = value
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return slug || 'unknown';
+}
+
 function ratioOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
     ? value
@@ -467,14 +500,6 @@ function normalizeProviderFilter(value: unknown): string | undefined {
   return provider ?? undefined;
 }
 
-function humanizeCode(value: string | null): string {
-  if (value === null) return 'Unknown event';
-  return value
-    .replaceAll('_', ' ')
-    .replace(/\b\w/g, (character) => character.toUpperCase())
-    .slice(0, 96);
-}
-
 function formatTimestamp(value: string): string {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp)
@@ -483,11 +508,59 @@ function formatTimestamp(value: string): string {
 }
 
 function chartX(index: number, length: number): number {
-  return length <= 1 ? 160 : Math.round((index / (length - 1)) * 320);
+  return length <= 1 ? 193 : 34 + Math.round((index / (length - 1)) * 318);
 }
 
 function chartY(value: number): number {
-  return Math.round(88 - value * 80);
+  return Math.round(110 - value * 96);
+}
+
+function findLastKnownUsageIndex(points: readonly HistoryUsagePoint[]): number {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (points[index]?.usageRatio !== null && points[index]?.usageRatio !== undefined) return index;
+  }
+  return -1;
+}
+
+function formatChartTime(value: string | undefined): string {
+  if (!value) return 'unknown';
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return 'unknown';
+  return new Date(timestamp).toISOString().slice(11, 16) + ' UTC';
+}
+
+function normalizePagination(value: HistoryPagination | undefined): HistoryPagination {
+  if (!value) return { page: 1, pageSize: HISTORY_PAGE_SIZE, hasNext: false };
+  return {
+    page: Number.isSafeInteger(value.page) && value.page > 0 ? value.page : 1,
+    pageSize:
+      Number.isSafeInteger(value.pageSize) && value.pageSize > 0
+        ? Math.min(value.pageSize, MAX_HISTORY_EVENTS)
+        : HISTORY_PAGE_SIZE,
+    hasNext: value.hasNext === true,
+    ...(typeof value.previousHref === 'string' ? { previousHref: value.previousHref } : {}),
+    ...(typeof value.nextHref === 'string' ? { nextHref: value.nextHref } : {}),
+  };
+}
+
+function renderHistoryPagination(
+  input: HistoryPagination | undefined,
+  visibleCount: number,
+): string {
+  const pagination = normalizePagination(input);
+  const first = (pagination.page - 1) * pagination.pageSize + (visibleCount > 0 ? 1 : 0);
+  const last = first > 0 ? first + visibleCount - 1 : 0;
+  const range = visibleCount > 0 ? `Showing ${first}–${last}` : 'No events shown';
+  const previous = pagination.previousHref
+    ? `<a class="button button-secondary" href="${escapeAttribute(pagination.previousHref)}" rel="prev">Previous</a>`
+    : `<span class="button button-secondary is-disabled" aria-disabled="true">Previous</span>`;
+  const next = pagination.nextHref
+    ? `<a class="button button-secondary" href="${escapeAttribute(pagination.nextHref)}" rel="next">Next</a>`
+    : `<span class="button button-secondary is-disabled" aria-disabled="true">Next</span>`;
+  return `<nav class="history-pagination" aria-label="History pages">
+    <p class="history-pagination-summary">${range} · page ${pagination.page}${pagination.hasNext ? ' · more available' : ''}</p>
+    <div class="history-pagination-actions">${previous}${next}</div>
+  </nav>`;
 }
 
 function isHistoryRange(value: unknown): value is HistoryRange {

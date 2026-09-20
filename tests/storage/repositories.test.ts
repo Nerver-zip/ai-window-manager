@@ -274,6 +274,14 @@ describe('storage repositories', () => {
     ]);
     expect(repositories.events.list(undefined, { beforeMs: observedAtMs + 1 })).toHaveLength(1);
     expect(repositories.events.list('fake', { limit: 0 })).toHaveLength(1);
+    expect(
+      repositories.events.list(undefined, {
+        afterMs: observedAtMs,
+        beforeMs: observedAtMs + 2,
+        limit: 1,
+        offset: 1,
+      }),
+    ).toEqual([expect.objectContaining({ occurredAtMs: observedAtMs })]);
     db.close();
   });
 

@@ -13,17 +13,26 @@ Goal: within seconds answer:
 One provider card per configured provider:
 
 ```text
-Codex                         ACTIVE
-5-hour  ████████████████░░░░  82% remaining
-Reset   13:04                 exact · provider
-Age     03:52
-Weekly  ███████████░░░░░░░░░  56% remaining
+Codex                         Connected
+5-hour window  ████████████░░  82% remaining
+Reset   13:04 UTC             Reported by provider · High confidence
+Updated 03:52 ago             Fresh
+Weekly window ████████░░░░░░░  56% remaining
 
-Next: trigger candidate 08:00 tomorrow
-Why: target reset 13:00 - observed 5h window
+Next: automatic action planned for 08:00 tomorrow
+Why: the window can start before the target reset
 ```
 
-If data is inferred, render `~13:04` and the evidence/confidence label. If stale, visually say `last observed 12m ago` instead of presenting old data as live.
+The user-facing vocabulary deliberately hides provider and scheduler identifiers.
+For example, `codex_primary` is shown as `5-hour window`, `codex_secondary` as
+`Weekly window`, `official_supported` as `Reported by provider`, and inferred
+values use `Approximately` plus a plain-language confidence label. Internal
+provider ids, window keys, reason codes and evidence enums remain available to
+the JSON/API and logs, but are not presented as normal UI copy.
+
+If data is inferred, render `Approximately 13:04` and the evidence/confidence
+label. If stale, visually say `last observed 12m ago` and explain that
+automatic planning is paused instead of presenting old data as live.
 
 The overview is backed by persisted `provider_state`, recent scheduler/events,
 and action-intent records. Opening `/` or `/api/v1/providers` does not call a
@@ -38,17 +47,20 @@ freshness and window facts as `unknown` rather than fabricated zeroes.
 - manual `Trigger now` only when capability/automation mode permits;
 - next action + reason.
 
-The current server-rendered `/schedule` page edits target-reset policy fields,
-previews the next IANA occurrence, and labels DST adjustment/ambiguity. `/settings`
-edits enabled state, mode and polling interval. Both forms contain a CSRF token;
-invalid or unsupported values are rejected before SQLite writes. Secrets and
-provider-owned auth state are never editable or rendered.
+The current server-rendered `/schedule` page asks for a provider, a human-readable
+usage window, a local reset time, timezone and timing tolerance. It previews the
+planned start and explains daylight-saving adjustments without exposing the
+stored window key. `/settings` edits monitoring state, automatic-action mode and
+refresh interval. Both forms contain a CSRF token; invalid or unsupported values
+are rejected before SQLite writes. Secrets and provider-owned auth state are
+never editable or rendered.
 
 ## Provider settings
 
 - enabled;
-- monitor-only / automation (if supported);
-- polling interval within validated range;
+- monitoring on/off;
+- automatic actions (if supported);
+- refresh interval within validated range;
 - auth/setup status (never credential values);
 - capability matrix;
 - “inspect now”.
@@ -57,11 +69,13 @@ provider-owned auth state are never editable or rendered.
 
 The server-rendered `/history` page reads persisted SQLite state and never
 inspects a provider. It supports bounded `24h`, `7d` and `30d` ranges plus a
-provider filter. Keep it small:
+provider filter. Timeline events are read in bounded pages of 20, with explicit
+previous/next navigation, so a busy daemon does not create an unbounded page.
+Keep it small:
 
 - recent lifecycle/action timeline;
 - usage over time per five-hour/weekly bucket;
-- compact SVG usage series with explicit unknown values;
+- compact SVG usage series with explicit 0–100% axes, UTC time bounds and unknown values;
 - simple day/hour aggregates after sufficient data (deferred).
 
 No enterprise dashboard, no Grafana clone.
