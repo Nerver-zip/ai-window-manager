@@ -202,6 +202,19 @@ describe('ActionExecutor', () => {
     await throwing.executor({ adapters: new Map([['fake', throwingAdapter]]) }).executeDue();
     expect(throwing.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
     expect(throwing.triggerCount).toBe(0);
+
+    const missingMethod = setup();
+    const adapterWithoutMethod: ProviderAdapter = {
+      id: 'fake',
+      capabilities: () => missingMethod.fake.capabilities(),
+      health: (ctx) => missingMethod.fake.health(ctx),
+      inspect: (ctx) => missingMethod.fake.inspect(ctx),
+    };
+    await missingMethod
+      .executor({ adapters: new Map([['fake', adapterWithoutMethod]]) })
+      .executeDue();
+    expect(missingMethod.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
+    expect(missingMethod.triggerCount).toBe(0);
   });
 
   it('keeps uncertain outcomes uncertain and never blindly retries', async () => {

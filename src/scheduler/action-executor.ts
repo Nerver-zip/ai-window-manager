@@ -151,7 +151,7 @@ export class ActionExecutor {
       this.markSkipped(intent, nowMs, ActionReasonCode.ProviderUnavailable, report);
       return;
     }
-    if (!triggerCapabilityAvailable(adapter)) {
+    if (!triggerCapabilityAvailable(adapter) || typeof adapter.triggerWindow !== 'function') {
       this.markSkipped(intent, nowMs, ActionReasonCode.CapabilityUnavailable, report);
       return;
     }
@@ -179,11 +179,6 @@ export class ActionExecutor {
     this.appendEventOnce(
       this.actionEvent(claimed, 'action_dispatch_started', 'ACTION_DISPATCH_STARTED'),
     );
-
-    if (typeof adapter.triggerWindow !== 'function') {
-      this.markSkipped(intent, nowMs, ActionReasonCode.CapabilityUnavailable, report);
-      return;
-    }
 
     let result: ProviderActionResult;
     try {
