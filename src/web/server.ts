@@ -13,6 +13,13 @@ import type {
 import { registry } from '../metrics/metrics.js';
 import { createCommandApi } from './api-commands.js';
 import { createReadApi } from './api-read.js';
+import { updateProviderSettings, updateScheduleSettings } from './settings-api.js';
+import {
+  renderSchedulePage as renderScheduleUiPage,
+  renderSettingsPage as renderSettingsUiPage,
+  type SchedulePolicyView,
+  type SettingsProviderView,
+} from './settings-ui.js';
 import {
   DEFAULT_HTTP_BODY_LIMIT_BYTES,
   ensureCsrfToken,
@@ -32,6 +39,7 @@ const EXPLANATION_KEYS = new Set([
   'reasonCode',
   'providerId',
   'policyId',
+  'windowKind',
   'targetResetAt',
   'targetTriggerAt',
   'windowDurationSeconds',
@@ -108,6 +116,23 @@ export function buildServer(input: BuildServerInput) {
     clock: input.clock,
     requestReconcile: input.requestReconcile,
   });
+  const settingsInput = {
+    repositories: input.repositories,
+    adapters: input.adapters,
+    clock: input.clock,
+  };
+
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      try {
+        done(null, parseFormBody(String(body)));
+      } catch {
+        done(new Error('invalid form body'));
+      }
+    },
+  );
 
   app.addHook('onSend', async (request, reply, payload) => {
     const headers = getSecurityHeaders({
@@ -169,6 +194,62 @@ export function buildServer(input: BuildServerInput) {
 
   app.get('/api/v1/settings', () => readApi.getSettings().body);
 
+  app.get('/settings', async (request, reply) => {
+    const csrf = ensureCsrfToken(request.headers.cookie, {
+      secure: request.protocol === 'https',
+    });
+    if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
+    reply.type('text/html; charset=utf-8');
+    const notice = queryMessage(request.query);
+    return renderSettingsUiPage({
+      csrfToken: csrf.token,
+      providers: settingsProviderViews(input),
+      ...(notice ? { notice } : {}),
+    });
+  });
+
+  app.get('/schedule', async (request, reply) => {
+    const csrf = ensureCsrfToken(request.headers.cookie, {
+      secure: request.protocol === 'https',
+    });
+    if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
+    reply.type('text/html; charset=utf-8');
+    const notice = queryMessage(request.query);
+    const policy = schedulePolicyView(input);
+    return renderScheduleUiPage({
+      csrfToken: csrf.token,
+      providers: settingsProviderViews(input),
+      referenceInstant: input.clock.now(),
+      ...(policy ? { policy } : {}),
+      ...(notice ? { notice } : {}),
+    });
+  });
+
+  app.post('/settings/providers/:id', async (request, reply) => {
+    const result = updateProviderSettings(
+      settingsInput,
+      (request.params as { id?: unknown }).id,
+      normalizeProviderSettingsBody(request.body),
+    );
+    if (!result.ok) {
+      return reply.code(result.statusCode).type('text/plain; charset=utf-8').send(result.message);
+    }
+    input.requestReconcile?.();
+    return reply.code(303).redirect('/settings?updated=provider');
+  });
+
+  app.post('/schedule', async (request, reply) => {
+    const result = updateScheduleSettings(
+      settingsInput,
+      normalizeScheduleSettingsBody(request.body),
+    );
+    if (!result.ok) {
+      return reply.code(result.statusCode).type('text/plain; charset=utf-8').send(result.message);
+    }
+    input.requestReconcile?.();
+    return reply.code(303).redirect('/schedule?updated=schedule');
+  });
+
   app.post('/api/v1/providers/:id/inspect', async (request, reply) => {
     const result = commandApi.inspect((request.params as { id?: unknown }).id);
     return reply.code(result.statusCode).send(result.body);
@@ -210,6 +291,76 @@ function bodyCsrfToken(body: unknown): string | undefined {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
   const token = (body as Record<string, unknown>).csrfToken;
   return typeof token === 'string' ? token : undefined;
+}
+
+function parseFormBody(body: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const [key, value] of new URLSearchParams(body)) values[key] = value;
+  return values;
+}
+
+function normalizeProviderSettingsBody(body: unknown): unknown {
+  const record = asRecord(body);
+  return {
+    enabled: formBoolean(record.enabled),
+    mode: record.mode,
+    pollIntervalSeconds: Number(record.pollIntervalSeconds),
+  };
+}
+
+function normalizeScheduleSettingsBody(body: unknown): unknown {
+  const record = asRecord(body);
+  return {
+    enabled: formBoolean(record.enabled),
+    providerId: record.providerId,
+    windowKind: record.windowKind,
+    targetResetLocalTime: record.targetResetLocalTime,
+    timezone: record.timezone,
+    toleranceSeconds: Number(record.toleranceSeconds),
+  };
+}
+
+function formBoolean(value: unknown): boolean {
+  return value === true || value === 'on' || value === 'true' || value === '1';
+}
+
+function queryMessage(query: unknown): string | null {
+  const value = asRecord(query).updated;
+  return value === 'provider'
+    ? 'Provider settings saved.'
+    : value === 'schedule'
+      ? 'Schedule saved.'
+      : null;
+}
+
+function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] {
+  return input.repositories.providers.list().map((provider) => ({
+    id: provider.id,
+    kind: provider.kind,
+    enabled: provider.enabled,
+    mode: provider.mode,
+    pollIntervalSeconds: provider.pollIntervalSeconds,
+  }));
+}
+
+function schedulePolicyView(input: BuildServerInput): SchedulePolicyView | undefined {
+  const policy = input.repositories.schedulePolicies
+    .list()
+    .find((candidate) => candidate.kind === 'target_reset');
+  if (!policy) return undefined;
+  const config = asRecord(policy.config);
+  const windowKind = stringValue(config.windowKind);
+  const targetResetLocalTime = stringValue(config.targetResetLocalTime);
+  const toleranceSeconds = numberValue(config.toleranceSeconds);
+  if (!windowKind || !targetResetLocalTime || toleranceSeconds === null) return undefined;
+  return {
+    enabled: policy.enabled,
+    providerId: policy.providerId,
+    windowKind,
+    targetResetLocalTime,
+    timezone: policy.timezone,
+    toleranceSeconds,
+  };
 }
 
 function readProviders(input: BuildServerInput): ProviderRead[] {
@@ -335,6 +486,10 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -343,7 +498,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function renderOverview(providers: ProviderRead[]): string {
   const cards = providers.map(renderProviderCard).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Window Manager</title><style>body{font:16px system-ui;max-width:980px;margin:3rem auto;padding:0 1rem;background:#111;color:#eee}article{border:1px solid #444;border-radius:12px;padding:1rem;margin:1rem 0}dl{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr;gap:.45rem 1rem}dt{color:#aaa}dd{margin:0}code{background:#222;padding:.2rem .4rem;border-radius:4px}.muted{color:#aaa}.stale{border-color:#d58b32}.warning{color:#ffbf69}.unknown{color:#aaa}</style></head><body><h1>AI Window Manager</h1><p class="muted">Persisted provider overview</p>${cards || '<p class="unknown">No providers configured.</p>'}<p><a href="/api/v1/providers">JSON providers</a> · <a href="/metrics">metrics</a></p></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Window Manager</title><style>body{font:16px system-ui;max-width:980px;margin:3rem auto;padding:0 1rem;background:#111;color:#eee}article{border:1px solid #444;border-radius:12px;padding:1rem;margin:1rem 0}dl{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr;gap:.45rem 1rem}dt{color:#aaa}dd{margin:0}code{background:#222;padding:.2rem .4rem;border-radius:4px}.muted{color:#aaa}.stale{border-color:#d58b32}.warning{color:#ffbf69}.unknown{color:#aaa}a{color:#8ecbff}</style></head><body><h1>AI Window Manager</h1><p class="muted">Persisted provider overview</p>${cards || '<p class="unknown">No providers configured.</p>'}<p><a href="/settings">settings</a> · <a href="/schedule">schedule</a> · <a href="/api/v1/providers">JSON providers</a> · <a href="/metrics">metrics</a></p></body></html>`;
 }
 
 function renderProviderCard(provider: ProviderRead): string {

@@ -35,6 +35,7 @@ const EXPLANATION_KEYS = new Set([
   'reasonCode',
   'providerId',
   'policyId',
+  'windowKind',
   'targetResetAt',
   'targetTriggerAt',
   'windowDurationSeconds',
