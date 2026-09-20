@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-19  
 **Scope:** determine whether the official Codex app-server provides enough
-evidence to authorize an automatic window-positioning action.  No turn, reset
+evidence to authorize an automatic window-positioning action. No turn, reset
 credit consumption, or trigger was executed.
 
 ## Classification
@@ -124,4 +124,3 @@ The result must be reviewed before any automatic trigger capability is exposed.
 - [Codex App Server documentation](https://developers.openai.com/es-419/docs/app-server)
 - [Codex CLI documentation](https://developers.openai.com/es-419/docs/codex/cli)
 - [SPIKE-001 — Codex app-server inspection/auth flow](./SPIKE-001-codex.md)
-

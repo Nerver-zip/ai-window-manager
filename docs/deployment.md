@@ -13,6 +13,7 @@ One container, one data volume, optional dedicated provider credential/state mou
 - host bind: `127.0.0.1`;
 - container port: `8787`;
 - data: named volume at `/data`;
+- optional Codex state: separate named volume at `/codex-state`;
 - non-root UID 10001;
 - `restart: unless-stopped`;
 - `cap_drop: ALL`;
@@ -25,9 +26,12 @@ One container, one data volume, optional dedicated provider credential/state mou
 At startup the daemon seeds only enabled bootstrap providers when their DB record
 does not already exist, performs one reconcile, then uses one coalescing global
 reconcile interval. Runtime provider state and planned intents remain in SQLite;
-the overview/API only reads that persisted state. Optional Codex monitoring uses
-a dedicated `AWM_CODEX_HOME` under the persistent data volume and is disabled by
-default; the image does not provide a Codex credential or provider trigger.
+the overview/API only reads that persisted state. The image packages the
+official Codex CLI `0.155.1` at `/opt/codex/bin/codex`, verified by
+architecture-specific release checksums. Optional Codex monitoring uses the
+dedicated `AWM_CODEX_HOME=/codex-state` volume and is disabled by default. The
+image contains no Codex credentials and the provider still exposes no trigger
+capability.
 
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight
@@ -56,6 +60,12 @@ Prefer a private reverse proxy or Tailscale ACL/auth over building user manageme
 
 Do not mount `$HOME`. Each provider gets only the exact official-client state it needs. Codex/Antigravity mounts are **not enabled by default** in the base Compose file until their implementation spikes settle the secure path.
 
+For Codex, an explicitly authorized operator may authenticate the official CLI
+into the dedicated `awm-codex-state` volume. AWM does not copy `auth.json`,
+browser cookies, JWTs or refresh tokens. `AWM_CODEX_ENABLED=false` remains the
+safe default, and a successful unauthenticated runtime probe proves packaging
+and process startup only, not account access.
+
 ## Smoke test checklist
 
 ```bash
@@ -65,6 +75,8 @@ docker compose up --build -d
 docker compose ps
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/healthz
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/metrics
+curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/
+curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/history
 ```
 
 Then restart:
@@ -74,3 +86,18 @@ docker compose restart ai-window-manager
 ```
 
 Verify health returns and the same SQLite data remains.
+
+The focused Codex runtime check, without credentials or a turn, is:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
+  --user 10001:10001 --entrypoint node \
+  -e AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex \
+  -e CODEX_HOME=/tmp/awm-ops-002-codex-home \
+  -e AWM_DB_PATH=/tmp/awm.db \
+  -v "$PWD/scripts/validate-ops-002-codex-runtime.mjs:/tmp/validate.mjs:ro" \
+  ai-window-manager:dev /tmp/validate.mjs
+```
+
+The command must report `codex-cli 0.155.1` and a successful app-server
+`initialize`. It deliberately does not log in or call `account/rateLimits/read`.

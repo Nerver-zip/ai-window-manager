@@ -36,8 +36,10 @@ pnpm validate
 
 The daemon performs one initial reconcile and then one coalescing global tick.
 FakeProvider is enabled by default; Codex monitoring is opt-in through
-`AWM_CODEX_ENABLED=true`, `AWM_CODEX_HOME` and `AWM_CODEX_EXECUTABLE`. The
-Codex adapter remains read-only and provider actions are not dispatched.
+`AWM_CODEX_ENABLED=true`, `AWM_CODEX_HOME=/codex-state` and
+`AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex` in the container. The image pins
+the official Codex CLI to `0.155.1`. The Codex adapter remains read-only and
+provider actions are not dispatched.
 
 ## Development provider
 

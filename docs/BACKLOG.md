@@ -101,6 +101,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## CODEX-002 — Implement opt-in Codex trigger
 
+**Status: blocked by SPIKE-004 and explicit compliance/live-evidence review.**
+
 **Context**: official docs say first message after prior 5h window ends starts a new window.  
 **Scope**: minimal ordinary official-client turn, empty workspace/scoped permissions, persisted intent, confirmation read.  
 **Acceptance**: explicit quota-consuming flag; never uses banked reset; uncertain transport result cannot blind-retry; manual live acceptance procedure documented.  
@@ -137,6 +139,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 **Dependencies**: STORAGE-001, TIME-001, SEC-001.
 
 ## WEB-003 — Implement small history view
+
+**Status: complete (2026-09-19).**
 
 **Scope**: bounded timeline + usage series; server-rendered/simple SVG.  
 **Acceptance**: useful on mobile/desktop without SPA dependency.  
@@ -184,6 +188,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## OPS-001 — Finish production Docker hardening
 
+**Status: complete (2026-09-19).**
+
 **Scope**: multi-stage image, non-root, read-only rootfs, tmpfs, healthcheck, graceful shutdown, Compose loopback default.  
 **Acceptance**: clean build/up healthy; restart persistence; no secret in image.  
 **Dependencies**: scaffold baseline.  
@@ -191,12 +197,39 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## CI-001 — Complete validation + Docker smoke workflow
 
+**Status: complete (2026-09-19).**
+
 **Scope**: format/lint/type/test/build; Compose config; image build; health smoke.  
 **Acceptance**: one canonical CI gate matches `pnpm validate`.  
 **Dependencies**: OPS-001.
 
 ## DOC-001 — Reconcile docs after first vertical slice
 
+**Status: complete (2026-09-19).**
+
 **Scope**: architecture/provider/scheduling/deployment docs, screenshots optional.  
 **Acceptance**: no plan claim contradicts code; research dates current.  
 **Dependencies**: first FakeProvider vertical slice.
+
+## OPS-002 — Package the official Codex CLI runtime
+
+**Status: complete (2026-09-19); authenticated provider acceptance remains pending.**
+
+**Scope**: package a pinned official Codex release with architecture checksums,
+an isolated persistent state volume and an unauthenticated app-server startup
+probe. Keep Codex disabled by default and do not add trigger capability.  
+**Acceptance**: runtime reports `codex-cli 0.155.1`, initializes as UID 10001,
+and does not copy workstation credentials.  
+**Dependencies**: SPIKE-001, Docker hardening.
+
+## SPIKE-004 — Validate Codex window lifecycle semantics
+
+**Status: blocked (2026-09-19); see `docs/research/spikes/SPIKE-004-codex-window-lifecycle.md`.**
+
+**Scope**: determine whether official observations can distinguish an eligible
+expired window and confirm a new window after one ordinary turn.  
+**Result**: the disposable unauthenticated app-server probe initialized, but
+`account/read` required authentication and no quota-consuming turn was
+authorized. No `INACTIVE` inference or automatic trigger is supported.  
+**Dependencies**: explicitly authorized authenticated test account and a
+controlled naturally expired lifecycle state.

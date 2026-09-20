@@ -55,11 +55,14 @@ provider-owned auth state are never editable or rendered.
 
 ## History
 
-Keep it small:
+The server-rendered `/history` page reads persisted SQLite state and never
+inspects a provider. It supports bounded `24h`, `7d` and `30d` ranges plus a
+provider filter. Keep it small:
 
 - recent lifecycle/action timeline;
 - usage over time per five-hour/weekly bucket;
-- simple day/hour aggregates after sufficient data.
+- compact SVG usage series with explicit unknown values;
+- simple day/hour aggregates after sufficient data (deferred).
 
 No enterprise dashboard, no Grafana clone.
 

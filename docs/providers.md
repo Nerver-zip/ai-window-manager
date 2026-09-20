@@ -43,10 +43,10 @@ official client-owned authentication. It is not enabled by default.
 - These URLs are implementation details of the official client. AI Window Manager must **not** treat them as a stable public contract.
 - Reset/percentage snapshots may be temporarily absent or inconsistent during backend entitlement/capacity changes; the normalized model must tolerate null/partial windows.
 
-### Inferred
+### Inferred, but not automation-proven
 
-- Because OpenAI explicitly defines the first Work/Codex message after expiry as the new window start, one ordinary minimal Codex request can position the start time. It necessarily consumes some included usage and is not a zero-cost “start window” API.
-- The safest automation seam is a normal operation through the official Codex client/app-server, in a dedicated empty workspace with tools disabled/scoped, followed by inspection to confirm the state.
+- Because OpenAI explicitly defines the first Work/Codex message after expiry as the new window start, one ordinary minimal Codex request may position the start time. It necessarily consumes some included usage and is not a zero-cost “start window” API.
+- SPIKE-004 could not collect authenticated before/after observations in the current environment. The project therefore does not treat this inference as sufficient evidence for automatic eligibility or confirmation.
 
 ### Unknown
 
@@ -59,13 +59,13 @@ official client-owned authentication. It is not enabled by default.
 
 OpenAI Terms of Use prohibit circumventing rate limits/restrictions or bypassing protective measures. This project must not increase quota, rotate accounts, use saved/purchased resets automatically to manufacture extra allowance, or hide traffic. It only schedules a normal request inside quota the user legitimately possesses.
 
-**MVP capability proposal**
+**Implemented MVP capability**
 
 ```text
 can_query_usage       = true  (official Codex client/app-server surface)
 can_query_reset       = true  when returned by provider; nullable otherwise
-can_trigger_window    = true  opt-in, via normal official-client request only
-trigger_consumes_quota= true
+can_trigger_window    = false (SPIKE-004 lifecycle evidence is blocked)
+trigger_consumes_quota= unknown until a reviewed live experiment establishes the exact contract
 public_usage_api      = false
 internal_usage_api    = observed but intentionally unused by default
 ```
@@ -73,7 +73,8 @@ internal_usage_api    = observed but intentionally unused by default
 The implemented Codex adapter declares `windowTrigger.supported = false` and
 degrades to a bounded `AUTH_REQUIRED`/`UNAVAILABLE`/`ERROR` observation if the
 official client cannot be initialized safely on the server. It never calls
-`/api/codex/usage` or `/wham/usage`.
+`/api/codex/usage` or `/wham/usage`. `CODEX-002` remains deferred until
+SPIKE-004 is unblocked and reviewed.
 
 ## Google Antigravity
 

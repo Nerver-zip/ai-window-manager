@@ -14,13 +14,16 @@ The primary implementation strategy is to reach a vertical slice early with `Fak
 ## Current milestone status
 
 Completed: `SCHED-001`, `TIME-001`, `SCHED-002`, `CODEX-001`, `WEB-001`,
-`SCHED-003`, `SEC-001`, `API-001`, `API-002`, `METRICS-001`, and `STORAGE-002`.
+`WEB-003`, `SCHED-003`, `SEC-001`, `API-001`, `API-002`, `METRICS-001`,
+`STORAGE-002`, `OPS-001`, `OPS-002`, `CI-001`, and `DOC-001`.
 The executor is quota-safe by default, confirms outcomes with fresh observation,
 and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
-non-secret provider settings and target-reset schedule forms. `CODEX-002`,
-Antigravity work, history charts and aggregate statistics remain out of scope.
+non-secret provider settings and target-reset schedule forms. The bounded
+history page reads persisted events/samples and does not inspect providers.
+`CODEX-002` remains blocked by SPIKE-004; Antigravity work, aggregate
+statistics and richer charting remain out of scope.
 
-Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots. A minimal normal Codex request can therefore be an opt-in quota-consuming trigger, but there is no dedicated zero-cost “start window” API. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
+Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots. A minimal normal Codex request may therefore be a quota-consuming trigger, but SPIKE-004 did not prove automatic eligibility or confirmation in an authorized runtime. The implementation remains monitor-only; there is no dedicated zero-cost “start window” API. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
 Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. SPIKE-002 validated a structured official headless JSON/NDJSON usage path for monitor-only parsing, but SPIKE-003 found no supported safe container auth-persistence path. Google also explicitly warns that third-party software using Antigravity login violates its Terms. The design therefore forbids token extraction/direct backend impersonation and considers only the official `agy` executable. Exact inactive-window start semantics and container keyring persistence remain UNKNOWN; Antigravity stays monitor-only/disabled until the auth boundary is resolved.
 
@@ -430,7 +433,7 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 2 — First vertical slice with FakeProvider
 
-**Status: complete for persisted monitor/overview flow.**
+**Status: complete for persisted monitor/overview/history flow.**
 
 **Goal**: earliest useful running daemon.  
 **Components**: FakeProvider, reconcile loop read path, SQLite, overview, health/metrics, Docker.  
@@ -439,7 +442,9 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 3 — Scheduler/intents
 
-**Status: SCHED-001, TIME-001 and SCHED-002 complete; dispatch remains deferred.**
+**Status: SCHED-001, TIME-001 and SCHED-002 complete; the generic safe
+executor/recovery boundary is implemented, while provider trigger adapters
+remain capability-gated.**
 
 **Goal**: deterministic target-reset recommendations and safe manual fake trigger.  
 **Components**: decision engine, action lifecycle, time conversion/recovery.  
@@ -448,7 +453,9 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 4 — Codex monitor
 
-**Status: CODEX-001 offline adapter complete; live authenticated acceptance remains manual/pending.**
+**Status: CODEX-001 offline adapter and OPS-002 runtime packaging complete;
+live authenticated acceptance remains manual/pending. SPIKE-004 is blocked and
+Codex remains read-only.**
 
 **Goal**: real read-only Codex state through official client surface.  
 **Components**: dedicated client state, adapter, parser/schema validation.  
@@ -457,10 +464,12 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 5 — Codex opt-in action
 
-**Goal**: position inactive Codex window using one minimal legitimate normal request.  
-**Tests**: fake unit/integration; manual live test is explicit and quota-consuming.  
-**Acceptance**: persisted intent → one action → confirmation; uncertainty cannot duplicate.  
-**Risk**: ToS interpretation/usage cost. Keep monitor-only toggle and document.
+**Status: blocked pending SPIKE-004.**
+
+**Goal**: position an inactive Codex window using one minimal legitimate normal
+request only if official lifecycle semantics are proven and compliance review
+approves it. Until then the adapter remains monitor-only and no quota-consuming
+action is dispatched.
 
 ### Phase 6 — Antigravity monitor if feasible
 
@@ -470,10 +479,14 @@ Six is enough; smaller implementation details belong near code/docs.
 
 ### Phase 7 — Settings/history/stats polish
 
+**Status: bounded history view complete; aggregate statistics deferred.**
+
 **Goal**: complete small UI/API and useful deterministic history.  
 **Acceptance**: user understands current window/remaining/reset/next action/reason in seconds.
 
 ### Phase 8 — Hardening/acceptance
+
+**Status: baseline complete; final release evidence is maintained in the audit report.**
 
 **Goal**: CI, Docker security, retention, docs/skills, clean install/upgrade.  
 **Acceptance**: global DoD below.

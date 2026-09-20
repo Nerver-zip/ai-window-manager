@@ -16,7 +16,17 @@ Gitleaks uses its upstream default rules through `.gitleaks.toml`. The local `pn
 
 ### Codex
 
-Preferred design: a dedicated Codex client home/state area owned by the container user, authenticated through an official Codex login/device/app-server flow. AI Window Manager talks to the official client protocol and does not copy a workstation auth file back and forth. This avoids shared refresh-token races and reduces coupling to raw token formats.
+The image packages the official Codex CLI `0.155.1` with release checksums,
+but the runtime keeps `AWM_CODEX_ENABLED=false` by default. A dedicated
+`/codex-state` volume is owned by the container user and may be authenticated
+only through the official Codex login/device/app-server flow. AI Window
+Manager talks to the official client protocol and does not copy a workstation
+auth file back and forth. This avoids shared refresh-token races and reduces
+coupling to raw token formats.
+
+SPIKE-004 did not collect authenticated before/after lifecycle evidence, so
+automatic Codex triggering remains disabled. Do not infer an inactive window
+from zero usage, full remaining quota or an elapsed reset timestamp.
 
 ### Antigravity
 

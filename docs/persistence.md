@@ -34,9 +34,62 @@ recovered as uncertain on startup; an uncertain result is never blindly retried.
 The retention pass protects current state, settings, policies and open/recovery
 states while pruning bounded historical classes.
 
-## Backups
+## Backups and restore runbook
 
-SQLite online backup or a brief application stop + copy of DB plus WAL-safe procedure. Documentation should prefer `VACUUM INTO`/SQLite backup API once implemented. Never copy only the main DB file while ignoring active WAL semantics.
+The supported MVP procedure is a short, graceful application stop followed by
+a copy from the named Compose volume. Do not copy the database while the
+daemon is running and do not copy only the main file if a `-wal` or `-shm`
+sidecar remains after shutdown.
+
+Create and verify a backup:
+
+```bash
+mkdir -m 700 -p backups
+docker compose stop ai-window-manager
+container_id="$(docker compose ps -aq ai-window-manager)"
+docker compose run --rm --no-deps --user 10001:10001 \
+  --entrypoint sh ai-window-manager \
+  -c 'test ! -e /data/window-manager.db-wal && test ! -e /data/window-manager.db-shm'
+backup="backups/window-manager-$(date -u +%Y%m%dT%H%M%SZ).db"
+docker cp "$container_id:/data/window-manager.db" "$backup"
+chmod 600 "$backup"
+node --input-type=module -e '
+  import Database from "better-sqlite3";
+  const db = new Database(process.argv[1], { readonly: true });
+  const integrity = db.pragma("integrity_check", { simple: true });
+  const foreignKeys = db.pragma("foreign_key_check");
+  db.close();
+  if (integrity !== "ok" || foreignKeys.length !== 0) {
+    throw new Error(`backup verification failed: integrity=${integrity}`);
+  }
+' "$backup"
+docker compose up -d
+```
+
+Store the resulting file outside the Docker volume with an access-controlled
+retention policy. The backup contains application history and configuration,
+not provider credentials. Codex state is a separate provider-owned volume and
+must not be copied into an ordinary SQLite backup.
+
+Restore only after making a separate safety copy of the current database:
+
+```bash
+docker compose stop ai-window-manager
+container_id="$(docker compose ps -aq ai-window-manager)"
+docker cp "$container_id:/data/window-manager.db" "${backup}.pre-restore"
+docker cp "$backup" "$container_id:/data/window-manager.db.restore"
+docker compose run --rm --no-deps --user 10001:10001 \
+  --entrypoint sh ai-window-manager \
+  -c 'cat /data/window-manager.db.restore > /data/window-manager.db && rm /data/window-manager.db.restore'
+docker compose up -d
+docker compose ps
+curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/healthz
+```
+
+After restore, verify the migration version and run the same integrity checks
+against the restored file. Keep `window-manager.db.pre-restore` until the
+application has been inspected and the rollback decision is no longer needed.
+Perform a restore drill before a public release and after migration changes.
 
 ## Schema and repositories
 

@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: safe observation-to-action-intent vertical slice. FakeProvider can execute only explicitly enabled, non-quota test actions; Codex remains read-only.
+> Status: MVP release-candidate monitor slice. FakeProvider can execute only explicitly enabled, non-quota test actions; Codex remains read-only.
 
 ## Product boundary
 
@@ -53,7 +53,7 @@ One application process owns state and scheduling. Official provider CLIs/app-se
 - Node.js 24 target + TypeScript.
 - Fastify for the small HTTP surface.
 - Server-rendered HTML + tiny browser JS; no SPA framework.
-- SQLite at `/data/window-manager.db`.
+- SQLite at `/data/window-manager.db`; the optional official Codex state is a separate `/codex-state` volume.
 - `better-sqlite3` for a deliberately synchronous, local DB API.
 - Zod for boundary/config validation.
 - Prometheus text exposition through `prom-client`.
@@ -102,10 +102,11 @@ Included now:
 - durable provider reconciliation with last-known-good state, samples, events and deduplicated planned intents;
 - safe action-intent executor with atomic claims, preflight checks, confirmation, uncertainty and restart recovery;
 - health, metrics, and persisted provider overview/API (HTTP reads do not inspect providers);
+- bounded persisted history page with 24h/7d/30d and provider filters;
 - read-only command endpoints plus CSRF/Origin-protected settings and target-reset schedule forms;
 - bounded retention maintenance for samples, events and terminal intent history;
 - official Codex app-server read-only adapter with offline protocol fixtures;
-- Docker/Compose hardening baseline;
+- Docker/Compose hardening baseline with the official Codex CLI `0.155.1` packaged but disabled by default;
 - CI/validation scaffolding;
 - provider research and compliance classification;
 - ADRs, roadmap, backlog and agent skills.
@@ -114,7 +115,8 @@ Intentionally **not** implemented yet:
 
 - Codex trigger and any quota-consuming provider action;
 - Antigravity real adapter;
-- complete history charts.
+- automatic Codex trigger/lifecycle support (SPIKE-004 is blocked pending authorized live evidence);
+- aggregate statistics and richer charting.
 
 Those are implementation-roadmap work, not omissions from the planning deliverable.
 

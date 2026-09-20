@@ -16,7 +16,6 @@ GET  /api/v1/providers
 GET  /api/v1/providers/:id
 GET  /api/v1/history?provider=&type=&from=&to=&limit=
 GET  /api/v1/settings
-PUT  /api/v1/settings
 POST /api/v1/providers/:id/trigger
 POST /api/v1/providers/:id/inspect
 ```
@@ -33,9 +32,20 @@ Notes:
 - `POST trigger` creates/advances a durable action intent; it does not directly hide a provider side effect inside the HTTP handler.
 - `inspect` queues/requests an immediate reconcile hint; the response may be `202 Accepted` rather than block on a provider CLI.
 - runtime settings endpoint never accepts or returns secret values.
-- `PUT /api/v1/settings` remains a planned JSON mutation surface; the current settings UI uses the protected HTML form routes documented below.
+- There is no JSON settings mutation endpoint in the current MVP contract. The settings UI uses the protected HTML form routes documented below; a future JSON mutation surface must be added as a separate reviewed contract.
 - JSON is versioned under `/api/v1` even though the HTML routes are not.
 - pagination is simple bounded `limit` + cursor/id if history grows; no GraphQL.
+
+Current HTML mutation routes are:
+
+```text
+POST /settings/providers/:id
+POST /schedule
+```
+
+They require a same-origin request and a CSRF token, return `303` on success,
+and write only validated non-secret SQLite configuration. Invalid input returns
+an error status without calling a provider.
 
 History and settings responses are bounded/allowlisted. No endpoint returns
 provider credentials, raw provider payloads, tokens, or secret configuration.
