@@ -28,6 +28,12 @@ MVP defaults:
 
 A daily low-priority maintenance pass deletes eligible rows in bounded batches. No downsampling/OLAP pipeline in MVP.
 
+Action intents use conditional SQL transitions for claim, success, uncertainty,
+retryable failure, confirmation and terminal recovery. `executing` intents are
+recovered as uncertain on startup; an uncertain result is never blindly retried.
+The retention pass protects current state, settings, policies and open/recovery
+states while pruning bounded historical classes.
+
 ## Backups
 
 SQLite online backup or a brief application stop + copy of DB plus WAL-safe procedure. Documentation should prefer `VACUUM INTO`/SQLite backup API once implemented. Never copy only the main DB file while ignoring active WAL semantics.

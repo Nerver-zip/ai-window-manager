@@ -38,6 +38,12 @@ freshness and window facts as `unknown` rather than fabricated zeroes.
 - manual `Trigger now` only when capability/automation mode permits;
 - next action + reason.
 
+The current server-rendered `/schedule` page edits target-reset policy fields,
+previews the next IANA occurrence, and labels DST adjustment/ambiguity. `/settings`
+edits enabled state, mode and polling interval. Both forms contain a CSRF token;
+invalid or unsupported values are rejected before SQLite writes. Secrets and
+provider-owned auth state are never editable or rendered.
+
 ## Provider settings
 
 - enabled;

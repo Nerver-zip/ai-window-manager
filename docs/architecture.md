@@ -60,8 +60,20 @@ reconciler tick
   -> persisted overview/API read model
 ```
 
-The final arrow is read-only. HTTP handlers do not inspect providers and no
-planned intent is dispatched in this milestone.
+The application executor then handles only due, eligible intents:
+
+```text
+planned intent
+  -> atomic claim
+  -> capability/mode/preflight guard
+  -> one provider dispatch
+  -> persisted result
+  -> fresh inspection confirmation or uncertain state
+```
+
+HTTP handlers do not inspect providers or dispatch actions. Settings and
+target-reset forms validate non-secret values and persist them in SQLite; all
+mutations require same-origin Origin and double-submit CSRF proof.
 
 ## Reconciler over durable timers
 

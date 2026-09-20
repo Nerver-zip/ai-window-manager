@@ -35,3 +35,8 @@ SQL/deterministic aggregation only:
 - typical high-usage period using histogram/threshold heuristics.
 
 Recommendations remain deterministic. Example: if a stable fraction of recent consumption occurs in 14:00–20:00, propose a reset target near the start of that interval and show the data behind the suggestion.
+
+The runtime updates inspection, observation, scheduler, trigger and intent-state
+metrics from the reconciler/executor path. Opening `/` or `/api/v1/providers` is
+not required to populate quota gauges. Age gauges are refreshed from persisted
+timestamps, and labels remain bounded to provider/window/result/decision/state.

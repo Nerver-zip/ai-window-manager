@@ -29,6 +29,14 @@ Coverage includes production TypeScript under `src/`. The only exclusions are co
 
 Tests are offline and use FakeProvider, FakeClock, temporary SQLite databases, and local fixtures. They must not use provider credentials, real quota, network services, or the machine's persistent application state.
 
+Action execution tests cover atomic claim, preflight rejection, dispatch result
+mapping, ambiguous transport outcomes, confirmation, persisted executing
+recovery, retryable versus terminal failures, and overlapping executor ticks.
+Web tests verify settings/schedule validation, CSRF/Origin enforcement and that
+HTTP reads remain provider-I/O free. The FakeProvider vertical slice asserts
+that planned/confirmed tests perform zero quota-consuming trigger calls unless a
+test explicitly invokes the executor with a synthetic non-quota action.
+
 ## Secret scanning
 
 Install Gitleaks and run `pnpm secret:scan` before review. CI runs the pinned Gitleaks Action on pushes and pull requests; real secrets must never be committed, including in fixtures or examples.

@@ -58,3 +58,9 @@ If the service is exposed to an untrusted LAN, authentication becomes a requirem
 - request body size limits.
 - state-changing routes reject unexpected Origins.
 - API errors are sanitized; detailed provider errors stay in structured logs/events.
+
+The current mutation surface is `/settings/providers/:id`, `/schedule`, and the
+read/command API endpoints. It accepts only validated non-secret fields; command
+handlers create intent/reconcile signals and never call provider adapters. The
+executor is the only action dispatch boundary and records ambiguous outcomes as
+uncertain.

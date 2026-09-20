@@ -52,6 +52,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## STORAGE-002 — Implement retention maintenance
 
+**Status: complete (2026-09-19).**
+
 **Scope**: bounded deletes for samples/events based on documented classes.  
 **Acceptance**: current state/open intents preserved; retention test uses FakeClock.  
 **Dependencies**: STORAGE-001.
@@ -73,6 +75,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 **Dependencies**: STORAGE-001, SCHED-001, CORE-002.
 
 ## SCHED-003 — Implement action-intent execution/recovery
+
+**Status: complete (2026-09-19) for the safe executor boundary; Codex/Antigravity trigger adapters remain deferred.**
 
 **Scope**: claim, dispatch, confirm, uncertain recovery, retry classes, missed-action skip.  
 **Acceptance**: DB unique dedupe protects duplicate trigger; crash-at-each-stage integration tests.  
@@ -126,6 +130,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## WEB-002 — Implement settings/schedule forms
 
+**Status: complete (2026-09-19).**
+
 **Scope**: runtime DB config, validated intervals/timezone, CSRF/Origin protection.  
 **Acceptance**: env does not silently override DB after bootstrap; secrets absent.  
 **Dependencies**: STORAGE-001, TIME-001, SEC-001.
@@ -138,17 +144,23 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## API-001 — Complete `/api/v1` read endpoints
 
+**Status: complete (2026-09-19).**
+
 **Scope**: providers/history/settings schemas and bounds.  
 **Acceptance**: deterministic JSON, no secret/raw provider payload exposure.  
 **Dependencies**: STORAGE-001, CORE-001.
 
 ## API-002 — Implement trigger/inspect command endpoints
 
+**Status: complete (2026-09-19).**
+
 **Scope**: create intent/reconcile hint; no hidden direct side effect in handler.  
 **Acceptance**: CSRF/origin, capability checks, auditable event.  
 **Dependencies**: SCHED-003, SEC-001.
 
 ## METRICS-001 — Complete Prometheus metrics
+
+**Status: complete (2026-09-19).**
 
 **Scope**: documented gauges/counters, stale behavior, bounded labels.  
 **Acceptance**: no account IDs/error strings/dedupe keys as labels.  
@@ -163,6 +175,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 **MVP priority**: low; basic aggregates can ship, recommendation may be v1.x.
 
 ## SEC-001 — HTTP hardening and CSRF
+
+**Status: complete (2026-09-19).**
 
 **Scope**: CSP/security headers, escaped rendering, Origin+CSRF for mutations, request limits.  
 **Acceptance**: state-changing route rejects cross-origin request; provider text cannot inject HTML.  

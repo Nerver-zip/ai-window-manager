@@ -45,3 +45,9 @@ SQLite runtime settings = authority afterward
 ```
 
 Changing `AWM_TIMEZONE` after DB initialization does not silently override a UI-configured timezone. A documented admin reset/import operation is required to re-bootstrap.
+
+The `/settings` and `/schedule` forms are the runtime configuration path for
+non-secret provider polling and target-reset policy fields. Their writes are
+validated before persistence and signal the next reconcile; environment values
+remain bootstrap/process configuration and do not override existing SQLite
+settings.

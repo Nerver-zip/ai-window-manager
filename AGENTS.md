@@ -46,6 +46,11 @@ If a proposed change broadens the product beyond usage-window observation/timing
 - `trigger` is opt-in and provider-capability-gated. Unsupported/unknown providers are monitor-only.
 - A trigger whose outcome is uncertain must **not** be blindly retried.
 - Every trigger attempt must have a persisted idempotency/dedupe key before execution.
+- Only the application action executor may dispatch a provider action; HTTP handlers may create intents or reconcile hints but must never call provider actions directly.
+- Action execution must atomically claim an intent, persist the result, confirm success with fresh observation when required, and classify ambiguous outcomes as `uncertain` without blind retry.
+- A persisted `executing` intent recovered after restart becomes `uncertain` before any new scheduling decision.
+- `succeeded` is not terminal until confirmation; retention must preserve intents that still require confirmation.
+- Runtime settings are SQLite-authoritative after bootstrap; settings forms may persist non-secret fields only and must enforce Origin plus CSRF checks.
 - Store instants in UTC. Interpret user schedules with an IANA timezone.
 - Inject clocks into scheduling logic. Do not scatter `Date.now()`/`setTimeout()` through domain code.
 - Reconcile state periodically instead of persisting fragile long-lived timers.

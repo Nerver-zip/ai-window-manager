@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: observation-to-durable-intent vertical slice. FakeProvider and Codex read-only monitoring are available; provider actions remain intentionally disabled.
+> Status: safe observation-to-action-intent vertical slice. FakeProvider can execute only explicitly enabled, non-quota test actions; Codex remains read-only.
 
 ## Product boundary
 
@@ -100,7 +100,10 @@ Included now:
 - FakeProvider;
 - SQLite schema and migration runner;
 - durable provider reconciliation with last-known-good state, samples, events and deduplicated planned intents;
+- safe action-intent executor with atomic claims, preflight checks, confirmation, uncertainty and restart recovery;
 - health, metrics, and persisted provider overview/API (HTTP reads do not inspect providers);
+- read-only command endpoints plus CSRF/Origin-protected settings and target-reset schedule forms;
+- bounded retention maintenance for samples, events and terminal intent history;
 - official Codex app-server read-only adapter with offline protocol fixtures;
 - Docker/Compose hardening baseline;
 - CI/validation scaffolding;
@@ -109,10 +112,8 @@ Included now:
 
 Intentionally **not** implemented yet:
 
-- automatic provider action execution and Codex trigger;
+- Codex trigger and any quota-consuming provider action;
 - Antigravity real adapter;
-- UI settings editor;
-- production scheduler action execution;
 - complete history charts.
 
 Those are implementation-roadmap work, not omissions from the planning deliverable.

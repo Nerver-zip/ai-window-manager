@@ -1,7 +1,7 @@
 # AI Window Manager — implementation plan
 
 Prepared: **2026-09-19**
-Scope: observation-to-durable-intent vertical slice; provider action execution remains deferred.
+Scope: safe observation-to-action-intent vertical slice; quota-consuming provider actions remain deferred.
 
 ## A. Executive summary
 
@@ -9,7 +9,16 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The current safe executor can dispatch only an explicitly enabled adapter capability; Codex and Antigravity remain monitor-only in this milestone.
+
+## Current milestone status
+
+Completed: `SCHED-001`, `TIME-001`, `SCHED-002`, `CODEX-001`, `WEB-001`,
+`SCHED-003`, `SEC-001`, `API-001`, `API-002`, `METRICS-001`, and `STORAGE-002`.
+The executor is quota-safe by default, confirms outcomes with fresh observation,
+and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
+non-secret provider settings and target-reset schedule forms. `CODEX-002`,
+Antigravity work, history charts and aggregate statistics remain out of scope.
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots. A minimal normal Codex request can therefore be an opt-in quota-consuming trigger, but there is no dedicated zero-cost “start window” API. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 

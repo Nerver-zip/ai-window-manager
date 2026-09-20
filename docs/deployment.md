@@ -29,6 +29,12 @@ the overview/API only reads that persisted state. Optional Codex monitoring uses
 a dedicated `AWM_CODEX_HOME` under the persistent data volume and is disabled by
 default; the image does not provide a Codex credential or provider trigger.
 
+The process also runs one coalescing executor interval and one bounded retention
+maintenance interval. Shutdown stops all intervals, waits for in-flight
+read-only work, closes the HTTP server, and then closes SQLite. The default
+FakeProvider remains monitor-only unless runtime automation is explicitly enabled;
+Codex has no trigger capability in this image.
+
 ## Dockge
 
 `compose.yaml` is ordinary Docker Compose and needs no Dockge-specific keys. Point Dockge at the repository/stack directory and configure `.env`/mount paths there.
