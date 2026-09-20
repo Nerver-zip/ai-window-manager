@@ -45,6 +45,7 @@ RUN set -eux; \
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
+    PATH=/opt/codex/bin:$PATH \
     AWM_BIND=0.0.0.0 \
     AWM_PORT=8787 \
     AWM_DB_PATH=/data/window-manager.db \
