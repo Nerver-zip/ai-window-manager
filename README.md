@@ -115,7 +115,7 @@ Included now:
 Intentionally **not** implemented yet:
 
 - Antigravity real adapter;
-- live authenticated Codex acceptance and production enablement of the quota-consuming gate;
+- broad production enablement of the quota-consuming gate; one operator-authorized live `Hi!` heartbeat has been validated, but the action remains opt-in and timeout/confirmation hardening is still tracked;
 - aggregate statistics and richer charting.
 
 Those are implementation-roadmap work, not omissions from the planning deliverable.

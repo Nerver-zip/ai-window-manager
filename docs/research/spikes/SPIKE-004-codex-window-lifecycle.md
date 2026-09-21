@@ -1,21 +1,27 @@
 # SPIKE-004 — Codex window lifecycle semantics
 
-**Date:** 2026-09-19  
+**Date:** 2026-09-20
 **Scope:** determine whether the official Codex app-server provides enough
-evidence to authorize an automatic window-positioning action. No turn, reset
-credit consumption, or trigger was executed.
+evidence to authorize one explicitly opt-in, ordinary window-positioning turn.
+No reset-credit operation or undocumented endpoint is allowed.
 
 ## Classification
 
-`BLOCKED`
+`VALIDATED_WITH_UNCERTAINTY`
 
-The required authenticated lifecycle evidence was not available in this
-environment, and no quota-affecting live test was authorized. Automatic Codex
-triggering therefore remains disabled. The existing adapter remains
-read-only/monitor-only.
+The previously blocked experiment was completed by the operator in the
+dedicated Compose runtime, using the official Codex app-server and the same
+persistent `CODEX_HOME` used by AWM. One explicitly authorized ordinary `Hi!`
+turn was dispatched after the five-hour window was naturally eligible. The
+provider then returned a fixed reset timestamp instead of continuing to project
+the reset as `now + 5h`, and subsequent inspections showed that timestamp
+counting down. This validates the minimal heartbeat effect.
 
-`BLOCKED` is intentional here: this report does not promote an unverified
-manual or automatic trigger to a supported capability.
+The action response exceeded AWM's five-second request timeout by roughly two
+seconds, so the executor correctly recorded `action_uncertain` rather than
+claiming transport success or blindly retrying. Fresh post-action observations
+provided operational confirmation, but the timeout/confirmation boundary
+remains a follow-up hardening item.
 
 ## Evidence and method
 
@@ -64,27 +70,34 @@ identity, token, cookie, auth file, turn, or reset-credit operation was used.
 
 ### A — What is returned after expiry and before a new turn?
 
-**Unverified.** The environment had no authenticated account, so it was not
-possible to capture an authenticated post-expiry snapshot. The unauthenticated
-error is a sign-in state, not an expired-window observation.
+The live run showed the eligible pre-action state used by AWM. Before the
+heartbeat, the observed reset advanced with each fresh inspection at roughly
+five hours from the current instant. This confirms that the provider had not
+yet anchored the new five-hour window.
 
 ### B — Can expired, unused, and stale states be distinguished?
 
-**Not proven.** The documented fields are useful observations, but no paired
-authenticated snapshots were collected that establish a deterministic rule
-for distinguishing these lifecycle states. AWM must not infer `INACTIVE` from
-`usedPercent = 0`, `remaining = 100%`, or an elapsed reset timestamp.
+The live run validates the operational distinction needed for this path:
+before the turn the reset was projected forward, and after the turn it remained
+anchored while the remaining time decreased. This does not make reset-time
+inference an official lifecycle field; AWM continues to mark inferred phase and
+must not infer it from `usedPercent = 0` or `remaining = 100%` alone.
 
 ### C — What changes after the first ordinary turn?
 
-**Not tested.** The controlled experiment was not run because it would require
-an authorized authenticated account and one quota-affecting ordinary turn.
+The authorized `Hi!` turn was sent by AWM at approximately 21:38 local time.
+The next observations kept the reset at approximately 05:38 UTC rather than
+moving it forward with every poll. The exact provider response arrived after
+the local five-second request deadline, which explains the temporary
+`action_uncertain` event.
 
 ### D — Can AWM confirm that the desired window started?
 
-**Not proven.** Without the before/after authenticated observations from C,
-there is no validated confirmation rule that distinguishes a newly started
-window from another provider state or an ambiguous/stale observation.
+Yes at the operational observation level: the persisted before/after history
+shows the reset transition and a stable anchored reset after the turn. The
+transport-level confirmation was not received before the configured timeout,
+so the executor's `uncertain` classification remains correct and must not be
+weakened.
 
 ## Safety decision
 
@@ -93,31 +106,27 @@ The current Codex capability declaration remains:
 ```text
 usageRead: supported
 resetRead: supported when the official response includes resetAt
-windowTrigger: unsupported
+windowTrigger: opt-in only (`AWM_CODEX_TRIGGER_ENABLED=true` plus provider
+automation mode); consumes quota and sends exactly one ordinary `Hi!` turn
 ```
 
-No `INACTIVE` inference was added. No `turn/start`, `thread/start`, reset
-credit consumption, direct backend endpoint, token injection, or manual trigger
-endpoint was added. `CODEX-002` remains deferred pending an explicitly
-authorized, minimal, controlled live experiment and a reviewed confirmation
-rule.
+The adapter still uses no direct backend endpoint, token injection, or reset
+credit operation. The local inferred-phase correction and the live heartbeat
+experiment are now enough to close this spike. The action remains explicitly
+opt-in and the uncertain-outcome safety rule remains in force.
 
-## Required authorized follow-up
+## Follow-up hardening
 
-In a disposable environment with an explicitly authorized test account:
-
-1. authenticate through the official Codex device-code or browser flow into a
-   dedicated persistent `CODEX_HOME`;
-2. capture a sanitized `account/rateLimits/read` snapshot before the test;
-3. use an already naturally expired eligible window, if available;
-4. send exactly one minimal ordinary turn in an empty isolated workspace;
-5. capture a fresh rate-limit snapshot immediately afterward;
-6. compare reset timestamp, used percentage, duration, bucket identity, and
-   primary/secondary values;
-7. repeat only when the state is naturally available; never burn quota to
+1. Increase or make configurable the app-server request timeout after measuring
+   the authenticated container path; do not hide an uncertain outcome.
+2. Keep `turn/completed` and the post-action observation as the confirmation
+   path, with no blind retry after timeout.
+3. Repeat only when the state is naturally available; never burn quota to
    manufacture expiry.
 
-The result must be reviewed before any automatic trigger capability is exposed.
+This spike closes the lifecycle question for the current Codex/account path;
+it does not make the quota-consuming capability default-on or prove identical
+behavior across all plans and future client versions.
 
 ## References
 

@@ -93,7 +93,7 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## CODEX-001 — Implement Codex read-only adapter
 
-**Status: complete (2026-09-19); offline acceptance complete, live authenticated acceptance pending.**
+**Status: complete (2026-09-20); offline and operator-authorized live acceptance complete.**
 
 **Scope**: official client/app-server only, lifecycle, timeout, validated rate-limit response, normalized multi-window observation.  
 **Acceptance**: monitor-only real provider works; partial/null fields degrade safely; offline contract tests.  
@@ -101,7 +101,7 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## CODEX-002 — Implement opt-in Codex trigger
 
-**Status: implementation complete (2026-09-19); live authenticated acceptance pending.**
+**Status: implementation and one operator-authorized live heartbeat complete (2026-09-20); timeout/confirmation hardening remains.**
 
 **Context**: official docs say first message after prior 5h window ends starts a new window.  
 **Scope**: minimal ordinary official-client turn, empty workspace/scoped permissions, persisted intent, confirmation read.  
@@ -213,7 +213,7 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## OPS-002 — Package the official Codex CLI runtime
 
-**Status: complete (2026-09-19); authenticated provider acceptance remains pending.**
+**Status: complete (2026-09-20); runtime and operator-authorized Codex acceptance complete.**
 
 **Scope**: package a pinned official Codex release with architecture checksums,
 an isolated persistent state volume and an unauthenticated app-server startup
@@ -224,12 +224,14 @@ and does not copy workstation credentials.
 
 ## SPIKE-004 — Validate Codex window lifecycle semantics
 
-**Status: blocked (2026-09-19); see `docs/research/spikes/SPIKE-004-codex-window-lifecycle.md`.**
+**Status: validated with an uncertain transport boundary (2026-09-20); see `docs/research/spikes/SPIKE-004-codex-window-lifecycle.md`.**
 
 **Scope**: determine whether official observations can distinguish an eligible
 expired window and confirm a new window after one ordinary turn.  
-**Result**: the disposable unauthenticated app-server probe initialized, but
-`account/read` required authentication and no quota-consuming turn was
-authorized. No `INACTIVE` inference or automatic trigger is supported.  
-**Dependencies**: explicitly authorized authenticated test account and a
-controlled naturally expired lifecycle state.
+**Result**: an operator-authorized AWM `Hi!` turn anchored the five-hour reset
+in the real Codex account. AWM recorded `action_uncertain` because the response
+arrived after the five-second deadline, while subsequent persisted observations
+confirmed the reset remained anchored. Automatic action stays explicit opt-in;
+no blind retry is allowed.
+**Dependencies**: satisfied for the current explicitly authorized account;
+repeat only as a controlled manual acceptance when provider behavior changes.

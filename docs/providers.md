@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Research date: **2026-09-19**.
+Research date: **2026-09-20**.
 
 ## Normalized adapter contract
 
@@ -48,9 +48,11 @@ disabled by default.
 ### Inferred, but not automation-proven
 
 - Because OpenAI explicitly defines the first Work/Codex message after expiry as the new window start, one ordinary minimal Codex request may position the start time. It necessarily consumes some included usage and is not a zero-cost “start window” API.
-- SPIKE-004 could not collect authenticated before/after observations in the
-  current environment. The project therefore treats reset-time phase inference
-  as an explicit operator opt-in, not as an official lifecycle guarantee.
+- SPIKE-004 was validated by an operator-authorized AWM `Hi!` heartbeat in the
+  dedicated runtime. Before the turn, fresh inspections projected the reset
+  forward; after it, the reset stayed anchored and counted down. This validates
+  the operational effect, not a new official lifecycle field: reset-time phase
+  remains explicitly inferred and opt-in.
 
 ### Unknown
 
@@ -76,7 +78,10 @@ internal_usage_api    = observed but intentionally unused by default
 ```
 
 The implemented Codex adapter declares the trigger capability only when the
-explicit trigger gate is enabled. It degrades to a bounded
+explicit trigger gate is enabled. A live operator acceptance sent exactly one
+ordinary `Hi!` turn; the app-server response exceeded the five-second local
+deadline and was therefore classified as uncertain, while later observation
+confirmed the reset transition. It degrades to a bounded
 `AUTH_REQUIRED`/`UNAVAILABLE`/`ERROR` observation if the official client cannot
 be initialized safely on the server. It never calls `/api/codex/usage` or
 `/wham/usage`. A timeout or EOF after `turn/start` is uncertain and is never

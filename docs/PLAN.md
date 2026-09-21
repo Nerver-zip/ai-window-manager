@@ -20,8 +20,9 @@ The executor is quota-safe by default, confirms outcomes with fresh observation,
 and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
 non-secret provider settings and target-reset schedule forms. The bounded
 history page reads persisted events/samples and does not inspect providers.
-`CODEX-002` is implemented behind an explicit trigger gate and requires live
-authenticated acceptance before production enablement. Antigravity work,
+`CODEX-002` is implemented behind an explicit trigger gate and has passed one
+operator-authorized live `Hi!` heartbeat acceptance; production enablement
+remains explicit and timeout/confirmation hardening is still tracked. Antigravity work,
 aggregate statistics and richer charting remain out of scope.
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
@@ -455,8 +456,8 @@ remain capability-gated.**
 ### Phase 4 — Codex monitor
 
 **Status: CODEX-001 offline adapter and OPS-002 runtime packaging complete;
-live authenticated acceptance remains manual/pending. Trigger execution is
-explicitly disabled by default.**
+operator-authorized live monitor/heartbeat acceptance complete. Trigger
+execution remains explicitly disabled by default.**
 
 **Goal**: real read-only Codex state through official client surface.  
 **Components**: dedicated client state, adapter, parser/schema validation.  
@@ -465,7 +466,8 @@ explicitly disabled by default.**
 
 ### Phase 5 — Codex opt-in action
 
-**Status: implementation complete; live authenticated acceptance pending.**
+**Status: implementation and one live heartbeat acceptance complete; timeout
+confirmation hardening remains.**
 
 **Goal**: position an inactive Codex window using one minimal legitimate normal
 request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
