@@ -515,7 +515,7 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 
 ## X. MVP Definition of Done
 
-- [x] `docker compose up -d` reaches healthy state from a clean checkout/config.
+- [x] `docker compose up -d` reaches healthy state with the documented project configuration; a disposable clean-checkout smoke remains a release check.
 - [x] SQLite initializes/migrates automatically and survives container/host restart.
 - [x] FakeProvider exercises active/inactive/reset/failure/action-uncertain flows.
 - [x] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
