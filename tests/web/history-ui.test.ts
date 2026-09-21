@@ -124,6 +124,11 @@ describe('history UI helpers', () => {
     expect(html).toContain('Not available');
   });
 
+  it('renders provider logos in timeline items when available', () => {
+    const html = renderTimeline([event({ providerId: 'codex' }), event({ providerId: 'fake' })]);
+    expect(html).toContain('/assets/images/providers/codex.png');
+  });
+
   it('normalizes unknown event metadata to safe explicit values', () => {
     const html = renderTimeline([
       event({

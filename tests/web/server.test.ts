@@ -140,8 +140,9 @@ function seedObservedProvider(
   repositories: StorageRepositories,
   providerId = 'fake',
   observedAt = NOW,
+  kind = 'fake',
 ): void {
-  repositories.providers.upsert(providerRecord({ id: providerId }));
+  repositories.providers.upsert(providerRecord({ id: providerId, kind }));
   const current = observation(providerId, observedAt);
   const observedAtMs = Date.parse(observedAt);
   repositories.providerState.upsert({
@@ -179,6 +180,50 @@ describe('web server persisted overview', () => {
       expect(response.body).toContain('aria-current="page"');
     },
   );
+
+  it('serves static images and favicon safely with cache headers', async () => {
+    const { app } = createApp(() => {});
+    const logo = await app.inject('/assets/images/logo.png');
+    expect(logo.statusCode).toBe(200);
+    expect(logo.headers['content-type']).toBe('image/png');
+    expect(logo.headers['cache-control']).toContain('public');
+
+    const codex = await app.inject('/assets/images/providers/codex.png');
+    expect(codex.statusCode).toBe(200);
+    expect(codex.headers['content-type']).toBe('image/png');
+
+    const agy = await app.inject('/assets/images/providers/agy.png');
+    expect(agy.statusCode).toBe(200);
+    expect(agy.headers['content-type']).toBe('image/png');
+
+    const favicon = await app.inject('/favicon.ico');
+    expect(favicon.statusCode).toBe(200);
+    expect(favicon.headers['content-type']).toBe('image/png');
+
+    const invalidMime = await app.inject('/assets/images/invalid.txt');
+    expect(invalidMime.statusCode).toBe(404);
+
+    const dirRequest = await app.inject('/assets/images/providers');
+    expect(dirRequest.statusCode).toBe(404);
+
+    const notFound = await app.inject('/assets/images/non-existent.png');
+    expect(notFound.statusCode).toBe(404);
+
+    const traversal = await app.inject('/assets/images/../../package.json');
+    expect(traversal.statusCode).toBe(404);
+  });
+
+  it('renders provider cards with provider logos when available', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories, 'fake', NOW, 'fake');
+      seedObservedProvider(repositories, 'codex', NOW, 'codex');
+    });
+    const page = await app.inject('/');
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('/assets/images/providers/codex.png');
+    expect(page.body).toContain('Test provider');
+    expect(page.body).toContain('Codex');
+  });
 
   it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
     'shows a human status for %s without a fabricated zero',

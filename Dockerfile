@@ -13,6 +13,7 @@ FROM deps AS build
 COPY tsconfig.json vitest.config.ts eslint.config.js .prettierrc.json ./
 COPY src ./src
 COPY migrations ./migrations
+COPY assets ./assets
 RUN pnpm build
 
 FROM node:24-bookworm-slim AS codex
@@ -64,6 +65,7 @@ RUN apt-get update \
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
+COPY --from=build /app/assets ./assets
 COPY --from=codex /opt/codex /opt/codex
 COPY package.json ./package.json
 USER 10001:10001

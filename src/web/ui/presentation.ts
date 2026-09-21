@@ -1,6 +1,8 @@
 const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   codex: 'Codex',
   fake: 'Test provider',
+  antigravity: 'Antigravity',
+  agy: 'Antigravity',
 };
 
 const WINDOW_LABELS: Readonly<Record<string, string>> = {
@@ -107,6 +109,14 @@ const ERROR_LABELS: Readonly<Record<string, string>> = {
 export function providerDisplayName(id: string, kind?: string): string {
   const key = kind === 'codex' || id === 'codex' ? 'codex' : kind === 'fake' ? 'fake' : id;
   return PROVIDER_LABELS[key] ?? humanizeIdentifier(kind ?? id, 'Provider');
+}
+
+export function providerLogoUrl(id: string, kind?: string): string | undefined {
+  const normalized = (kind ?? id).trim().toLowerCase();
+  if (normalized === 'codex') return '/assets/images/providers/codex.png';
+  if (normalized === 'agy' || normalized === 'antigravity')
+    return '/assets/images/providers/agy.png';
+  return undefined;
 }
 
 export function windowDisplayName(

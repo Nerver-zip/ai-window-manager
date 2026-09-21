@@ -16,6 +16,7 @@ import {
   modeLabel,
   phaseLabel,
   providerDisplayName,
+  providerLogoUrl,
   reasonLabel,
   severityLabel,
   windowDisplayName,
@@ -26,10 +27,24 @@ describe('human-facing presentation labels', () => {
     ['codex', undefined, 'Codex'],
     ['codex', 'other', 'Codex'],
     ['test-provider', 'fake', 'Test provider'],
+    ['antigravity', undefined, 'Antigravity'],
+    ['agy', undefined, 'Antigravity'],
     ['my_provider', 'custom', 'Custom'],
     ['', undefined, 'Provider'],
   ])('labels provider %s/%s as %s', (id, kind, expected) => {
     expect(providerDisplayName(id, kind)).toBe(expected);
+  });
+
+  it.each([
+    ['codex', undefined, '/assets/images/providers/codex.png'],
+    ['provider-1', 'codex', '/assets/images/providers/codex.png'],
+    ['antigravity', undefined, '/assets/images/providers/agy.png'],
+    ['agy', undefined, '/assets/images/providers/agy.png'],
+    ['provider-2', 'agy', '/assets/images/providers/agy.png'],
+    ['fake', undefined, undefined],
+    ['unknown', undefined, undefined],
+  ])('resolves logo URL for %s/%s as %s', (id, kind, expected) => {
+    expect(providerLogoUrl(id, kind)).toBe(expected);
   });
 
   it.each([

@@ -11,6 +11,7 @@ import { escapeHtml, renderAppShell } from './ui/layout.js';
 import {
   eventLabel,
   providerDisplayName,
+  providerLogoUrl,
   reasonLabel,
   severityLabel,
   windowDisplayName,
@@ -284,7 +285,7 @@ export function renderTimeline(
               formatTimestamp(event.occurredAt),
             )}</time>
             <span class="badge badge-${severity}">${escapeHtml(severityLabel(severity))}</span>
-            <span class="timeline-provider">${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
+            <span class="timeline-provider">${event.providerId && providerLogoUrl(event.providerId) ? `<img class="provider-logo-xs" src="${providerLogoUrl(event.providerId)}" alt="" width="14" height="14">` : ''}${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
           </div>
           <h3 class="timeline-event">${escapeHtml(event.displayType)}</h3>
           <p class="timeline-reason"><span class="timeline-label">Why</span>${escapeHtml(

@@ -13,6 +13,7 @@ import {
   durationLabel,
   effectiveModeLabel,
   providerDisplayName,
+  providerLogoUrl,
   windowDisplayName,
 } from './ui/presentation.js';
 
@@ -244,6 +245,9 @@ function plannerReasonLabel(reasonCode: string): string {
     AUTOMATION_DISABLED: 'Monitoring continues, but automatic starts are turned off.',
     TRIGGER_CAPABILITY_UNAVAILABLE: 'This provider cannot start a window automatically.',
     MONITORING_UNAVAILABLE: 'Provider monitoring is unavailable.',
+    WINDOW_PHASE_CONFIDENCE_TOO_LOW: 'The current window state is not reliable enough yet.',
+    WINDOW_NOT_REPORTED: 'The selected usage window is not reported by this provider.',
+    WINDOW_NOT_INACTIVE: 'The current window is not confirmed inactive.',
     OBSERVATION_STALE: 'The latest provider update is too old to plan safely.',
     OBSERVATION_MISSING: 'Waiting for the first valid provider update.',
     CURRENT_WINDOW_ACTIVE: 'A window is already active.',
@@ -454,9 +458,13 @@ function renderProviderCard(provider: SettingsProviderView, csrfToken: string): 
       ? 'Automatic actions are unavailable because this provider does not support them.'
       : 'Automatic actions remain unavailable until this provider can be verified.';
   const displayName = providerDisplayName(provider.id, provider.kind);
+  const logoUrl = providerLogoUrl(provider.id, provider.kind);
+  const logoHtml = logoUrl
+    ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
+    : '';
 
   return `<article class="card provider-settings" aria-labelledby="provider-${id}-title">
-    <header class="provider-header"><div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3><p class="provider-meta">${provider.enabled ? 'Monitoring enabled' : 'Monitoring paused'}</p></div><div class="badges" aria-label="${escapeHtml(displayName)} status"><span class="badge ${provider.enabled ? 'badge-success' : ''}">${provider.enabled ? 'Monitoring enabled' : 'Monitoring paused'}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header>
+    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3><p class="provider-meta">${provider.enabled ? 'Monitoring enabled' : 'Monitoring paused'}</p></div></div><div class="badges" aria-label="${escapeHtml(displayName)} status"><span class="badge ${provider.enabled ? 'badge-success' : ''}">${provider.enabled ? 'Monitoring enabled' : 'Monitoring paused'}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header>
     <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}">
       ${csrfInput(csrfToken)}
       <fieldset><legend>Provider controls</legend><div class="form-grid">

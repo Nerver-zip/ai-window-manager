@@ -47,11 +47,19 @@ describe('settings UI helpers', () => {
       csrfToken,
       providers: [
         { ...provider, enabled: false, mode: 'automation', capabilities: supportedCapabilities },
+        {
+          id: 'codex',
+          kind: 'codex',
+          enabled: true,
+          mode: 'monitor_only',
+          pollIntervalSeconds: 30,
+        },
       ],
     });
     expect(html).toContain('value="false" selected');
     expect(html).toContain('value="automation" selected');
     expect(html).toContain('What this provider supports');
+    expect(html).toContain('/assets/images/providers/codex.png');
   });
 
   it('renders human activation controls with hidden policy fields disabled', () => {
@@ -103,6 +111,47 @@ describe('settings UI helpers', () => {
       timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
     });
     expect(manualSettings).toContain('data-timezone-auto-detect="false"');
+  });
+
+  it('explains missing or uncertain selected windows in human language', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'weekly',
+        anchorLocalTime: '18:00',
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      currentWindow: {
+        providerId: 'fake',
+        status: 'UNKNOWN',
+        windowKind: 'weekly',
+        confidence: 'unknown',
+        reason: 'WINDOW_NOT_REPORTED',
+      },
+      decision: {
+        kind: 'WAIT',
+        reasonCode: 'WINDOW_NOT_REPORTED',
+        explanation: {
+          decision: 'WAIT',
+          reasonCode: 'WINDOW_NOT_REPORTED',
+          providerId: 'fake',
+          policyId: 'activation-fake',
+          policyKind: 'fixed',
+          timezone: 'UTC',
+          currentWindow: 'UNKNOWN',
+        },
+      },
+    });
+
+    expect(html).toContain('The selected usage window is not reported by this provider.');
   });
 
   it('renders only safe fields with hidden CSRF inputs and escaped values', () => {

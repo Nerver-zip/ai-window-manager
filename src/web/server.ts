@@ -1,3 +1,5 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import Fastify from 'fastify';
 import { renderAppShell } from './ui/layout.js';
 import { APP_CSS } from './ui/styles.js';
@@ -61,9 +63,21 @@ import {
   isEstimatedSource,
   phaseLabel,
   providerDisplayName,
+  providerLogoUrl,
   reasonLabel,
   windowDisplayName,
 } from './ui/presentation.js';
+
+const STATIC_MIME_TYPES: Readonly<Record<string, string>> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+};
+
+const ASSETS_DIR = path.resolve(process.cwd(), 'assets');
 
 const DECISION_EVENT_TYPES = new Set([
   'action_intent_planned',
@@ -162,6 +176,29 @@ export function buildServer(input: BuildServerInput) {
   app.get('/assets/app.js', async (_request, reply) =>
     reply.type('application/javascript; charset=utf-8').send(APP_JS),
   );
+  app.get('/assets/images/*', async (request, reply) => {
+    const rawPath = (request.params as { '*': string })['*'];
+    const safePath = path.normalize(rawPath).replace(/^(\.\.(\/|\\|$))+/, '');
+    const assetPath = path.join(ASSETS_DIR, 'images', safePath);
+    try {
+      const ext = path.extname(assetPath).toLowerCase();
+      const mime = STATIC_MIME_TYPES[ext];
+      if (!mime) return reply.code(404).send({ error: 'not found' });
+      const stat = await fs.stat(assetPath);
+      if (!stat.isFile()) return reply.code(404).send({ error: 'not found' });
+      const buffer = await fs.readFile(assetPath);
+      reply.header('Cache-Control', 'public, max-age=86400, immutable');
+      return reply.type(mime).send(buffer);
+    } catch {
+      return reply.code(404).send({ error: 'not found' });
+    }
+  });
+  app.get('/favicon.ico', async (_request, reply) => {
+    const faviconPath = path.join(ASSETS_DIR, 'images', 'logo.png');
+    const buffer = await fs.readFile(faviconPath);
+    reply.header('Cache-Control', 'public, max-age=86400');
+    return reply.type('image/png').send(buffer);
+  });
   const commandApi = createCommandApi({
     repositories: input.repositories,
     adapters: input.adapters,
@@ -752,7 +789,11 @@ function renderProviderCard(provider: ProviderRead, now: Date): string {
 
   const displayName = providerDisplayName(provider.id, provider.kind);
   const monitoringState = provider.enabled ? 'Monitoring enabled' : 'Monitoring paused';
-  return `<article class="provider${staleClass}"><header class="provider-header"><div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(monitoringState)}</p></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(healthLabel(provider.health))}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">This information is out of date. Automatic planning is paused until a fresh update arrives.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Sign-in is required in the official provider client.</p>' : ''}<section class="current-window-read" aria-labelledby="current-window-${escapeHtml(provider.id)}"><div><p class="eyebrow">OBSERVED STATE</p><h3 id="current-window-${escapeHtml(provider.id)}">Current window</h3><strong class="current-window-status">${escapeHtml(currentWindowLabel(provider.currentWindow.status))}</strong><p class="provider-meta">${escapeHtml(currentWindowDetail(provider, displayName))}</p></div>${provider.currentWindow.expectedEndAt ? `<p class="provider-meta"><span>Expected end</span><br><time datetime="${escapeHtml(provider.currentWindow.expectedEndAt.value)}">${escapeHtml(formatUtc(provider.currentWindow.expectedEndAt.value))}</time></p>` : ''}</section>${provider.currentWindow.reason ? `<p class="stale-notice">${escapeHtml(currentWindowReason(provider.currentWindow.reason))}</p>` : ''}<details><summary>Connection details</summary><dl><dt>Status</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>${windows}${decision}</article>`;
+  const logoUrl = providerLogoUrl(provider.id, provider.kind);
+  const logoHtml = logoUrl
+    ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
+    : '';
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(monitoringState)}</p></div></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(healthLabel(provider.health))}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">This information is out of date. Automatic planning is paused until a fresh update arrives.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Sign-in is required in the official provider client.</p>' : ''}<section class="current-window-read" aria-labelledby="current-window-${escapeHtml(provider.id)}"><div><p class="eyebrow">OBSERVED STATE</p><h3 id="current-window-${escapeHtml(provider.id)}">Current window</h3><strong class="current-window-status">${escapeHtml(currentWindowLabel(provider.currentWindow.status))}</strong><p class="provider-meta">${escapeHtml(currentWindowDetail(provider, displayName))}</p></div>${provider.currentWindow.expectedEndAt ? `<p class="provider-meta"><span>Expected end</span><br><time datetime="${escapeHtml(provider.currentWindow.expectedEndAt.value)}">${escapeHtml(formatUtc(provider.currentWindow.expectedEndAt.value))}</time></p>` : ''}</section>${provider.currentWindow.reason ? `<p class="stale-notice">${escapeHtml(currentWindowReason(provider.currentWindow.reason))}</p>` : ''}<details><summary>Connection details</summary><dl><dt>Status</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>${windows}${decision}</article>`;
 }
 
 function currentWindowLabel(status: CurrentWindowState['status']): string {
