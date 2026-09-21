@@ -304,7 +304,11 @@ function planAnchor(
   // `validUntil` is an exclusive boundary. The executor applies the same
   // rule when it expires an intent, so a decision at the exact deadline
   // cannot race with dispatch and be treated differently by each layer.
-  const insideWindow = atOrAfterAnchor && input.now.getTime() < anchorEnd.getTime();
+  const insideWindow =
+    atOrAfterAnchor &&
+    (toleranceSeconds === 0
+      ? input.now.getTime() === anchor.getTime()
+      : input.now.getTime() < anchorEnd.getTime());
   const explanation = {
     ...base,
     anchorAt: anchor.toISOString(),

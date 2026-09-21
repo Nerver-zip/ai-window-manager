@@ -236,6 +236,23 @@ describe('ActionExecutor', () => {
     expect(expired.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
     expect(expired.triggerCount).toBe(0);
 
+    const exact = setup();
+    exact.clock.advanceMs(30_000);
+    const exactNowMs = exact.clock.now().getTime();
+    exact.repositories.actionIntents.createIfAbsent({
+      ...exact.intent,
+      id: 'exact-intent',
+      dedupeKey: 'fake:trigger_window:policy-1:exact',
+      scheduledForMs: exactNowMs,
+      expiresAtMs: exactNowMs,
+      explanation: { windowKind: 'five_hour', toleranceSeconds: 0 },
+      createdAtMs: exactNowMs,
+      updatedAtMs: exactNowMs,
+    });
+    await exact.executor().executeDue();
+    expect(exact.repositories.actionIntents.get('exact-intent')?.state).toBe('confirmed');
+    expect(exact.triggerCount).toBe(1);
+
     const active = setup();
     active.fake.setPhase('ACTIVE');
     await active.executor().executeDue();

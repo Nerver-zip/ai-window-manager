@@ -129,7 +129,7 @@ export class ActionExecutor {
     report: ActionExecutorReport,
   ): Promise<void> {
     const nowMs = this.input.clock.now().getTime();
-    if (intent.expiresAtMs !== null && nowMs >= intent.expiresAtMs) {
+    if (intent.expiresAtMs !== null && intentExpired(intent, nowMs)) {
       if (
         this.input.repositories.actionIntents.markSkippedIfPlannedOrRetryable(
           intent.id,
@@ -471,6 +471,15 @@ function safeIntentData(intent: ActionIntentRecord): Record<string, unknown> {
     state: intent.state,
     dedupeKey: intent.dedupeKey,
   };
+}
+
+function intentExpired(intent: ActionIntentRecord, nowMs: number): boolean {
+  if (intent.expiresAtMs === null || nowMs < intent.expiresAtMs) return false;
+
+  // A zero-tolerance policy is an exact instant, so the deadline itself is
+  // still dispatchable. All positive tolerances use an exclusive deadline.
+  const explanation = asRecord(intent.explanation);
+  return !(explanation.toleranceSeconds === 0 && nowMs === intent.expiresAtMs);
 }
 
 function isEligibleForTrigger(

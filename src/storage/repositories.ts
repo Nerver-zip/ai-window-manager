@@ -567,7 +567,15 @@ export class ActionIntentRepository {
          WHERE id = @id
            AND state = @expectedState
            AND (not_before_ms IS NULL OR not_before_ms <= @nowMs)
-           AND (expires_at_ms IS NULL OR expires_at_ms > @nowMs)`,
+           AND (
+             expires_at_ms IS NULL
+             OR expires_at_ms > @nowMs
+             OR (
+               expires_at_ms = scheduled_for_ms
+               AND expires_at_ms = @nowMs
+               AND json_extract(explanation_json, '$.toleranceSeconds') = 0
+             )
+           )`,
       )
       .run({ id, expectedState, nowMs });
     return result.changes === 1 ? this.get(id) : undefined;

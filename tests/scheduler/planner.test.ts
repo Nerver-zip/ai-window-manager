@@ -239,6 +239,17 @@ describe('planWindowAction', () => {
     });
   });
 
+  it('supports a zero-tolerance policy at the exact anchor only', () => {
+    const exact = policy({ toleranceSeconds: 0 });
+    expect(planWindowAction(input({ policy: exact }))).toMatchObject({
+      kind: 'START',
+      reasonCode: PlannerReasonCode.ScheduledAnchor,
+    });
+    expect(
+      planWindowAction(input({ policy: exact, now: new Date('2026-09-19T08:00:01.000Z') })),
+    ).toMatchObject({ kind: 'SKIP', reasonCode: PlannerReasonCode.AnchorExpired });
+  });
+
   it('handles custom times before, within and after a tolerance', () => {
     const custom = policy({
       kind: 'custom_schedule',
