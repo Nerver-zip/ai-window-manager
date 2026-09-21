@@ -168,6 +168,67 @@ describe('activation policy integration', () => {
     expect(context.triggerCount).toBe(0);
   });
 
+  it('waits for the next fixed anchor after an unexpected reset', async () => {
+    const context = createContext('fixed', {
+      windowKind: 'five_hour',
+      anchorLocalTime: '08:00',
+      toleranceSeconds: 30,
+    });
+    const service = reconciler(context);
+    await service.reconcile();
+    context.clock.advanceMs(60_000);
+    await service.reconcile();
+
+    const executor = new ActionExecutor({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.adapter]]),
+    });
+    await executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+
+    context.clock.advanceMs(10 * 60_000);
+    context.fake.setPhase('INACTIVE');
+    const afterReset = await service.reconcile();
+
+    expect(afterReset.createdIntentIds).toEqual([]);
+    expect(afterReset.decisions[0]?.decision).toMatchObject({
+      kind: 'SKIP',
+      reasonCode: 'ANCHOR_EXPIRED',
+    });
+    const afterResetExplanation = afterReset.decisions[0]?.decision.explanation;
+    expect(
+      afterResetExplanation && 'nextAnchorAt' in afterResetExplanation
+        ? afterResetExplanation.nextAnchorAt
+        : undefined,
+    ).toBe('2026-09-19T13:00:00.000Z');
+    expect(context.triggerCount).toBe(1);
+  });
+
+  it('does nothing between custom schedule times after an anchor expires', async () => {
+    const context = createContext(
+      'custom_schedule',
+      { windowKind: 'five_hour', times: ['08:00', '18:00'], toleranceSeconds: 30 },
+      '2026-09-19T14:00:00.000Z',
+    );
+
+    const report = await reconciler(context).reconcile();
+
+    expect(report.createdIntentIds).toEqual([]);
+    expect(report.decisions[0]?.decision).toMatchObject({
+      kind: 'SKIP',
+      reasonCode: 'ANCHOR_EXPIRED',
+    });
+    const reportExplanation = report.decisions[0]?.decision.explanation;
+    expect(
+      reportExplanation && 'nextAnchorAt' in reportExplanation
+        ? reportExplanation.nextAnchorAt
+        : undefined,
+    ).toBe('2026-09-19T18:00:00.000Z');
+    expect(context.repositories.actionIntents.listOpen('fake')).toHaveLength(0);
+  });
+
   it('starts an inactive window for Auto and then waits after observation confirms Active', async () => {
     const context = createContext('auto', { windowKind: 'five_hour' });
     const service = reconciler(context);
