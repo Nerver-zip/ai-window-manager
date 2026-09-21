@@ -206,6 +206,12 @@ describe('planWindowAction', () => {
       PlannerReasonCode.ScheduledAnchor,
     ],
     [
+      'at the exclusive deadline',
+      new Date('2026-09-19T08:00:30.000Z'),
+      'SKIP',
+      PlannerReasonCode.AnchorExpired,
+    ],
+    [
       'after tolerance',
       new Date('2026-09-19T08:00:31.000Z'),
       'SKIP',

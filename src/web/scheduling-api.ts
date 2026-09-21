@@ -115,8 +115,5 @@ function selectWindow(
   windows: readonly WindowSnapshot[],
   windowKind: string | undefined,
 ): WindowSnapshot | undefined {
-  return (
-    (windowKind ? windows.find((window) => window.windowKind === windowKind) : undefined) ??
-    windows[0]
-  );
+  return windowKind ? windows.find((window) => window.windowKind === windowKind) : windows[0];
 }

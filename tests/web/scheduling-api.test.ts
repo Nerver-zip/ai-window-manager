@@ -174,6 +174,39 @@ describe('readScheduling', () => {
     expect(result.providers[0]?.decision).toMatchObject({ kind: 'START' });
   });
 
+  it('does not fall back to another window when the configured window is absent', () => {
+    const context = setup();
+    const at = context.clock.now().getTime();
+    seedState(context.repositories);
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-fake',
+      providerId: 'fake',
+      kind: 'fixed',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'weekly', anchorLocalTime: '08:00', toleranceSeconds: 30 },
+      createdAtMs: at,
+      updatedAtMs: at,
+    });
+
+    const result = readScheduling({
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.fake]]),
+      clock: context.clock,
+    });
+
+    expect(result.providers[0]?.currentWindow).toMatchObject({
+      status: 'UNKNOWN',
+      windowKind: 'weekly',
+      reason: 'WINDOW_NOT_REPORTED',
+    });
+    expect(result.providers[0]?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'WINDOW_NOT_REPORTED',
+    });
+    expect(result.providers[0]?.upcoming).toEqual([]);
+  });
+
   it('fails closed for malformed policies and capability failures', () => {
     const context = setup();
     const at = context.clock.now().getTime();

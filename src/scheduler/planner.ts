@@ -301,7 +301,10 @@ function planAnchor(
 ): PlannerDecision {
   const anchorEnd = new Date(anchor.getTime() + toleranceSeconds * 1000);
   const atOrAfterAnchor = input.now.getTime() >= anchor.getTime();
-  const insideWindow = atOrAfterAnchor && input.now.getTime() <= anchorEnd.getTime();
+  // `validUntil` is an exclusive boundary. The executor applies the same
+  // rule when it expires an intent, so a decision at the exact deadline
+  // cannot race with dispatch and be treated differently by each layer.
+  const insideWindow = atOrAfterAnchor && input.now.getTime() < anchorEnd.getTime();
   const explanation = {
     ...base,
     anchorAt: anchor.toISOString(),
