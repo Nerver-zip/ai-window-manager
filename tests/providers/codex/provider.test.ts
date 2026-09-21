@@ -125,6 +125,7 @@ describe('CodexProvider', () => {
       triggerEnabled: true,
       triggerWorkspace: '/tmp/awm-codex-test-trigger',
       requestTimeoutMs: 10,
+      actionTimeoutMs: 10,
       spawnProcess: fakeProcessFactory((request, process) => {
         if (request.method === 'initialize' && request.id !== undefined) {
           process.send({ id: request.id, result: {} });
@@ -564,6 +565,7 @@ describe('CodexProvider', () => {
       codexHome: '/tmp/awm-codex-test-home',
       triggerEnabled: true,
       requestTimeoutMs: 10,
+      actionTimeoutMs: 10,
       now: () => new Date('2026-09-19T12:00:00.000Z'),
       spawnProcess: fakeProcessFactory((request, process) => {
         if (request.method === 'initialize' && request.id !== undefined)
@@ -584,6 +586,7 @@ describe('CodexProvider', () => {
       codexHome: '/tmp/awm-codex-test-home',
       triggerEnabled: true,
       requestTimeoutMs: 10,
+      actionTimeoutMs: 10,
       now: () => new Date('2026-09-19T12:00:00.000Z'),
       spawnProcess: fakeProcessFactory((request, process) => {
         if (request.method === 'initialize' && request.id !== undefined)
@@ -640,6 +643,9 @@ describe('CodexProvider', () => {
     expect(() => new CodexProvider({ codexHome: '/tmp/codex', id: 'Codex' })).toThrow();
     expect(() => new CodexProvider({ codexHome: '/tmp/codex', requestTimeoutMs: 0 })).toThrow(
       'requestTimeoutMs',
+    );
+    expect(() => new CodexProvider({ codexHome: '/tmp/codex', actionTimeoutMs: 0 })).toThrow(
+      'actionTimeoutMs',
     );
     expect(() => new CodexProvider({ codexHome: '/tmp/codex', staleAfterSeconds: 0 })).toThrow();
   });

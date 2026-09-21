@@ -12,6 +12,7 @@ describe('loadConfig', () => {
     expect(config.AWM_CODEX_ENABLED).toBe(false);
     expect(config.AWM_CODEX_TRIGGER_ENABLED).toBe(false);
     expect(config.AWM_CODEX_HOME).toBe('./data/codex');
+    expect(config.AWM_CODEX_ACTION_TIMEOUT_SECONDS).toBe(30);
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
     expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);
     expect(config.AWM_RETENTION_INTERVAL_SECONDS).toBe(86400);
@@ -19,5 +20,13 @@ describe('loadConfig', () => {
 
   it('rejects an invalid timezone before startup', () => {
     expect(() => loadConfig({ AWM_TIMEZONE: 'Not/AZone' })).toThrow(/valid IANA timezone/);
+  });
+
+  it('accepts a bounded Codex action timeout independently from the read path', () => {
+    expect(
+      loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '45' }).AWM_CODEX_ACTION_TIMEOUT_SECONDS,
+    ).toBe(45);
+    expect(() => loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '4' })).toThrow();
+    expect(() => loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
   });
 });

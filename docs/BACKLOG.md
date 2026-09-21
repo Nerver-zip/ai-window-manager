@@ -101,7 +101,7 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## CODEX-002 — Implement opt-in Codex trigger
 
-**Status: implementation and one operator-authorized live heartbeat complete (2026-09-20); timeout/confirmation hardening remains.**
+**Status: implementation and one operator-authorized live heartbeat complete (2026-09-20); read/action timeout separation and uncertain-outcome confirmation are enforced.**
 
 **Context**: official docs say first message after prior 5h window ends starts a new window.  
 **Scope**: minimal ordinary official-client turn, empty workspace/scoped permissions, persisted intent, confirmation read.  

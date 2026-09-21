@@ -40,7 +40,10 @@ FakeProvider is enabled by default; Codex monitoring is opt-in through
 `AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex` in the container. The image pins
 the official Codex CLI to `0.155.1`. Quota-consuming Codex actions additionally
 require `AWM_CODEX_TRIGGER_ENABLED=true` and the persisted provider mode
-`automation`; the action sends only the fixed `Hi!` message.
+`automation`; the action sends only the fixed `Hi!` message. Its app-server
+stages use `AWM_CODEX_ACTION_TIMEOUT_SECONDS` (default 30 seconds), separate
+from the short timeout used by read-only inspection. A post-dispatch timeout
+remains uncertain and is never retried automatically.
 
 ## Development provider
 

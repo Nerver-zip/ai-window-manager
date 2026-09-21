@@ -35,6 +35,9 @@ connections. Optional Codex monitoring uses the dedicated
 image contains no Codex credentials. Codex trigger support is separately gated
 by `AWM_CODEX_TRIGGER_ENABLED=false` and the persisted provider mode remains
 `monitor_only` until an operator explicitly changes it.
+When enabled deliberately, `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
+app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
+it does not turn an ambiguous outcome into a retryable failure.
 
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight

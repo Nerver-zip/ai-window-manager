@@ -79,9 +79,12 @@ internal_usage_api    = observed but intentionally unused by default
 
 The implemented Codex adapter declares the trigger capability only when the
 explicit trigger gate is enabled. A live operator acceptance sent exactly one
-ordinary `Hi!` turn; the app-server response exceeded the five-second local
-deadline and was therefore classified as uncertain, while later observation
-confirmed the reset transition. It degrades to a bounded
+ordinary `Hi!` turn. At the time, the app-server response exceeded the old
+five-second local deadline and was therefore classified as uncertain, while
+later observation confirmed the reset transition. The action path now uses a
+separate bounded 30-second default controlled by
+`AWM_CODEX_ACTION_TIMEOUT_SECONDS`; a timeout after dispatch remains
+uncertain and is never retried blindly. It degrades to a bounded
 `AUTH_REQUIRED`/`UNAVAILABLE`/`ERROR` observation if the official client cannot
 be initialized safely on the server. It never calls `/api/codex/usage` or
 `/wham/usage`. A timeout or EOF after `turn/start` is uncertain and is never

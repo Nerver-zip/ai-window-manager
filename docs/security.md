@@ -28,7 +28,10 @@ The quota-consuming trigger gate defaults to disabled. When an operator enables
 `AWM_CODEX_TRIGGER_ENABLED=true` and provider automation, the adapter sends one
 fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
 is explicitly marked inferred; it must not be treated as an official lifecycle
-field. A timeout after dispatch is uncertain and cannot be retried blindly.
+field. Read-only app-server requests retain a short timeout; the quota-consuming
+action uses the separately bounded `AWM_CODEX_ACTION_TIMEOUT_SECONDS` setting,
+which defaults to 30 seconds. A timeout after dispatch is still uncertain and
+cannot be retried blindly.
 
 ### Antigravity
 

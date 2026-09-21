@@ -10,6 +10,7 @@ const clientOptions = {
   executable: 'codex-test-double',
   codexHome: '/tmp/awm-codex-test-home',
   requestTimeoutMs: 100,
+  actionTimeoutMs: 100,
 };
 
 describe('Codex app-server JSONL transport', () => {
@@ -68,6 +69,41 @@ describe('Codex app-server JSONL transport', () => {
       },
     ]);
     expect(child?.killSignals).toEqual(['SIGTERM']);
+  });
+
+  it('uses the longer action timeout for a slow completion without relaxing read timeouts', async () => {
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      requestTimeoutMs: 10,
+      actionTimeoutMs: 100,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method === 'initialize' && message.id !== undefined) {
+          process.send({ id: message.id, result: {} });
+        }
+        if (message.method === 'thread/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+        }
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+          setTimeout(
+            () =>
+              process.send({
+                method: 'turn/completed',
+                params: {
+                  threadId: 'thread-1',
+                  turn: { id: 'turn-1', status: 'completed' },
+                },
+              }),
+            20,
+          );
+        }
+      }),
+    });
+
+    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+    });
   });
 
   it('consumes a completion notification buffered before the turn response', async () => {

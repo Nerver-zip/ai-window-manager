@@ -153,6 +153,7 @@ function registerCodexProvider(): void {
   const provider = new CodexProvider({
     codexHome: config.AWM_CODEX_HOME,
     executable: config.AWM_CODEX_EXECUTABLE,
+    actionTimeoutMs: config.AWM_CODEX_ACTION_TIMEOUT_SECONDS * 1000,
     triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
   });
   adapters.set(provider.id, provider);

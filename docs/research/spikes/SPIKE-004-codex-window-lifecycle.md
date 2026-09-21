@@ -17,11 +17,13 @@ provider then returned a fixed reset timestamp instead of continuing to project
 the reset as `now + 5h`, and subsequent inspections showed that timestamp
 counting down. This validates the minimal heartbeat effect.
 
-The action response exceeded AWM's five-second request timeout by roughly two
-seconds, so the executor correctly recorded `action_uncertain` rather than
-claiming transport success or blindly retrying. Fresh post-action observations
-provided operational confirmation, but the timeout/confirmation boundary
-remains a follow-up hardening item.
+The action response exceeded AWM's then-configured five-second request timeout
+by roughly two seconds, so the executor correctly recorded `action_uncertain`
+rather than claiming transport success or blindly retrying. Fresh post-action
+observations provided operational confirmation. The follow-up is now resolved
+by separating read and action deadlines: the heartbeat uses the bounded
+`AWM_CODEX_ACTION_TIMEOUT_SECONDS` setting, defaulting to 30 seconds. The
+uncertain-outcome rule remains unchanged.
 
 ## Evidence and method
 
@@ -88,7 +90,7 @@ must not infer it from `usedPercent = 0` or `remaining = 100%` alone.
 The authorized `Hi!` turn was sent by AWM at approximately 21:38 local time.
 The next observations kept the reset at approximately 05:38 UTC rather than
 moving it forward with every poll. The exact provider response arrived after
-the local five-second request deadline, which explains the temporary
+the then-configured local five-second deadline, which explains the temporary
 `action_uncertain` event.
 
 ### D — Can AWM confirm that the desired window started?
@@ -117,8 +119,8 @@ opt-in and the uncertain-outcome safety rule remains in force.
 
 ## Follow-up hardening
 
-1. Increase or make configurable the app-server request timeout after measuring
-   the authenticated container path; do not hide an uncertain outcome.
+1. Keep the read/action timeout separation and review the bounded action value
+   if authenticated provider latency changes; do not hide an uncertain outcome.
 2. Keep `turn/completed` and the post-action observation as the confirmation
    path, with no blind retry after timeout.
 3. Repeat only when the state is naturally available; never burn quota to

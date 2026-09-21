@@ -33,7 +33,9 @@ import {
 
 const DEFAULT_STALE_AFTER_SECONDS = 300;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+const DEFAULT_ACTION_TIMEOUT_MS = 30_000;
 const MAX_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_ACTION_TIMEOUT_MS = 120_000;
 export const CODEX_TRIGGER_MESSAGE = 'Hi!';
 
 export interface CodexProviderOptions {
@@ -42,6 +44,7 @@ export interface CodexProviderOptions {
   executable?: string;
   staleAfterSeconds?: number;
   requestTimeoutMs?: number;
+  actionTimeoutMs?: number;
   triggerEnabled?: boolean;
   triggerWorkspace?: string;
   now?: () => Date;
@@ -186,6 +189,7 @@ export class CodexProvider implements ProviderAdapter {
   private readonly codexHome: string;
   private readonly staleAfterSeconds: number;
   private readonly requestTimeoutMs: number;
+  private readonly actionTimeoutMs: number;
   private readonly triggerEnabled: boolean;
   private readonly triggerWorkspace: string;
   private readonly now: () => Date;
@@ -209,6 +213,16 @@ export class CodexProvider implements ProviderAdapter {
     ) {
       throw new Error(
         `CodexProvider requestTimeoutMs must be between 1 and ${MAX_REQUEST_TIMEOUT_MS}`,
+      );
+    }
+    this.actionTimeoutMs = options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
+    if (
+      !Number.isInteger(this.actionTimeoutMs) ||
+      this.actionTimeoutMs <= 0 ||
+      this.actionTimeoutMs > MAX_ACTION_TIMEOUT_MS
+    ) {
+      throw new Error(
+        `CodexProvider actionTimeoutMs must be between 1 and ${MAX_ACTION_TIMEOUT_MS}`,
       );
     }
     this.triggerEnabled = options.triggerEnabled ?? false;
@@ -328,6 +342,7 @@ export class CodexProvider implements ProviderAdapter {
         executable: this.executable,
         codexHome: this.codexHome,
         requestTimeoutMs: this.requestTimeoutMs,
+        actionTimeoutMs: this.actionTimeoutMs,
         ...(this.spawnProcess ? { spawnProcess: this.spawnProcess } : {}),
       };
       const client = new CodexAppServerClient(clientOptions);

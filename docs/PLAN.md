@@ -22,7 +22,8 @@ non-secret provider settings and target-reset schedule forms. The bounded
 history page reads persisted events/samples and does not inspect providers.
 `CODEX-002` is implemented behind an explicit trigger gate and has passed one
 operator-authorized live `Hi!` heartbeat acceptance; production enablement
-remains explicit and timeout/confirmation hardening is still tracked. Antigravity work,
+remains explicit and the action path now has a separate bounded timeout with
+uncertain-outcome confirmation. Antigravity work,
 aggregate statistics and richer charting remain out of scope.
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
@@ -466,8 +467,8 @@ execution remains explicitly disabled by default.**
 
 ### Phase 5 — Codex opt-in action
 
-**Status: implementation and one live heartbeat acceptance complete; timeout
-confirmation hardening remains.**
+**Status: implementation and one live heartbeat acceptance complete; read/action
+timeout separation and uncertain-outcome confirmation are enforced.**
 
 **Goal**: position an inactive Codex window using one minimal legitimate normal
 request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is

@@ -37,6 +37,8 @@ export interface CodexAppServerClientOptions {
   executable: string;
   codexHome: string;
   requestTimeoutMs: number;
+  /** Timeout for each app-server stage of a quota-consuming turn. */
+  actionTimeoutMs?: number;
   spawnProcess?: CodexProcessFactory;
 }
 
@@ -148,6 +150,7 @@ export class CodexAppServerClient {
     signal?: AbortSignal,
   ): Promise<CodexTurnResult> {
     this.start();
+    const actionTimeoutMs = this.options.actionTimeoutMs ?? this.options.requestTimeoutMs;
     try {
       await this.request(
         'initialize',
@@ -160,6 +163,7 @@ export class CodexAppServerClient {
         },
         signal,
         'initialize',
+        actionTimeoutMs,
       );
       this.sendNotification('initialized', 'initialize');
 
@@ -174,6 +178,7 @@ export class CodexAppServerClient {
         },
         signal,
         'thread_start',
+        actionTimeoutMs,
       );
       const threadId = nestedString(threadResponse, 'thread', 'id');
       if (!threadId) throw new CodexTransportError('PROTOCOL_ERROR', 'thread_start');
@@ -189,6 +194,7 @@ export class CodexAppServerClient {
         },
         signal,
         'turn_start',
+        actionTimeoutMs,
       );
       const turnId = nestedString(turnResponse, 'turn', 'id');
       if (!turnId) throw new CodexTransportError('PROTOCOL_ERROR', 'turn_start');
@@ -202,6 +208,7 @@ export class CodexAppServerClient {
           return candidateThreadId === threadId && candidateTurnId === turnId;
         },
         signal,
+        actionTimeoutMs,
       );
       const completed = await completion;
       const status = nestedString(completed, 'turn', 'status');
@@ -277,6 +284,7 @@ export class CodexAppServerClient {
     params: unknown,
     signal: AbortSignal | undefined,
     stage: CodexTransportStage,
+    timeoutMs = this.options.requestTimeoutMs,
   ): Promise<unknown> {
     const child = this.process;
     if (!child) return Promise.reject(new CodexTransportError('PROCESS_ERROR', stage));
@@ -289,7 +297,7 @@ export class CodexAppServerClient {
     return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.rejectRequest(id, new CodexTransportError('TIMEOUT', stage));
-      }, this.options.requestTimeoutMs);
+      }, timeoutMs);
       const pending: PendingRequest = {
         stage,
         resolve: (value) => {
@@ -402,6 +410,7 @@ export class CodexAppServerClient {
     method: string,
     predicate: (params: unknown) => boolean,
     signal?: AbortSignal,
+    timeoutMs = this.options.requestTimeoutMs,
   ): Promise<unknown> {
     if (signal?.aborted)
       return Promise.reject(new CodexTransportError('ABORTED', 'turn_completion'));
@@ -426,7 +435,7 @@ export class CodexAppServerClient {
           waiter,
           new CodexTransportError('TIMEOUT', 'turn_completion'),
         );
-      }, this.options.requestTimeoutMs);
+      }, timeoutMs);
       const waiter: NotificationWaiter = {
         method,
         predicate,

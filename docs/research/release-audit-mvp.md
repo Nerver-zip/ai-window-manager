@@ -7,16 +7,16 @@ opt-in Codex action path.
 
 ## Executive status
 
-| Area                               | Status                                | Evidence                                                                                                                                                                |
-| ---------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OPS-001 Docker hardening           | **COMPLETE**                          | Compose config/build, healthy runtime, non-root/read-only/cap-drop/no-new-privileges inspection, restart and stop/start smoke passed.                                   |
-| OPS-002 Codex runtime              | **COMPLETE**                          | Official `rust-v0.155.1` package, architecture checksum, UID 10001 and unauthenticated app-server initialize probe passed.                                              |
-| CI-001 validation and Docker smoke | **COMPLETE locally; remote pending**  | `pnpm validate`, `actionlint`, Gitleaks and Docker checks passed locally; CI workflow now exercises Compose hardening and persistence. No new GitHub run was triggered. |
-| DOC-001 documentation              | **COMPLETE**                          | README, plan, backlog, API, deployment, persistence, security, providers, UI, testing and changelog reconciled.                                                         |
-| API contract                       | **COMPLETE**                          | Current route inventory is documented; nonexistent `PUT /api/v1/settings` was removed from the current contract; `/history` is implemented.                             |
-| Backup/restore                     | **COMPLETE for MVP runbook**          | WAL-safe stop/copy, integrity checks, schema version check and a disposable Compose restore drill passed.                                                               |
-| Dependency/security posture        | **PARTIAL**                           | Production audit is clean and Gitleaks passes; two moderate development-tool advisories remain for a future dependency upgrade.                                         |
-| MVP release classification         | **MONITOR + VALIDATED OPT-IN ACTION** | The Codex heartbeat was validated once by an operator. The action remains disabled by default; the five-second timeout/confirmation boundary is tracked.                |
+| Area                               | Status                                | Evidence                                                                                                                                                                 |
+| ---------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OPS-001 Docker hardening           | **COMPLETE**                          | Compose config/build, healthy runtime, non-root/read-only/cap-drop/no-new-privileges inspection, restart and stop/start smoke passed.                                    |
+| OPS-002 Codex runtime              | **COMPLETE**                          | Official `rust-v0.155.1` package, architecture checksum, UID 10001 and unauthenticated app-server initialize probe passed.                                               |
+| CI-001 validation and Docker smoke | **COMPLETE locally; remote pending**  | `pnpm validate`, `actionlint`, Gitleaks and Docker checks passed locally; CI workflow now exercises Compose hardening and persistence. No new GitHub run was triggered.  |
+| DOC-001 documentation              | **COMPLETE**                          | README, plan, backlog, API, deployment, persistence, security, providers, UI, testing and changelog reconciled.                                                          |
+| API contract                       | **COMPLETE**                          | Current route inventory is documented; nonexistent `PUT /api/v1/settings` was removed from the current contract; `/history` is implemented.                              |
+| Backup/restore                     | **COMPLETE for MVP runbook**          | WAL-safe stop/copy, integrity checks, schema version check and a disposable Compose restore drill passed.                                                                |
+| Dependency/security posture        | **PARTIAL**                           | Production audit is clean and Gitleaks passes; two moderate development-tool advisories remain for a future dependency upgrade.                                          |
+| MVP release classification         | **MONITOR + VALIDATED OPT-IN ACTION** | The Codex heartbeat was validated once by an operator. The action remains disabled by default; a bounded separate action timeout and confirmation boundary are enforced. |
 
 ## Validation evidence
 
@@ -122,17 +122,18 @@ The disposable project and its volumes were removed with `down --volumes`.
 The earlier unauthenticated probe initialized successfully, then reported
 `account: null`, `requiresOpenaiAuth: true`, and an authentication error for
 `account/rateLimits/read`. A later operator-authorized live run sent exactly one
-`Hi!` through AWM's official app-server path. The response exceeded the local
-five-second deadline and was recorded as `action_uncertain`; subsequent history
-observations showed the reset anchored and counting down. SPIKE-004 is therefore
-validated with a tracked timeout/confirmation risk. The trigger gate remains
-off by default.
+`Hi!` through AWM's official app-server path. The response exceeded the
+then-configured local five-second deadline and was recorded as
+`action_uncertain`; subsequent history observations showed the reset anchored
+and counting down. SPIKE-004 is therefore validated, with a bounded separate
+action timeout now enforced. The trigger gate remains off by default.
 
 ## Remaining risks
 
 - broader authenticated Codex acceptance across plans remains a documented
   manual procedure;
-- the five-second action timeout/confirmation boundary needs hardening;
+- authenticated latency may still exceed the bounded action timeout; such a
+  result remains uncertain and requires fresh observation rather than retry;
 - two moderate development-only Vitest advisories need a future dependency
   upgrade decision;
 - remote GitHub Actions for the new local commits have not been run because the
