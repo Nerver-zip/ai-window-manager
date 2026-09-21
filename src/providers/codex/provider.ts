@@ -134,8 +134,15 @@ function windowSnapshot(
     snapshot.startedAt = fact(startedAt.toISOString(), 'inferred', 'high', observedAt);
   }
   if (inferPhase && resetAt !== undefined) {
-    const phase =
-      new Date(resetAt).getTime() <= new Date(observedAt).getTime() ? 'INACTIVE' : 'ACTIVE';
+    const isResetDue = new Date(resetAt).getTime() <= new Date(observedAt).getTime();
+    let phase: WindowPhase;
+    if (window.usedPercent === 0 || isResetDue) {
+      phase = 'INACTIVE';
+    } else if (window.usedPercent >= 100) {
+      phase = 'EXHAUSTED';
+    } else {
+      phase = 'ACTIVE';
+    }
     snapshot.phase = fact(phase, 'inferred', 'high', observedAt);
   }
   return snapshot;

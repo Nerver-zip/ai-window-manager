@@ -327,6 +327,50 @@ describe('CodexProvider', () => {
     });
   });
 
+  it('infers an inactive phase when quota usage is 0 even if reset is projected in the future', async () => {
+    const response = {
+      rateLimits: {
+        primary: {
+          usedPercent: 0,
+          windowDurationMins: 300,
+          resetsAt: Math.floor(new Date('2026-09-19T17:00:00.000Z').getTime() / 1000),
+        },
+      },
+    };
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      triggerEnabled: true,
+      now: () => new Date('2026-09-19T12:00:00.000Z'),
+      spawnProcess: fakeProcessFactory(respondToHandshake(response)),
+    });
+
+    await expect(provider.inspect({})).resolves.toMatchObject({
+      windows: [{ phase: { value: 'INACTIVE', source: 'inferred', confidence: 'high' } }],
+    });
+  });
+
+  it('infers an exhausted phase when quota usage is 100% and reset is in the future', async () => {
+    const response = {
+      rateLimits: {
+        primary: {
+          usedPercent: 100,
+          windowDurationMins: 300,
+          resetsAt: Math.floor(new Date('2026-09-19T17:00:00.000Z').getTime() / 1000),
+        },
+      },
+    };
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      triggerEnabled: true,
+      now: () => new Date('2026-09-19T12:00:00.000Z'),
+      spawnProcess: fakeProcessFactory(respondToHandshake(response)),
+    });
+
+    await expect(provider.inspect({})).resolves.toMatchObject({
+      windows: [{ phase: { value: 'EXHAUSTED', source: 'inferred', confidence: 'high' } }],
+    });
+  });
+
   it('uses a safe fallback for empty bucket maps and distinguishes no-window health', async () => {
     const observation = await providerFor({
       rateLimits: { limitId: 'codex', primary: null, secondary: null },
