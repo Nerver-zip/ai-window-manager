@@ -15,6 +15,8 @@ export const PlannerReasonCode = {
   MonitoringUnavailable: 'MONITORING_UNAVAILABLE',
   ObservationStale: 'OBSERVATION_STALE',
   ObservationMissing: 'OBSERVATION_MISSING',
+  WindowPhaseConfidenceTooLow: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW',
+  WindowNotReported: 'WINDOW_NOT_REPORTED',
   CurrentWindowActive: 'CURRENT_WINDOW_ACTIVE',
   WindowDurationUnknown: 'WINDOW_DURATION_UNKNOWN',
   WindowDurationConfidenceTooLow: 'WINDOW_DURATION_CONFIDENCE_TOO_LOW',
@@ -59,12 +61,18 @@ export interface PlannerExplanation {
   policyKind: ActivationPolicy['kind'];
   timezone: string;
   currentWindow: CurrentWindowState['status'];
+  currentWindowConfidence?: CurrentWindowState['confidence'];
+  windowKind?: string;
+  phase?: WindowSnapshot['phase']['value'];
+  phaseConfidence?: WindowSnapshot['phase']['confidence'];
+  windowDurationSeconds?: number;
+  durationConfidence?: NonNullable<WindowSnapshot['durationSeconds']>['confidence'];
+  observationAgeSeconds?: number;
   anchorAt?: string;
   nextAnchorAt?: string;
   validFrom?: string;
   validUntil?: string;
   toleranceSeconds?: number;
-  windowDurationSeconds?: number;
   coverageSeconds?: number;
 }
 
@@ -97,6 +105,21 @@ export function planWindowAction(input: PlannerInput): PlannerDecision {
     policyKind: input.policy.kind,
     timezone: input.policy.timezone,
     currentWindow: input.currentWindow.status,
+    currentWindowConfidence: input.currentWindow.confidence,
+    ...(input.window
+      ? {
+          windowKind: input.window.windowKind,
+          phase: input.window.phase.value,
+          phaseConfidence: input.window.phase.confidence,
+          ...(input.window.durationSeconds
+            ? {
+                windowDurationSeconds: input.window.durationSeconds.value,
+                durationConfidence: input.window.durationSeconds.confidence,
+              }
+            : {}),
+        }
+      : {}),
+    ...(input.observation ? observationAgeSeconds(input.now, input.observation.observedAt) : {}),
   } satisfies Omit<PlannerExplanation, 'decision' | 'reasonCode'>;
 
   if (!input.policy.enabled) return none(base, PlannerReasonCode.PolicyDisabled);
@@ -113,18 +136,24 @@ export function planWindowAction(input: PlannerInput): PlannerDecision {
   if (ageSeconds > input.observation.staleAfterSeconds) {
     return wait(base, PlannerReasonCode.ObservationStale);
   }
-  if (input.currentWindow.status === 'UNAVAILABLE' || input.currentWindow.status === 'UNKNOWN') {
+  if (input.currentWindow.status === 'UNAVAILABLE') {
     return wait(base, PlannerReasonCode.MonitoringUnavailable);
+  }
+  if (input.currentWindow.status === 'UNKNOWN') {
+    return wait(
+      base,
+      input.currentWindow.reason === 'WINDOW_STATE_UNCERTAIN'
+        ? PlannerReasonCode.WindowPhaseConfidenceTooLow
+        : input.currentWindow.reason === 'WINDOW_NOT_REPORTED'
+          ? PlannerReasonCode.WindowNotReported
+          : PlannerReasonCode.MonitoringUnavailable,
+    );
   }
 
   if (input.policy.kind === 'auto') return planAuto(input, base);
   if (input.policy.kind === 'fixed') return planFixed(input, base, input.policy);
   if (input.policy.kind === 'custom_schedule') return planCustom(input, base, input.policy);
-  return planActiveHours(
-    input,
-    base,
-    input.policy as Extract<ActivationPolicy, { kind: 'active_hours' }>,
-  );
+  return planActiveHours(input, base, input.policy);
 }
 
 export function upcomingSchedule(
@@ -152,11 +181,7 @@ export function upcomingSchedule(
       reasonCode: PlannerReasonCode.ScheduledAnchor,
     }));
   }
-  return activeHourStarts(
-    policy as Extract<ActivationPolicy, { kind: 'active_hours' }>,
-    now,
-    count,
-  ).map((at) => ({
+  return activeHourStarts(policy, now, count).map((at) => ({
     at: at.toISOString(),
     kind: 'start' as const,
     label: 'Available hours begin',
@@ -360,8 +385,11 @@ function fixedAnchors(
   durationSeconds: number,
   count: number,
 ): Date[] {
-  const [first] = fixedCandidate(policy, now, durationSeconds);
+  let [first] = fixedCandidate(policy, now, durationSeconds);
   const intervalMs = durationSeconds * 1000;
+  if (first.getTime() < now.getTime()) {
+    first = new Date(first.getTime() + intervalMs);
+  }
   return Array.from(
     { length: count },
     (_, index) => new Date(first.getTime() + index * intervalMs),
@@ -499,6 +527,17 @@ function durationConfidenceOk(window: WindowSnapshot | undefined): boolean {
   return Boolean(
     window?.durationSeconds && ACTIONABLE_CONFIDENCE.has(window.durationSeconds.confidence),
   );
+}
+
+function observationAgeSeconds(
+  now: Date,
+  observedAt: string,
+): { observationAgeSeconds: number } | object {
+  const observedAtMs = Date.parse(observedAt);
+  if (!Number.isFinite(observedAtMs)) return {};
+  return {
+    observationAgeSeconds: Math.max(0, Math.floor((now.getTime() - observedAtMs) / 1000)),
+  };
 }
 
 function hasPendingEquivalent(

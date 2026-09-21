@@ -403,4 +403,86 @@ describe('Reconciler', () => {
     expect(firstFailureCount).toBeGreaterThan(0);
     expect(secondFailureCount).toBe(firstFailureCount);
   });
+
+  it('does not execute legacy scheduling alongside the activation policy', async () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('test provider missing');
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-fake',
+      providerId: 'fake',
+      kind: 'manual',
+      enabled: true,
+      timezone: 'UTC',
+      config: {},
+      createdAtMs: provider.createdAtMs,
+      updatedAtMs: provider.updatedAtMs,
+    });
+
+    const report = await context.reconciler().reconcile();
+    expect(report.decisions).toHaveLength(1);
+    expect(report.decisions[0]?.policyId).toBe('activation-fake');
+    expect(report.decisions[0]?.decision).toMatchObject({ reasonCode: 'MANUAL_POLICY' });
+    expect(context.repositories.actionIntents.listOpen()).toHaveLength(0);
+  });
+
+  it('records a reset for the affected window even when another window stays active', async () => {
+    const context = setup();
+    context.repositories.schedulePolicies.delete('policy-1');
+    let inspection = 0;
+    const makeObservation = (
+      primaryPhase: 'ACTIVE' | 'INACTIVE',
+      weeklyPhase: 'ACTIVE' | 'INACTIVE',
+    ): ProviderObservation => {
+      const observedAt = context.clock.now().toISOString();
+      const makeWindow = (windowKind: string, phase: 'ACTIVE' | 'INACTIVE') => ({
+        providerId: 'fake',
+        windowKind,
+        observedAt,
+        phase: {
+          value: phase,
+          source: 'observed' as const,
+          confidence: 'exact' as const,
+          observedAt,
+        },
+        durationSeconds: {
+          value: 18_000,
+          source: 'official_supported' as const,
+          confidence: 'exact' as const,
+          observedAt,
+        },
+      });
+      return {
+        providerId: 'fake',
+        health: 'UP',
+        observedAt,
+        staleAfterSeconds: 300,
+        windows: [makeWindow('primary', primaryPhase), makeWindow('weekly', weeklyPhase)],
+      };
+    };
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: () =>
+        Promise.resolve(
+          inspection++ === 0
+            ? makeObservation('ACTIVE', 'ACTIVE')
+            : makeObservation('INACTIVE', 'ACTIVE'),
+        ),
+    };
+    const service = context.reconciler({ adapters: new Map([['fake', adapter]]) });
+    await service.reconcile();
+    context.clock.advanceMs(61_000);
+    await service.reconcile();
+
+    expect(
+      context.repositories.events
+        .list('fake')
+        .filter((event) => event.type === 'unexpected_reset_detected'),
+    ).toEqual([
+      expect.objectContaining({
+        reasonCode: 'UNEXPECTED_WINDOW_RESET',
+        data: { windowKind: 'primary', retainedForScheduling: true },
+      }),
+    ]);
+  });
 });

@@ -20,7 +20,10 @@ const BaseSchema = z.object({
 
 export const ActivationPolicySchema = z.discriminatedUnion('kind', [
   BaseSchema.extend({ kind: z.literal('manual') }),
-  BaseSchema.extend({ kind: z.literal('auto') }),
+  BaseSchema.extend({
+    kind: z.literal('auto'),
+    windowKind: z.string().min(1).max(64).optional(),
+  }),
   BaseSchema.extend({
     kind: z.literal('fixed'),
     windowKind: z.string().min(1).max(64),
@@ -97,8 +100,23 @@ export function activationPolicyFromRecord(
     updatedAtMs: record.updatedAtMs,
   };
 
-  if (record.kind === 'manual' || record.kind === 'auto') {
-    return parseActivationPolicy({ ...base, kind: record.kind });
+  if (record.kind === 'manual') {
+    return parseActivationPolicy({ ...base, kind: 'manual' });
+  }
+
+  if (record.kind === 'auto') {
+    const windowKind = stringValue(config.windowKind);
+    const value: {
+      id: string;
+      providerId: string;
+      enabled: boolean;
+      timezone: string;
+      updatedAtMs: number;
+      kind: 'auto';
+      windowKind?: string;
+    } = { ...base, kind: 'auto' };
+    if (windowKind) value.windowKind = windowKind;
+    return parseActivationPolicy(value);
   }
 
   if (record.kind === 'fixed' || record.kind === 'target_reset') {

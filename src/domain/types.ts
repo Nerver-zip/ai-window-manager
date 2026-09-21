@@ -45,9 +45,18 @@ export type ActivationPolicy =
   | {
       id: string;
       providerId: string;
-      kind: 'manual' | 'auto';
+      kind: 'manual';
       enabled: boolean;
       timezone: string;
+      updatedAtMs: number;
+    }
+  | {
+      id: string;
+      providerId: string;
+      kind: 'auto';
+      enabled: boolean;
+      timezone: string;
+      windowKind?: string | undefined;
       updatedAtMs: number;
     }
   | {

@@ -121,6 +121,10 @@ describe('activation policies', () => {
     const record = (kind: string, config: unknown) => ({ ...base, kind, config });
     expect(activationPolicyFromRecord(record('manual', {}))).toMatchObject({ kind: 'manual' });
     expect(activationPolicyFromRecord(record('auto', {}))).toMatchObject({ kind: 'auto' });
+    expect(activationPolicyFromRecord(record('auto', { windowKind: 'weekly' }))).toMatchObject({
+      kind: 'auto',
+      windowKind: 'weekly',
+    });
     expect(
       activationPolicyFromRecord(
         record('target_reset', { targetResetLocalTime: '08:00', toleranceSeconds: 30 }),

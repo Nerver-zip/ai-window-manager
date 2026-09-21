@@ -129,7 +129,18 @@ export class Reconciler {
       if (!adapter) continue;
       if (inspectionFailed || !state?.observation || state.health !== 'UP') continue;
 
-      for (const policy of this.input.repositories.schedulePolicies.list(provider.id)) {
+      const policies = this.input.repositories.schedulePolicies.list(provider.id);
+      const hasActivationPolicy = policies.some(
+        (candidate) => candidate.id === `activation-${provider.id}`,
+      );
+      for (const policy of policies) {
+        if (
+          hasActivationPolicy &&
+          (policy.kind === 'target_reset' || policy.kind === 'work_window') &&
+          policy.id !== `activation-${provider.id}`
+        ) {
+          continue;
+        }
         if (!policy.enabled && policy.kind === 'target_reset') continue;
         if (policy.kind === 'target_reset') {
           const result = this.planLegacyTargetReset(provider, policy, state, adapter, now, nowMs);
@@ -161,7 +172,12 @@ export class Reconciler {
           now,
           providerId: provider.id,
           policy: activationPolicy,
-          currentWindow: deriveCurrentWindow(provider.id, state.observation, state.health),
+          currentWindow: deriveCurrentWindow(
+            provider.id,
+            state.observation,
+            state.health,
+            window?.windowKind,
+          ),
           ...(window ? { window } : {}),
           observation: {
             observedAt: state.observation.observedAt,
@@ -358,33 +374,42 @@ export class Reconciler {
           windowKinds: observation.windows.map((window) => window.windowKind),
         },
       });
-      const previousWindow = deriveCurrentWindow(
-        provider.id,
-        previousState?.observation,
-        previousState?.health,
-      );
-      const currentWindow = deriveCurrentWindow(provider.id, observation, observation.health);
-      if (previousWindow.status === 'ACTIVE' && currentWindow.status === 'INACTIVE') {
-        this.input.repositories.events.append({
-          occurredAtMs: nowMs,
-          providerId: provider.id,
-          type: 'unexpected_reset_detected',
-          severity: 'warn',
-          reasonCode: 'UNEXPECTED_WINDOW_RESET',
-          data: {
-            windowKind: currentWindow.windowKind ?? previousWindow.windowKind ?? null,
-            retainedForScheduling: true,
-          },
-        });
-      } else if (previousWindow.status === 'INACTIVE' && currentWindow.status === 'ACTIVE') {
-        this.input.repositories.events.append({
-          occurredAtMs: nowMs,
-          providerId: provider.id,
-          type: 'external_window_started',
-          severity: 'info',
-          reasonCode: 'EXTERNAL_WINDOW_STARTED',
-          data: { windowKind: currentWindow.windowKind ?? null },
-        });
+      const windowKinds = new Set([
+        ...(previousState?.observation?.windows.map((window) => window.windowKind) ?? []),
+        ...observation.windows.map((window) => window.windowKind),
+      ]);
+      for (const windowKind of windowKinds) {
+        const previousWindow = deriveCurrentWindow(
+          provider.id,
+          previousState?.observation,
+          previousState?.health,
+          windowKind,
+        );
+        const currentWindow = deriveCurrentWindow(
+          provider.id,
+          observation,
+          observation.health,
+          windowKind,
+        );
+        if (previousWindow.status === 'ACTIVE' && currentWindow.status === 'INACTIVE') {
+          this.input.repositories.events.append({
+            occurredAtMs: nowMs,
+            providerId: provider.id,
+            type: 'unexpected_reset_detected',
+            severity: 'warn',
+            reasonCode: 'UNEXPECTED_WINDOW_RESET',
+            data: { windowKind, retainedForScheduling: true },
+          });
+        } else if (previousWindow.status === 'INACTIVE' && currentWindow.status === 'ACTIVE') {
+          this.input.repositories.events.append({
+            occurredAtMs: nowMs,
+            providerId: provider.id,
+            type: 'external_window_started',
+            severity: 'info',
+            reasonCode: 'EXTERNAL_WINDOW_STARTED',
+            data: { windowKind },
+          });
+        }
       }
     });
 
@@ -522,13 +547,9 @@ function safeActivationPolicy(policy: SchedulePolicyRecord) {
 function activationPolicyWindowKind(
   policy: ReturnType<typeof activationPolicyFromRecord>,
 ): string | undefined {
-  if (!policy || policy.kind === 'manual' || policy.kind === 'auto') return undefined;
-  return (
-    policy as Exclude<
-      NonNullable<ReturnType<typeof activationPolicyFromRecord>>,
-      { kind: 'manual' | 'auto' }
-    >
-  ).windowKind;
+  if (!policy || policy.kind === 'manual') return undefined;
+  if (policy.kind === 'auto') return policy.windowKind;
+  return policy.windowKind;
 }
 
 function selectWindow(

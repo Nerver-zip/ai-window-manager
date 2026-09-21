@@ -16,7 +16,10 @@ Stable reasons currently include `TARGET_RESET_WINDOW_MATCH`,
 `TRIGGER_CAPABILITY_UNAVAILABLE`, `AUTOMATION_DISABLED`, `POLICY_DISABLED`,
 `MANUAL_POLICY`, `MONITORING_UNAVAILABLE`, `CURRENT_WINDOW_ACTIVE`,
 `SCHEDULED_ANCHOR`, `ANCHOR_NOT_DUE`, `ANCHOR_EXPIRED`,
-`ACTION_ALREADY_PENDING`, `ACTIVE_HOURS_COVERAGE` and `ACTIVE_HOURS_TOO_SHORT`.
+`ACTION_ALREADY_PENDING`, `ACTIVE_HOURS_COVERAGE`, `ACTIVE_HOURS_TOO_SHORT` and
+`WINDOW_NOT_REPORTED`. Phase confidence is also retained in the explanation,
+so a low-confidence observed phase is not presented as an ordinary monitoring
+failure.
 
 ## Activation policies
 
@@ -24,7 +27,9 @@ Runtime policies are stored in SQLite and interpreted with the selected IANA
 timezone:
 
 - `manual`: observe only; never create an automatic start intent;
-- `auto`: start when the provider is inactive, fresh and safely triggerable;
+- `auto`: start when the selected provider window is inactive, fresh and safely
+  triggerable; an optional window kind scopes the decision when a provider reports
+  more than one quota window;
 - `fixed`: repeat one local anchor using the observed window duration;
 - `custom_schedule`: evaluate a bounded list of local times;
 - `active_hours`: start only while enough time remains in a configured local
@@ -33,6 +38,9 @@ timezone:
 The observed current window is a separate fact from the activation policy. The
 UI/API can therefore show `Active`, `Inactive`, `Unknown` or `Monitoring
 unavailable` without interpreting that state as a schedule instruction.
+When a policy selects a specific window kind, current-window derivation is scoped
+to that window; an active weekly window cannot incorrectly suppress a scheduled
+five-hour start.
 
 ## Modes in the MVP
 

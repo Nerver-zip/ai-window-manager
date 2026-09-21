@@ -55,13 +55,16 @@ window keys such as `codex_primary` never appear as normal labels.
 - upcoming occurrences and the authoritative next decision/reason;
 - manual `Trigger now` only when capability/automation mode permits.
 
-The current server-rendered `/schedule` page asks for a provider, a human-readable
-usage window, a local reset time, timezone and timing tolerance. It previews the
-planned start and explains daylight-saving adjustments without exposing the
-stored window key. `/settings` edits monitoring state, automatic-action mode and
-refresh interval. Both forms contain a CSRF token; invalid or unsupported values
-are rejected before SQLite writes. Secrets and provider-owned auth state are
-never editable or rendered.
+The current server-rendered `/schedule` page separates factual current-window
+state from the activation policy. It offers whenever-possible, regular-cycle,
+specific-time, active-hours and never-automatically choices, revealing only the
+fields relevant to the selected policy. Fixed-cycle previews use one local anchor
+and the observed window duration; custom schedules use explicit local times; all
+scheduled choices show the persisted account timezone and timing tolerance without
+exposing the stored window key. `/settings` edits monitoring state, automatic-action
+mode, refresh interval and the account timezone. Both forms contain a CSRF token;
+invalid or unsupported values are rejected before SQLite writes. Secrets and
+provider-owned auth state are never editable or rendered.
 
 ## Provider settings
 

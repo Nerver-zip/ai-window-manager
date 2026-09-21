@@ -182,6 +182,18 @@ describe('planWindowAction', () => {
         }),
       ),
     ).toMatchObject({ kind: 'WAIT', reasonCode: PlannerReasonCode.WindowDurationConfidenceTooLow });
+    expect(
+      planWindowAction(
+        input({
+          currentWindow: {
+            ...inactive,
+            status: 'UNKNOWN',
+            confidence: 'medium',
+            reason: 'WINDOW_STATE_UNCERTAIN',
+          },
+        }),
+      ),
+    ).toMatchObject({ kind: 'WAIT', reasonCode: PlannerReasonCode.WindowPhaseConfidenceTooLow });
   });
 
   it.each([
@@ -200,7 +212,18 @@ describe('planWindowAction', () => {
       PlannerReasonCode.AnchorExpired,
     ],
   ] as const)('fixed policy %s', (_label, instant, kind, reasonCode) => {
-    expect(planWindowAction(input({ now: instant }))).toMatchObject({ kind, reasonCode });
+    const decision = planWindowAction(input({ now: instant }));
+    expect(decision).toMatchObject({ kind, reasonCode });
+    expect(decision.explanation).toMatchObject({
+      providerId: 'fake',
+      policyId: 'policy-1',
+      windowKind: 'five_hour',
+      phase: 'INACTIVE',
+      phaseConfidence: 'exact',
+      windowDurationSeconds: 18_000,
+      durationConfidence: 'exact',
+    });
+    expect(Number.isInteger(decision.explanation.observationAgeSeconds)).toBe(true);
   });
 
   it('skips a fixed anchor when the window is already active', () => {
@@ -299,6 +322,9 @@ describe('upcomingSchedule', () => {
 
   it('previews fixed, custom and active-hour starts', () => {
     expect(upcomingSchedule(policy(), now, 18_000, 2)).toHaveLength(2);
+    expect(upcomingSchedule(policy(), new Date('2026-09-19T08:00:01.000Z'), 18_000, 1)[0]?.at).toBe(
+      '2026-09-19T13:00:00.000Z',
+    );
     expect(
       upcomingSchedule(
         policy({ kind: 'custom_schedule', times: ['08:00', '18:00'] }),

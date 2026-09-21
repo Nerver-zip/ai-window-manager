@@ -108,6 +108,93 @@ function reconciler(context: IntegrationContext): Reconciler {
 }
 
 describe('activation policy integration', () => {
+  it('executes one planned fixed activation through ActionExecutor and observes it active', async () => {
+    const context = createContext('fixed', {
+      windowKind: 'five_hour',
+      anchorLocalTime: '08:00',
+      toleranceSeconds: 30,
+    });
+    const service = reconciler(context);
+    await service.reconcile();
+    context.clock.advanceMs(60_000);
+    await service.reconcile();
+
+    const executor = new ActionExecutor({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.adapter]]),
+    });
+    const report = await executor.executeDue();
+
+    expect(report.confirmedIntentIds).toEqual(['planned-intent']);
+    expect(context.triggerCount).toBe(1);
+    expect(context.repositories.actionIntents.get('planned-intent')).toMatchObject({
+      state: 'confirmed',
+    });
+    expect((await context.fake.inspect({})).windows[0]?.phase.value).toBe('ACTIVE');
+
+    context.clock.advanceMs(1_000);
+    await service.reconcile();
+    expect(context.repositories.actionIntents.get('planned-intent')).toMatchObject({
+      state: 'confirmed',
+    });
+    expect(context.triggerCount).toBe(1);
+  });
+
+  it('does not dispatch a planned activation when a manual window appears first', async () => {
+    const context = createContext('fixed', {
+      windowKind: 'five_hour',
+      anchorLocalTime: '08:00',
+      toleranceSeconds: 30,
+    });
+    context.clock.advanceMs(60_000);
+    await reconciler(context).reconcile();
+    context.fake.setPhase('ACTIVE');
+
+    const executor = new ActionExecutor({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.adapter]]),
+    });
+    const report = await executor.executeDue();
+
+    expect(report.skippedIntentIds).toEqual(['planned-intent']);
+    expect(context.repositories.actionIntents.get('planned-intent')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: ActionReasonCode.AlreadySatisfied,
+    });
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('starts an inactive window for Auto and then waits after observation confirms Active', async () => {
+    const context = createContext('auto', { windowKind: 'five_hour' });
+    const service = reconciler(context);
+    const planned = await service.reconcile();
+    expect(planned.createdIntentIds).toEqual(['planned-intent']);
+
+    const executor = new ActionExecutor({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.adapter]]),
+    });
+    await executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+
+    context.clock.advanceMs(31_000);
+    const next = await service.reconcile();
+    expect(next.createdIntentIds).toEqual([]);
+    expect(next.decisions[0]?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'CURRENT_WINDOW_ACTIVE',
+    });
+    expect(context.repositories.actionIntents.get('planned-intent')).toMatchObject({
+      state: 'confirmed',
+    });
+  });
+
   it.each([
     [
       'fixed',

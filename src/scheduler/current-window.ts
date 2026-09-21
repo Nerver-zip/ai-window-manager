@@ -12,6 +12,7 @@ export function deriveCurrentWindow(
   providerId: string,
   observation: ProviderObservation | null | undefined,
   health?: ProviderHealth,
+  preferredWindowKind?: string,
 ): CurrentWindowState {
   if (
     !observation ||
@@ -28,12 +29,26 @@ export function deriveCurrentWindow(
     };
   }
 
-  const active = observation.windows.find(
+  const windows = preferredWindowKind
+    ? observation.windows.filter((window) => window.windowKind === preferredWindowKind)
+    : observation.windows;
+  if (preferredWindowKind && windows.length === 0) {
+    return {
+      providerId,
+      status: 'UNKNOWN',
+      windowKind: preferredWindowKind,
+      observedAt: observation.observedAt,
+      confidence: 'unknown',
+      reason: 'WINDOW_NOT_REPORTED',
+    };
+  }
+
+  const active = windows.find(
     (window) => window.phase.value === 'ACTIVE' && actionable(window.phase.confidence),
   );
   if (active) return activeState(providerId, active, observation.observedAt);
 
-  const inactive = observation.windows.find(
+  const inactive = windows.find(
     (window) => window.phase.value === 'INACTIVE' && actionable(window.phase.confidence),
   );
   if (inactive) {
@@ -46,7 +61,7 @@ export function deriveCurrentWindow(
     };
   }
 
-  const first = observation.windows[0];
+  const first = windows[0];
   return {
     providerId,
     status: 'UNKNOWN',

@@ -111,7 +111,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         `<option value="${value}"${kind === value ? ' selected' : ''}>${label}</option>`,
     )
     .join('');
-  const windowControl = renderWindowControl(selectedProvider, selectedWindowKind);
+  const windowControl = renderWindowControl(selectedProvider, selectedWindowKind ?? 'five_hour');
   const tolerance = policy && 'toleranceSeconds' in policy ? policy.toleranceSeconds : 15 * 60;
   const anchor = policy?.kind === 'fixed' ? policy.anchorLocalTime : '18:00';
   const customTimes = policy?.kind === 'custom_schedule' ? policy.times : ['08:00', '18:00'];

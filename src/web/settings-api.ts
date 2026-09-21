@@ -168,7 +168,11 @@ export function updateActivationPolicy(
   if (!timezone || !isValidTimeZone(timezone)) {
     return failure(400, 'TIMEZONE_REQUIRED', 'choose a valid time zone before saving this policy');
   }
-  if (parsed.data.timezone) {
+  const timezoneChanged = Boolean(
+    parsed.data.timezone &&
+    (!existingTimezone || parsed.data.timezone !== existingTimezone.timezone),
+  );
+  if (timezoneChanged) {
     const timezoneResult = updateTimezoneSetting(input, {
       timezone: parsed.data.timezone,
       source: 'manual',
@@ -256,7 +260,7 @@ export function updateActivationPolicy(
       policy,
       timezone: {
         timezone,
-        source: parsed.data.timezone ? 'manual' : (existingTimezone?.source ?? 'detected'),
+        source: timezoneChanged ? 'manual' : (existingTimezone?.source ?? 'detected'),
       },
     },
   };

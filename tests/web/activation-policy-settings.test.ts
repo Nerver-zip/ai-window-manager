@@ -226,6 +226,31 @@ describe('activation policy settings persistence', () => {
     });
   });
 
+  it('keeps a detected timezone detected when the policy form submits it unchanged', () => {
+    const context = setup();
+    const input = settingsInput(context);
+    expect(
+      updateTimezoneSetting(input, { timezone: 'America/Sao_Paulo', source: 'detected' }),
+    ).toMatchObject({ ok: true });
+    const eventsBefore = context.repositories.events.list().length;
+
+    expect(
+      updateActivationPolicy(input, {
+        kind: 'manual',
+        enabled: true,
+        providerId: 'fake',
+        timezone: 'America/Sao_Paulo',
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { timezone: { timezone: 'America/Sao_Paulo', source: 'detected' } },
+    });
+    expect(context.repositories.events.list()).toHaveLength(eventsBefore + 1);
+    expect(
+      context.repositories.events.list().filter((event) => event.type === 'timezone_updated'),
+    ).toHaveLength(1);
+  });
+
   it('rejects invalid timezone, unsupported tolerance, overlapping periods, and unknown provider', async () => {
     const context = setup();
     const input = settingsInput(context);

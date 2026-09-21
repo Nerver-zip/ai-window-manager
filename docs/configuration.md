@@ -25,7 +25,7 @@ The UI/API changes non-secret product behavior in DB:
 - providers enabled/disabled;
 - monitor-only vs automation mode;
 - polling intervals within safe bounds;
-- target reset / work-period schedules;
+- activation policies (manual, auto, fixed-cycle, custom times or active hours);
 - retention settings;
 - provider non-secret options.
 

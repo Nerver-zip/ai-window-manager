@@ -142,6 +142,38 @@ describe('readScheduling', () => {
     expect(result.providers[0]?.upcoming.length).toBeGreaterThan(0);
   });
 
+  it('scopes current-window state and planning to the policy window', () => {
+    const context = setup();
+    const at = context.clock.now().getTime();
+    const current = observation();
+    current.windows.push({
+      ...current.windows[0]!,
+      windowKind: 'weekly',
+      phase: { ...current.windows[0]!.phase, value: 'ACTIVE' },
+    });
+    seedState(context.repositories, current);
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-fake',
+      providerId: 'fake',
+      kind: 'fixed',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'five_hour', anchorLocalTime: '08:00', toleranceSeconds: 30 },
+      createdAtMs: at,
+      updatedAtMs: at,
+    });
+    const result = readScheduling({
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.fake]]),
+      clock: context.clock,
+    });
+    expect(result.providers[0]?.currentWindow).toMatchObject({
+      status: 'INACTIVE',
+      windowKind: 'five_hour',
+    });
+    expect(result.providers[0]?.decision).toMatchObject({ kind: 'START' });
+  });
+
   it('fails closed for malformed policies and capability failures', () => {
     const context = setup();
     const at = context.clock.now().getTime();

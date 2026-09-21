@@ -47,10 +47,15 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
         ? safePolicy(policyRecord, timezone?.timezone ?? policyRecord.timezone)
         : null;
       const observation = state?.observation;
-      const currentWindow = deriveCurrentWindow(provider.id, observation, state?.health);
       const adapter = input.adapters.get(provider.id);
       const windowKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
       const window = observation ? selectWindow(observation.windows, windowKind) : undefined;
+      const currentWindow = deriveCurrentWindow(
+        provider.id,
+        observation,
+        state?.health,
+        windowKind,
+      );
       const decision =
         policy && adapter && observation && state?.health === 'UP'
           ? safeDecision({

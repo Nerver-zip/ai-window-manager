@@ -78,6 +78,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   WINDOW_NOT_INACTIVE: 'The current window is still active.',
   OBSERVATION_STALE: 'The saved data is too old to safely plan an action.',
   OBSERVATION_MISSING: 'Waiting for the first valid provider update.',
+  WINDOW_NOT_REPORTED: 'The selected usage window was not reported by the provider.',
   TRIGGER_CAPABILITY_UNAVAILABLE: 'Automatic action is unavailable for this provider.',
   AUTOMATION_DISABLED: 'Monitoring is enabled, but automatic actions are turned off.',
   POLICY_DISABLED: 'This activation policy is turned off.',

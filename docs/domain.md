@@ -136,7 +136,9 @@ Trigger quota consumption is always explicit. Unsupported or unknown provider op
 - `ProviderState`: current health plus the most recent normalized observation.
 - `WindowSample`: historical normalized sample.
 - `Event`: append-only operational/history event.
-- `SchedulePolicy`: target reset / desired work window / manual mode.
+- `SchedulePolicy`: manual, auto, fixed-cycle, custom-time or active-hours
+  activation preference. Legacy target-reset/work-window records remain readable
+  for compatibility until an activation policy replaces them.
 - `ActionIntent`: durable side-effect intention with dedupe key and lifecycle.
 - `RuntimeSetting`: UI-owned mutable, non-secret configuration.
 

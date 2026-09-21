@@ -111,6 +111,40 @@ describe('deriveCurrentWindow', () => {
     });
   });
 
+  it('derives state from the selected window instead of another reported window', () => {
+    const primary = window({
+      windowKind: 'primary',
+      phase: { value: 'INACTIVE', source: 'observed', confidence: 'exact', observedAt },
+    });
+    const weekly = window({
+      windowKind: 'weekly',
+      phase: { value: 'ACTIVE', source: 'observed', confidence: 'exact', observedAt },
+    });
+
+    expect(
+      deriveCurrentWindow('fake', observation([primary, weekly]), undefined, 'primary'),
+    ).toMatchObject({
+      status: 'INACTIVE',
+      windowKind: 'primary',
+    });
+    expect(
+      deriveCurrentWindow('fake', observation([primary, weekly]), undefined, 'weekly'),
+    ).toMatchObject({
+      status: 'ACTIVE',
+      windowKind: 'weekly',
+    });
+  });
+
+  it('fails closed when the selected window is not reported', () => {
+    expect(deriveCurrentWindow('fake', observation([window()]), undefined, 'weekly')).toMatchObject(
+      {
+        status: 'UNKNOWN',
+        windowKind: 'weekly',
+        reason: 'WINDOW_NOT_REPORTED',
+      },
+    );
+  });
+
   it('does not turn uncertain or exhausted evidence into a confident state', () => {
     const uncertain = window({
       phase: { value: 'ACTIVE', source: 'inferred', confidence: 'medium', observedAt },
