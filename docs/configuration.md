@@ -11,7 +11,8 @@ Environment/.env/Compose controls process/container concerns:
 - log level;
 - data/secret/provider-home paths;
 - migration/startup behavior;
-- initial timezone/defaults **only when the DB is empty**;
+- initial provider/policy defaults (including `AWM_TIMEZONE`) **only when the
+  DB is empty**;
 - feature flags needed before DB access.
 
 These generally require restart.
@@ -47,7 +48,9 @@ SQLite runtime settings = authority afterward
 Changing `AWM_TIMEZONE` after DB initialization does not silently override a UI-configured timezone. A documented admin reset/import operation is required to re-bootstrap.
 
 The `/settings` and `/schedule` forms are the runtime configuration path for
-non-secret provider polling and target-reset policy fields. Their writes are
+non-secret provider polling, timezone and activation-policy fields. A browser
+may offer its IANA timezone on first use; a manual choice is then authoritative
+and is never silently overwritten by later browser detection. Their writes are
 validated before persistence and signal the next reconcile; environment values
 remain bootstrap/process configuration and do not override existing SQLite
 settings.

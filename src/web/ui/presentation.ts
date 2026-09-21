@@ -62,6 +62,10 @@ const EVENT_LABELS: Readonly<Record<string, string>> = {
   scheduler_noop: 'Scheduling update',
   settings_changed: 'Settings updated',
   schedule_changed: 'Schedule updated',
+  unexpected_reset_detected: 'Reset detected',
+  external_window_started: 'Window started outside the app',
+  timezone_updated: 'Time zone updated',
+  schedule_policy_invalid: 'Schedule needs attention',
 };
 
 const REASON_LABELS: Readonly<Record<string, string>> = {
@@ -76,6 +80,20 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   OBSERVATION_MISSING: 'Waiting for the first valid provider update.',
   TRIGGER_CAPABILITY_UNAVAILABLE: 'Automatic action is unavailable for this provider.',
   AUTOMATION_DISABLED: 'Monitoring is enabled, but automatic actions are turned off.',
+  POLICY_DISABLED: 'This activation policy is turned off.',
+  MANUAL_POLICY: 'New windows are started only by you.',
+  MONITORING_UNAVAILABLE: 'Provider monitoring is unavailable.',
+  CURRENT_WINDOW_ACTIVE: 'A usage window is already active.',
+  SCHEDULED_ANCHOR: 'A scheduled activation time is ready.',
+  ANCHOR_NOT_DUE: 'The next scheduled activation time has not arrived.',
+  ANCHOR_SKIPPED_ACTIVE_WINDOW: 'A window was already active at the scheduled time.',
+  ANCHOR_EXPIRED: 'The scheduled activation time has passed.',
+  NEXT_ANCHOR: 'Waiting for the next scheduled activation time.',
+  ACTION_ALREADY_PENDING: 'An activation is already waiting for this schedule.',
+  ACTIVE_HOURS_COVERAGE: 'The active-hours period has enough time remaining.',
+  ACTIVE_HOURS_TOO_SHORT: 'There is not enough active time left to start a full window.',
+  AUTO_WINDOW_AVAILABLE: 'The provider is ready for an automatic activation.',
+  INVALID_ACTIVATION_POLICY: 'The saved activation policy needs attention.',
 };
 
 const ERROR_LABELS: Readonly<Record<string, string>> = {

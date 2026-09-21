@@ -55,7 +55,7 @@ The FakeProvider supports deterministic scenario fixtures:
 - succeeded/rejected/failed/uncertain trigger responses;
 - reset transitions.
 
-A 30-second fake window is appropriate for manual UI development, while tests should use FakeClock and advance instantly.
+The FakeProvider is opt-in for manual UI development (`AWM_FAKE_PROVIDER_ENABLED=true`). Keep it disabled in a normal workspace; tests should use FakeClock and advance instantly.
 
 ## Provider fixtures
 

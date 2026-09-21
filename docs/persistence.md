@@ -97,6 +97,8 @@ The forward-only schema currently consists of:
 
 - `migrations/001_initial.sql` for the base current-state/history tables;
 - `migrations/002_window_fact_evidence.sql` for provenance columns on every persisted window fact, including phase.
+- `migrations/003_activation_policies.sql` for the explicit manual/auto/fixed/
+  custom-schedule/active-hours policy model and its compatibility migration.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys
@@ -112,7 +114,8 @@ creation uses a transaction plus the database `UNIQUE(dedupe_key)` constraint.
 The reconciler writes a successful normalized observation, all of its window
 samples and a bounded inspection event together. Inspection failures update
 health/error metadata while retaining the previous normalized observation; no
-fabricated empty observation replaces last-known-good state.
+fabricated empty observation replaces last-known-good state. Policy updates are
+append-audited separately and do not rewrite observation history.
 
 The server-rendered history view queries events by UTC range in bounded pages
 of 20 using the event timestamp index/order; pagination changes the read window

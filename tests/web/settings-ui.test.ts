@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   previewTargetReset,
+  renderActivationSchedulePage,
   renderSchedulePage,
   renderSettingsPage,
   renderSchedulePreview,
 } from '../../src/web/settings-ui.js';
+import { APP_JS } from '../../src/web/ui/chart-interactions.js';
 import type { ProviderCapabilities, WindowSnapshot } from '../../src/domain/types.js';
 
 const csrfToken = 'csrf-token-for-test';
@@ -50,6 +52,57 @@ describe('settings UI helpers', () => {
     expect(html).toContain('value="false" selected');
     expect(html).toContain('value="automation" selected');
     expect(html).toContain('What this provider supports');
+  });
+
+  it('renders human activation controls with hidden policy fields disabled', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'America/Sao_Paulo',
+        windowKind: 'five_hour',
+        anchorLocalTime: '18:00',
+        toleranceSeconds: 900,
+        updatedAtMs: Date.parse('2026-09-19T12:00:00.000Z'),
+      },
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+      currentWindow: {
+        providerId: 'fake',
+        status: 'INACTIVE',
+        windowKind: 'five_hour',
+        observedAt: '2026-09-19T15:00:00.000Z',
+        confidence: 'exact',
+      },
+    });
+
+    expect(html).toContain('Current window');
+    expect(html).toContain('Anchor time');
+    expect(html).toContain('data-policy-fields="custom_schedule" hidden');
+    expect(html).toContain('data-policy-fields="custom_schedule" hidden aria-hidden="true"');
+    expect(html).toMatch(/<input disabled[^>]*name="times"/);
+    expect(html).not.toContain('reasonCode');
+    expect(html).not.toContain('exact confidence');
+    expect(html).toContain('High confidence');
+    expect(html).toContain('What happens next');
+  });
+
+  it('ships progressive policy and one-time timezone detection behavior', () => {
+    expect(APP_JS).toContain('[data-policy-form]');
+    expect(APP_JS).toContain('control.disabled = !active');
+    expect(APP_JS).toContain('Intl.DateTimeFormat().resolvedOptions().timeZone');
+    expect(APP_JS).toContain("input.dataset.timezoneAutoDetect !== 'true'");
+    expect(APP_JS).toContain("source.value = 'detected'");
+
+    const manualSettings = renderSettingsPage({
+      csrfToken,
+      providers: [],
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+    });
+    expect(manualSettings).toContain('data-timezone-auto-detect="false"');
   });
 
   it('renders only safe fields with hidden CSRF inputs and escaped values', () => {

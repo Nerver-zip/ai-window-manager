@@ -161,7 +161,10 @@ export function updateActivationPolicy(
   const provider = input.repositories.providers.get(parsed.data.providerId);
   if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
   const existingTimezone = readTimezoneSetting(input);
-  const timezone = parsed.data.timezone ?? existingTimezone?.timezone;
+  const existingPolicy = input.repositories.schedulePolicies
+    .list(parsed.data.providerId)
+    .find((candidate) => candidate.id === `activation-${parsed.data.providerId}`);
+  const timezone = parsed.data.timezone ?? existingTimezone?.timezone ?? existingPolicy?.timezone;
   if (!timezone || !isValidTimeZone(timezone)) {
     return failure(400, 'TIMEZONE_REQUIRED', 'choose a valid time zone before saving this policy');
   }
@@ -220,15 +223,24 @@ export function updateActivationPolicy(
     createdAtMs: previous?.createdAtMs ?? nowMs,
     updatedAtMs: nowMs,
   };
-  const policy = parseActivationPolicy({
-    id: record.id,
-    providerId: record.providerId,
-    kind: record.kind,
-    enabled: record.enabled,
-    timezone: record.timezone,
-    updatedAtMs: record.updatedAtMs,
-    ...config,
-  });
+  let policy: ActivationPolicy;
+  try {
+    policy = parseActivationPolicy({
+      id: record.id,
+      providerId: record.providerId,
+      kind: record.kind,
+      enabled: record.enabled,
+      timezone: record.timezone,
+      updatedAtMs: record.updatedAtMs,
+      ...config,
+    });
+  } catch (error) {
+    return failure(
+      400,
+      'INVALID_POLICY',
+      error instanceof Error ? error.message : 'activation policy is invalid',
+    );
+  }
   input.repositories.schedulePolicies.upsert(record);
   input.repositories.events.append({
     occurredAtMs: nowMs,

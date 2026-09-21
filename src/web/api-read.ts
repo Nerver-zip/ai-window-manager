@@ -5,11 +5,13 @@ import {
   UtcInstantSchema,
 } from '../domain/schemas.js';
 import type {
+  CurrentWindowState,
   Fact,
   ProviderCapabilities,
   ProviderObservation,
   WindowSnapshot,
 } from '../domain/types.js';
+import { deriveCurrentWindow } from '../scheduler/current-window.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import type {
@@ -201,6 +203,7 @@ export interface ProviderDto {
   health: ProviderStateRecord['health'] | 'UNKNOWN';
   lastErrorCode: string | null;
   observation: ProviderObservationDto | null;
+  currentWindow: CurrentWindowState;
   windows: WindowSnapshotDto[];
   freshness: FreshnessDto;
   capabilities?: ProviderCapabilities;
@@ -335,6 +338,7 @@ function readProviderDto(
 ): ProviderDto {
   const state = input.repositories.providerState.get(provider.id);
   const observation = state?.observation ? observationDto(state.observation) : null;
+  const currentWindow = deriveCurrentWindow(provider.id, state?.observation, state?.health);
   const decision = readDecision(input, provider.id);
   const adapter = input.adapters?.get(provider.id);
   const capabilities = adapter ? safeCapabilities(adapter) : undefined;
@@ -347,6 +351,7 @@ function readProviderDto(
     health: state?.health ?? 'UNKNOWN',
     lastErrorCode: state?.lastErrorCode ?? null,
     observation,
+    currentWindow,
     windows: observation?.windows ?? [],
     freshness: freshness(state, nowMs),
     ...(capabilities ? { capabilities } : {}),

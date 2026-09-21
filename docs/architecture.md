@@ -55,7 +55,7 @@ reconciler tick
   -> due adapter inspection
   -> canonical observation validation
   -> provider_state + window_samples + event
-  -> pure target-reset decision
+  -> pure activation-policy decision
   -> deduplicated planned action_intent
   -> persisted overview/API read model
 ```
@@ -72,7 +72,7 @@ planned intent
 ```
 
 HTTP handlers do not inspect providers or dispatch actions. Settings and
-target-reset forms validate non-secret values and persist them in SQLite; all
+activation-policy forms validate non-secret values and persist them in SQLite; all
 mutations require same-origin Origin and double-submit CSRF proof.
 
 ## Reconciler over durable timers

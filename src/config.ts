@@ -13,7 +13,7 @@ const envSchema = z.object({
     .default('America/Sao_Paulo'),
   AWM_FAKE_PROVIDER_ENABLED: z
     .enum(['true', 'false'])
-    .default('true')
+    .default('false')
     .transform((value) => value === 'true'),
   AWM_CODEX_ENABLED: z
     .enum(['true', 'false'])

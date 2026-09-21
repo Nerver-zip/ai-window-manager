@@ -2,17 +2,37 @@
 
 The scheduler is a deterministic policy engine wrapped by a periodic reconciler.
 
-The implemented pure entry point is `decideTargetReset`. It receives the
-current instant, provider/policy IDs, target reset, selected normalized window,
-observation freshness, trigger capability and automation eligibility. It returns
-either `noop` or `create_intent` plus a JSON-serializable explanation. It never
-reads the system clock, provider transport or database.
+The implemented pure entry point is `planWindowAction`. It receives the current
+instant, provider/policy IDs, selected normalized window, current observed
+window state, observation freshness, trigger capability and automation
+eligibility. It returns a deterministic `START`, `WAIT`, `SKIP` or `NONE`
+decision plus a JSON-serializable explanation. It never reads the system clock,
+provider transport or database.
 
 Stable reasons currently include `TARGET_RESET_WINDOW_MATCH`,
 `TARGET_NOT_DUE`, `TARGET_MISSED`, `WINDOW_DURATION_UNKNOWN`,
 `WINDOW_DURATION_CONFIDENCE_TOO_LOW`, `WINDOW_PHASE_CONFIDENCE_TOO_LOW`,
 `WINDOW_NOT_INACTIVE`, `OBSERVATION_STALE`, `OBSERVATION_MISSING`,
-`TRIGGER_CAPABILITY_UNAVAILABLE` and `AUTOMATION_DISABLED`.
+`TRIGGER_CAPABILITY_UNAVAILABLE`, `AUTOMATION_DISABLED`, `POLICY_DISABLED`,
+`MANUAL_POLICY`, `MONITORING_UNAVAILABLE`, `CURRENT_WINDOW_ACTIVE`,
+`SCHEDULED_ANCHOR`, `ANCHOR_NOT_DUE`, `ANCHOR_EXPIRED`,
+`ACTION_ALREADY_PENDING`, `ACTIVE_HOURS_COVERAGE` and `ACTIVE_HOURS_TOO_SHORT`.
+
+## Activation policies
+
+Runtime policies are stored in SQLite and interpreted with the selected IANA
+timezone:
+
+- `manual`: observe only; never create an automatic start intent;
+- `auto`: start when the provider is inactive, fresh and safely triggerable;
+- `fixed`: repeat one local anchor using the observed window duration;
+- `custom_schedule`: evaluate a bounded list of local times;
+- `active_hours`: start only while enough time remains in a configured local
+  period to cover a full window.
+
+The observed current window is a separate fact from the activation policy. The
+UI/API can therefore show `Active`, `Inactive`, `Unknown` or `Monitoring
+unavailable` without interpreting that state as a schedule instruction.
 
 ## Modes in the MVP
 
@@ -51,17 +71,14 @@ No ML/LLM is involved.
 Default every 30s:
 
 1. read wall clock + monotonic clock;
-2. load provider configs/schedules/current state/open intents;
-3. inspect providers whose poll is due;
-4. normalize and persist observations/events;
-5. recover/resolve stale `executing`/`uncertain` intents;
-6. call pure `decideSchedule()` per provider;
-7. persist proposed action intent with unique dedupe key;
-8. if automation is enabled, preflight re-inspect;
-9. atomically claim intent;
-10. execute provider action once;
-11. persist result;
-12. perform confirmation inspection and update result to confirmed/uncertain.
+2. load provider configs, policies, current state and open intents;
+3. inspect providers whose persisted poll interval is due;
+4. validate and persist observations, samples and events;
+5. derive current-window state and preserve last-known-good data on failure;
+6. resolve the next policy occurrence and call pure `planWindowAction()`;
+7. persist a proposed intent with a unique provider/policy/cycle dedupe key;
+8. the separate action executor handles only due intents and performs its own
+   preflight, claim, dispatch and confirmation lifecycle.
 
 ## Dedupe key
 

@@ -3,7 +3,12 @@ import { renderAppShell } from './ui/layout.js';
 import { APP_CSS } from './ui/styles.js';
 import { APP_JS } from './ui/chart-interactions.js';
 import type { AppConfig } from '../config.js';
-import type { ProviderCapabilities, ProviderObservation, WindowSnapshot } from '../domain/types.js';
+import type {
+  CurrentWindowState,
+  ProviderCapabilities,
+  ProviderObservation,
+  WindowSnapshot,
+} from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SqliteDatabase } from '../storage/database.js';
@@ -25,6 +30,7 @@ import {
   updateTimezoneSetting,
 } from './settings-api.js';
 import { readScheduling } from './scheduling-api.js';
+import { deriveCurrentWindow } from '../scheduler/current-window.js';
 import {
   renderActivationSchedulePage,
   renderSettingsPage as renderSettingsUiPage,
@@ -124,6 +130,7 @@ interface ProviderRead {
   health: ProviderHealthRead;
   lastErrorCode: string | null;
   observation: ProviderObservation | null;
+  currentWindow: CurrentWindowState;
   windows: WindowSnapshot[];
   freshness: FreshnessRead;
   capabilities?: ProviderCapabilities;
@@ -421,9 +428,17 @@ function bodyCsrfToken(body: unknown): string | undefined {
   return typeof token === 'string' ? token : undefined;
 }
 
-function parseFormBody(body: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const [key, value] of new URLSearchParams(body)) values[key] = value;
+function parseFormBody(body: string): Record<string, string | string[]> {
+  const values: Record<string, string | string[]> = {};
+  for (const [key, value] of new URLSearchParams(body)) {
+    const previous = values[key];
+    values[key] =
+      previous === undefined
+        ? value
+        : Array.isArray(previous)
+          ? [...previous, value]
+          : [previous, value];
+  }
   return values;
 }
 
@@ -527,7 +542,9 @@ function queryMessage(query: unknown): string | null {
     ? 'Provider settings saved.'
     : value === 'schedule'
       ? 'Schedule saved.'
-      : null;
+      : value === 'timezone'
+        ? 'Time zone saved.'
+        : null;
 }
 
 function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] {
@@ -563,6 +580,7 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
       health: state?.health ?? 'UNKNOWN',
       lastErrorCode: state?.lastErrorCode ?? null,
       observation,
+      currentWindow: deriveCurrentWindow(provider.id, observation, state?.health),
       windows: observation?.windows ?? [],
       freshness: freshness(state, nowMs),
       ...(capabilities ? { capabilities } : {}),
@@ -726,7 +744,59 @@ function renderProviderCard(provider: ProviderRead, now: Date): string {
 
   const displayName = providerDisplayName(provider.id, provider.kind);
   const monitoringState = provider.enabled ? 'Monitoring enabled' : 'Monitoring paused';
-  return `<article class="provider${staleClass}"><header class="provider-header"><div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(monitoringState)}</p></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(healthLabel(provider.health))}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">This information is out of date. Automatic planning is paused until a fresh update arrives.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Sign-in is required in the official provider client.</p>' : ''}<details><summary>Connection details</summary><dl><dt>Status</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>${windows}${decision}</article>`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(monitoringState)}</p></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(healthLabel(provider.health))}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">This information is out of date. Automatic planning is paused until a fresh update arrives.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Sign-in is required in the official provider client.</p>' : ''}<section class="current-window-read" aria-labelledby="current-window-${escapeHtml(provider.id)}"><div><p class="eyebrow">OBSERVED STATE</p><h3 id="current-window-${escapeHtml(provider.id)}">Current window</h3><strong class="current-window-status">${escapeHtml(currentWindowLabel(provider.currentWindow.status))}</strong><p class="provider-meta">${escapeHtml(currentWindowDetail(provider, displayName))}</p></div>${provider.currentWindow.expectedEndAt ? `<p class="provider-meta"><span>Expected end</span><br><time datetime="${escapeHtml(provider.currentWindow.expectedEndAt.value)}">${escapeHtml(formatUtc(provider.currentWindow.expectedEndAt.value))}</time></p>` : ''}</section>${provider.currentWindow.reason ? `<p class="stale-notice">${escapeHtml(currentWindowReason(provider.currentWindow.reason))}</p>` : ''}<details><summary>Connection details</summary><dl><dt>Status</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>${windows}${decision}</article>`;
+}
+
+function currentWindowLabel(status: CurrentWindowState['status']): string {
+  switch (status) {
+    case 'ACTIVE':
+      return 'Active';
+    case 'INACTIVE':
+      return 'Inactive';
+    case 'UNKNOWN':
+      return 'Not available yet';
+    case 'UNAVAILABLE':
+      return 'Monitoring unavailable';
+  }
+}
+
+function currentWindowDetail(provider: ProviderRead, displayName: string): string {
+  const current = provider.currentWindow;
+  if (!current.windowKind) return `${displayName} has not reported a window yet.`;
+  const window = provider.windows.find((candidate) => candidate.windowKind === current.windowKind);
+  return (
+    windowDisplayName(provider.id, current.windowKind, window?.durationSeconds?.value) +
+    ` · ${current.confidence === 'exact' ? 'high confidence' : current.confidence === 'high' ? 'good confidence' : 'limited confidence'}`
+  );
+}
+
+function currentWindowReason(reason: string): string {
+  switch (reason) {
+    case 'AUTH_REQUIRED':
+      return 'Sign-in is required before a current window can be confirmed.';
+    case 'MONITORING_UNAVAILABLE':
+      return 'The last saved window remains available, but it is not safe to use for automatic planning.';
+    case 'WINDOW_STATE_UNCERTAIN':
+      return 'The provider reported information that is not reliable enough to classify the current window.';
+    case 'NO_WINDOW_REPORTED':
+      return 'The provider has not reported a usage window yet.';
+    default:
+      return 'The current window could not be confirmed.';
+  }
+}
+
+function formatUtc(value: string): string {
+  try {
+    return (
+      new Intl.DateTimeFormat('en', {
+        timeZone: 'UTC',
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(value)) + ' UTC'
+    );
+  } catch {
+    return value;
+  }
 }
 
 function decisionDescription(reason: string | null): string {

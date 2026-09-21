@@ -522,7 +522,7 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [ ] Antigravity is available as monitor-only **only if** official-CLI auth/inspection is proven; otherwise it is explicitly `UNAVAILABLE/AUTH_REQUIRED` with no hack.
 - [ ] no Antigravity trigger ships without resolved semantics/compliance evidence.
 - [ ] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
-- [ ] target-reset schedule works; work-period recommendation is simple/deterministic or clearly deferred to v1.x.
+- [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.
 - [ ] duplicate trigger protection is enforced by DB uniqueness + action lifecycle tests.
 - [ ] restart/uncertain trigger recovery is tested.
 - [ ] missed action during downtime is skipped/recorded by default.

@@ -39,13 +39,21 @@ and action-intent records. Opening `/` or `/api/v1/providers` does not call a
 provider adapter. A provider with no persisted observation renders health,
 freshness and window facts as `unknown` rather than fabricated zeroes.
 
+Each provider card also shows the factual current-window state separately from
+the activation policy: active/inactive, expected end when available, confidence,
+freshness and a plain-language reason when monitoring is unavailable. Technical
+window keys such as `codex_primary` never appear as normal labels.
+
 ## Schedule
 
-- desired reset local time;
-- desired work period;
-- recommendation explanation;
-- manual `Trigger now` only when capability/automation mode permits;
-- next action + reason.
+- current observed window;
+- manual, whenever-possible, regular-cycle, specific-time and active-hours
+  activation choices;
+- an IANA timezone with first-use browser detection and an explicit manual
+  override;
+- add/remove controls for custom times and active-hour periods;
+- upcoming occurrences and the authoritative next decision/reason;
+- manual `Trigger now` only when capability/automation mode permits.
 
 The current server-rendered `/schedule` page asks for a provider, a human-readable
 usage window, a local reset time, timezone and timing tolerance. It previews the

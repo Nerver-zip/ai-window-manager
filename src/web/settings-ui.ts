@@ -114,13 +114,13 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const windowControl = renderWindowControl(selectedProvider, selectedWindowKind);
   const tolerance = policy && 'toleranceSeconds' in policy ? policy.toleranceSeconds : 15 * 60;
   const anchor = policy?.kind === 'fixed' ? policy.anchorLocalTime : '18:00';
-  const customTimes = policy?.kind === 'custom_schedule' ? policy.times.join(', ') : '08:00, 18:00';
+  const customTimes = policy?.kind === 'custom_schedule' ? policy.times : ['08:00', '18:00'];
   const activePeriods =
     policy?.kind === 'active_hours'
-      ? policy.periods.map((period) => `${period.start}-${period.end}`).join(', ')
-      : '08:00-12:00, 18:00-00:00';
+      ? policy.periods.map((period) => `${period.start}-${period.end}`)
+      : ['08:00-12:00', '18:00-00:00'];
   const timezoneText = timezone
-    ? `${timezone} · ${input.timezone?.source === 'detected' ? 'Detected automatically' : 'Saved setting'}`
+    ? `${timezone} · ${input.timezone?.source === 'detected' ? 'Detected automatically' : input.timezone ? 'Saved setting' : 'Initial default'}`
     : 'Choose a time zone in Settings before enabling a time-based policy.';
 
   return renderAppShell({
@@ -130,26 +130,27 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
       <section class="card current-window-summary" aria-labelledby="current-window-title">
         <div class="card-header"><div class="heading-copy"><p class="eyebrow">Observed state</p><h2 id="current-window-title">Current window</h2><p class="muted">This is what the provider reports now. It is monitored independently from your activation policy.</p></div></div>
-        ${renderCurrentWindowSummary(currentWindow, selectedProvider)}
+        ${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}
       </section>
       <section class="card" aria-labelledby="activation-policy-title">
-        <div class="card-header"><div class="heading-copy"><p class="eyebrow">User intent</p><h2 id="activation-policy-title">Automatic window activation</h2><p class="muted">Your policy guides the planner. Every automatic start still goes through the safe action checks.</p></div></div>
+        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">Automatic window activation</h2><p class="muted">Choose when a new window may start. Safety checks still apply before anything happens.</p></div></div>
         <form method="post" action="/schedule" data-policy-form>
           ${csrfInput(csrfToken)}
+          <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
           <div class="form-grid">
             ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose the provider this policy controls.', 'activation-policy-provider-help')}
-            ${renderField('activation-policy-kind', 'Activation policy', `<select id="activation-policy-kind" name="policyKind" data-policy-kind required>${policyOptionsHtml}</select>`, 'Choose what you want the application to do, not how the scheduler works internally.', 'activation-policy-kind-help')}
+            ${renderField('activation-policy-kind', 'How should new windows start?', `<select id="activation-policy-kind" name="policyKind" data-policy-kind required>${policyOptionsHtml}</select>`, 'Choose a simple schedule preference. You can change it without changing the current window.', 'activation-policy-kind-help')}
           </div>
           <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change in Settings</a></p>
-          <div class="policy-fields" data-policy-fields="auto"${kind === 'auto' ? '' : ' hidden'}>${renderPolicyWindowField(windowControl, 'auto-window')}</div>
-          <div class="policy-fields" data-policy-fields="fixed"${kind === 'fixed' ? '' : ' hidden'}><div class="form-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Anchor time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60">`, 'The local time used as the reference point for the repeating cycle.', 'fixed-anchor-help')}${renderField('fixed-tolerance', 'Tolerance', `<input id="fixed-tolerance" name="toleranceSeconds" type="number" min="0" max="3600" value="${tolerance}" step="60">`, 'How late the application may be and still use this anchor. It never starts early.', 'fixed-tolerance-help')}</div></div>
-          <div class="policy-fields" data-policy-fields="custom_schedule"${kind === 'custom_schedule' ? '' : ' hidden'}><div class="form-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderField('custom-times', 'Scheduled times', `<input id="custom-times" name="times" value="${escapeAttribute(customTimes)}" placeholder="08:00, 18:00">`, 'Use local times separated by commas. Duplicate times are not allowed.', 'custom-times-help')}${renderField('custom-tolerance', 'Tolerance', `<input id="custom-tolerance" name="toleranceSeconds" type="number" min="0" max="3600" value="${tolerance}" step="60">`, 'How late the application may be and still use a selected time.', 'custom-tolerance-help')}</div></div>
-          <div class="policy-fields" data-policy-fields="active_hours"${kind === 'active_hours' ? '' : ' hidden'}><div class="form-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderField('active-hours-periods', 'Active hours', `<input id="active-hours-periods" name="periods" value="${escapeAttribute(activePeriods)}" placeholder="08:00-12:00, 18:00-00:00">`, 'Use local ranges separated by commas. A range may cross midnight.', 'active-hours-periods-help')}</div><p class="field-help">The planner avoids starting a full window when too little useful coverage remains.</p></div>
-          <div class="policy-fields" data-policy-fields="manual"${kind === 'manual' ? '' : ' hidden'}><p class="notice">No automatic starts. Monitoring continues and you can use the existing manual action flow when needed.</p></div>
+          ${renderPolicyFields('auto', kind === 'auto', renderPolicyWindowField(windowControl, 'auto-window'))}
+          ${renderPolicyFields('fixed', kind === 'fixed', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Anchor time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60">`, 'The local time used as the reference point for the repeating cycle.', 'fixed-anchor-help')}${renderField('fixed-tolerance', 'Tolerance', `<input id="fixed-tolerance" name="toleranceSeconds" type="number" min="0" max="3600" value="${tolerance}" step="60">`, 'How late the application may be and still use this anchor. It never starts early.', 'fixed-tolerance-help')}</div>`)}
+          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderPolicyListField('custom-times', 'Scheduled times', 'times', customTimes, 'time', 'Use local times. Add or remove entries as needed.', 'custom-times-help')}${renderField('custom-tolerance', 'Tolerance', `<input id="custom-tolerance" name="toleranceSeconds" type="number" min="0" max="3600" value="${tolerance}" step="60">`, 'How late the application may be and still use a selected time.', 'custom-tolerance-help')}</div>`)}
+          ${renderPolicyFields('active_hours', kind === 'active_hours', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderPolicyListField('active-hours-periods', 'Active hours', 'periods', activePeriods, 'period', 'Use local ranges such as 08:00-12:00. Add or remove periods as needed.', 'active-hours-periods-help')}</div><p class="field-help">The application avoids starting a full window when too little useful coverage remains.</p>`)}
+          ${renderPolicyFields('manual', kind === 'manual', '<p class="notice">No automatic starts. Monitoring continues, but new windows are started only by you.</p>')}
           <div class="form-actions"><button type="submit">Save activation policy</button></div>
         </form>
       </section>
-      <section class="card" aria-labelledby="upcoming-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Planner preview</p><h2 id="upcoming-title">Upcoming</h2><p class="muted">This is generated by the same planner used by reconciliation.</p></div></div>${renderPlannerPreview(upcoming, decision, timezone)}</section>
+      <section class="card" aria-labelledby="upcoming-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">What happens next</p><h2 id="upcoming-title">Upcoming</h2><p class="muted">Based on your saved preference and the latest provider update.</p></div></div>${renderPlannerPreview(upcoming, decision, timezone)}</section>
     </div>`,
   });
 }
@@ -157,6 +158,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
 function renderCurrentWindowSummary(
   currentWindow: CurrentWindowState | undefined,
   provider: SettingsProviderView | undefined,
+  timeZone: string,
 ): string {
   if (!currentWindow)
     return '<p class="empty-state">Select a provider to see the current observed window.</p>';
@@ -166,9 +168,12 @@ function renderCurrentWindowSummary(
       ? 'Monitoring unavailable'
       : currentWindow.status[0] + currentWindow.status.slice(1).toLowerCase();
   const details = currentWindow.expectedEndAt
-    ? `<p class="muted">Expected end <time datetime="${escapeAttribute(currentWindow.expectedEndAt.value)}">${escapeHtml(currentWindow.expectedEndAt.value)}</time></p>`
-    : '<p class="muted">Expected end not available yet.</p>';
-  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(currentWindow.windowKind ? windowDisplayName(label, currentWindow.windowKind) : 'No window selected')} · ${escapeHtml(currentWindow.confidence)} confidence</p></div>${details}</div>`;
+    ? `<p class="muted"><span>Expected reset</span><br><time datetime="${escapeAttribute(currentWindow.expectedEndAt.value)}">${escapeHtml(formatReadableInstant(currentWindow.expectedEndAt.value, timeZone))}</time></p>`
+    : '<p class="muted">Expected reset is not available yet.</p>';
+  const windowLabel = currentWindow.windowKind
+    ? windowDisplayName(provider?.id ?? '', currentWindow.windowKind)
+    : 'No window selected';
+  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(windowLabel)} · ${escapeHtml(confidenceDisplay(currentWindow.confidence))}</p></div>${details}</div>`;
 }
 
 function renderPlannerPreview(
@@ -177,7 +182,7 @@ function renderPlannerPreview(
   timezone: string,
 ): string {
   const decisionText = decision
-    ? `<div class="notice"><strong>${escapeHtml(decisionLabel(decision.kind))}</strong><span class="muted">${escapeHtml(decision.reasonCode.replaceAll('_', ' ').toLowerCase())}</span></div>`
+    ? `<div class="notice"><strong>${escapeHtml(decisionLabel(decision.kind))}</strong><span class="muted">${escapeHtml(plannerReasonLabel(decision.reasonCode))}</span></div>`
     : '<div class="notice"><strong>Waiting for an observation</strong><span class="muted">The planner will show a decision after the provider is checked.</span></div>';
   const items = upcoming.length
     ? `<ol class="upcoming-list">${upcoming.map((item) => `<li><time datetime="${escapeAttribute(item.at)}">${escapeHtml(formatUpcomingTime(item.at, timezone))}</time><span>${escapeHtml(item.label)}</span></li>`).join('')}</ol>`
@@ -185,16 +190,103 @@ function renderPlannerPreview(
   return `${decisionText}${items}`;
 }
 
+function renderPolicyFields(kind: string, active: boolean, content: string): string {
+  const state = active ? '' : ' hidden aria-hidden="true"';
+  return `<div class="policy-fields" data-policy-fields="${escapeAttribute(kind)}"${state}>${active ? content : disableFormControls(content)}</div>`;
+}
+
+function disableFormControls(content: string): string {
+  return content.replace(/<(input|select|textarea|button)(\s|>)/g, '<$1 disabled$2');
+}
+
+function renderPolicyListField(
+  id: string,
+  label: string,
+  name: string,
+  values: readonly string[],
+  kind: 'time' | 'period',
+  help: string,
+  helpId: string,
+): string {
+  const items = values.length ? values : [''];
+  return `<div class="field dynamic-list-field"><span class="field-label">${escapeHtml(label)}</span><div id="${escapeAttribute(id)}" class="dynamic-list" data-schedule-list data-list-name="${escapeAttribute(name)}" data-list-kind="${kind}" aria-describedby="${escapeAttribute(helpId)}">${items.map((value, index) => renderPolicyListItem(id, name, kind, value, index)).join('')}<button class="button button-secondary dynamic-list-add" type="button" data-list-add>Add another</button><span class="field-help" id="${escapeAttribute(helpId)}">${escapeHtml(help)}</span></div></div>`;
+}
+
+function renderPolicyListItem(
+  id: string,
+  name: string,
+  kind: 'time' | 'period',
+  value: string,
+  index: number,
+): string {
+  const label = kind === 'time' ? `Time ${index + 1}` : `Period ${index + 1}`;
+  const type = kind === 'time' ? 'time' : 'text';
+  const placeholder = kind === 'time' ? '' : '08:00-12:00';
+  return `<div class="dynamic-list-item" data-list-item><label for="${escapeAttribute(`${id}-${index}`)}">${escapeHtml(label)}<input id="${escapeAttribute(`${id}-${index}`)}" name="${escapeAttribute(name)}" type="${type}" value="${escapeAttribute(value)}"${placeholder ? ` placeholder="${placeholder}"` : ''} required data-list-value></label><button class="button button-secondary dynamic-list-remove" type="button" data-list-remove>Remove</button></div>`;
+}
+
 function renderPolicyWindowField(control: string, idPrefix: string): string {
   return renderField(
     `${idPrefix}-kind`,
     'Usage window',
     control
-      .replace('schedule-window-kind', `${idPrefix}-kind`)
-      .replace('name="windowKind"', 'name="windowKind"'),
+      .replaceAll('schedule-window-kind-help', `${idPrefix}-help`)
+      .replaceAll('schedule-window-kind', `${idPrefix}-kind`),
     'Choose the provider window this policy should cover.',
     `${idPrefix}-help`,
   );
+}
+
+function plannerReasonLabel(reasonCode: string): string {
+  const labels: Record<string, string> = {
+    POLICY_DISABLED: 'Automatic starts are turned off.',
+    MANUAL_POLICY: 'New windows are started only by you.',
+    AUTOMATION_DISABLED: 'Monitoring continues, but automatic starts are turned off.',
+    TRIGGER_CAPABILITY_UNAVAILABLE: 'This provider cannot start a window automatically.',
+    MONITORING_UNAVAILABLE: 'Provider monitoring is unavailable.',
+    OBSERVATION_STALE: 'The latest provider update is too old to plan safely.',
+    OBSERVATION_MISSING: 'Waiting for the first valid provider update.',
+    CURRENT_WINDOW_ACTIVE: 'A window is already active.',
+    WINDOW_DURATION_UNKNOWN: 'The window duration is not available yet.',
+    WINDOW_DURATION_CONFIDENCE_TOO_LOW: 'The window duration is not reliable enough yet.',
+    SCHEDULED_ANCHOR: 'The scheduled time is ready.',
+    ANCHOR_NOT_DUE: 'The next scheduled time has not arrived.',
+    ANCHOR_SKIPPED_ACTIVE_WINDOW: 'A window was already active at that scheduled time.',
+    ANCHOR_EXPIRED: 'The scheduled time was missed; waiting for the next one.',
+    NEXT_ANCHOR: 'Waiting for the next scheduled time.',
+    ACTION_ALREADY_PENDING: 'An automatic start is already safely waiting.',
+    ACTIVE_HOURS_COVERAGE: 'The current active period has enough time remaining.',
+    ACTIVE_HOURS_TOO_SHORT: 'There is not enough time left in this active period.',
+    AUTO_WINDOW_AVAILABLE: 'The provider is ready for a safe automatic start.',
+  };
+  return labels[reasonCode] ?? 'No additional explanation is available.';
+}
+
+function confidenceDisplay(confidence: CurrentWindowState['confidence']): string {
+  switch (confidence) {
+    case 'exact':
+      return 'High confidence';
+    case 'high':
+      return 'Good confidence';
+    case 'medium':
+      return 'Limited confidence';
+    case 'low':
+      return 'Low confidence';
+    default:
+      return 'Not available';
+  }
+}
+
+function formatReadableInstant(value: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en', {
+      timeZone: timeZone || 'UTC',
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
 function decisionLabel(kind: PlannerDecision['kind']): string {

@@ -127,7 +127,18 @@ async function shutdown(signal: string): Promise<void> {
 }
 
 function registerFakeProvider(): void {
-  if (!config.AWM_FAKE_PROVIDER_ENABLED) return;
+  if (!config.AWM_FAKE_PROVIDER_ENABLED) {
+    const existing = repositories.providers.get('fake');
+    if (existing?.enabled) {
+      repositories.providers.upsert({
+        ...existing,
+        enabled: false,
+        mode: 'monitor_only',
+        updatedAtMs: clock.now().getTime(),
+      });
+    }
+    return;
+  }
   const provider = new FakeProvider(clock);
   adapters.set(provider.id, provider);
   seedProvider({
@@ -169,10 +180,6 @@ function seedProvider(input: { id: string; kind: string; config: unknown }): voi
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
     });
-  }
-  if (!repositories.settings.get('timezone')) {
-    repositories.settings.set('timezone', config.AWM_TIMEZONE, nowMs);
-    repositories.settings.set('timezone_source', 'manual', nowMs);
   }
   if (repositories.schedulePolicies.list(input.id).length === 0) {
     const policy: SchedulePolicyRecord = {

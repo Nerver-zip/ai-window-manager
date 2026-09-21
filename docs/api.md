@@ -16,16 +16,22 @@ GET  /api/v1/providers
 GET  /api/v1/providers/:id
 GET  /api/v1/history?provider=&type=&from=&to=&limit=
 GET  /api/v1/settings
+GET  /api/v1/scheduling
 POST /api/v1/providers/:id/trigger
 POST /api/v1/providers/:id/inspect
+POST /api/v1/settings/timezone
+POST /api/v1/scheduling
 ```
 
 The current implementation also serves `POST /settings/providers/:id` and
 `POST /schedule` for the server-rendered settings UI. Both are same-origin and
 CSRF protected. The read endpoints return persisted state only; they do not
-inspect providers or execute intents. Trigger requests create a durable intent
-and return `202`, while inspect requests append a reconcile hint and return
-`202`.
+inspect providers or execute intents. `/api/v1/providers` includes normalized
+windows, freshness, capabilities, current-window state and the latest
+persisted scheduler decision. `/api/v1/scheduling` exposes the persisted
+timezone, activation policy, current window, upcoming occurrences and planner
+decision without provider I/O. Trigger requests create a durable intent and
+return `202`, while inspect requests append a reconcile hint and return `202`.
 
 Notes:
 
@@ -42,6 +48,9 @@ Current HTML mutation routes are:
 POST /settings/providers/:id
 POST /schedule
 ```
+
+The JSON settings routes accept only validated non-secret timezone and
+activation-policy fields. They use the same SQLite services as the HTML forms.
 
 They require a same-origin request and a CSRF token, return `303` on success,
 and write only validated non-secret SQLite configuration. Invalid input returns
