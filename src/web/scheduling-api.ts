@@ -38,11 +38,9 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
     timezone: timezone ?? null,
     providers: input.repositories.providers.list().map((provider) => {
       const state = input.repositories.providerState.get(provider.id);
-      const policyRecord =
-        input.repositories.schedulePolicies
-          .list(provider.id)
-          .find((candidate) => candidate.id === `activation-${provider.id}`) ??
-        input.repositories.schedulePolicies.list(provider.id)[0];
+      const policyRecord = input.repositories.schedulePolicies
+        .list(provider.id)
+        .find((candidate) => candidate.id === `activation-${provider.id}`);
       const policy = policyRecord
         ? safePolicy(policyRecord, timezone?.timezone ?? policyRecord.timezone)
         : null;

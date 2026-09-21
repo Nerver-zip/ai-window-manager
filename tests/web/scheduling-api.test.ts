@@ -142,6 +142,34 @@ describe('readScheduling', () => {
     expect(result.providers[0]?.upcoming.length).toBeGreaterThan(0);
   });
 
+  it('does not reinterpret a legacy target-reset record as an activation policy', () => {
+    const context = setup();
+    const at = context.clock.now().getTime();
+    seedState(context.repositories);
+    context.repositories.schedulePolicies.upsert({
+      id: 'legacy-target-reset',
+      providerId: 'fake',
+      kind: 'target_reset',
+      enabled: true,
+      timezone: 'UTC',
+      config: { targetResetLocalTime: '13:00', toleranceSeconds: 30 },
+      createdAtMs: at,
+      updatedAtMs: at,
+    });
+
+    const result = readScheduling({
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.fake]]),
+      clock: context.clock,
+    });
+
+    expect(result.providers[0]).toMatchObject({
+      policy: null,
+      decision: null,
+      upcoming: [],
+    });
+  });
+
   it('scopes current-window state and planning to the policy window', () => {
     const context = setup();
     const at = context.clock.now().getTime();

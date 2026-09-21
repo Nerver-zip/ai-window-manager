@@ -42,6 +42,12 @@ When a policy selects a specific window kind, current-window derivation is scope
 to that window; an active weekly window cannot incorrectly suppress a scheduled
 five-hour start.
 
+Legacy `target_reset` and `work_window` records remain readable and are handled
+by the compatibility path in the reconciler. The activation schedule API only
+loads the explicit `activation-${providerId}` record; it never converts a legacy
+reset target into an activation anchor because those two local times have
+different meanings.
+
 ## Modes in the MVP
 
 ### Manual

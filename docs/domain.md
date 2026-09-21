@@ -138,7 +138,9 @@ Trigger quota consumption is always explicit. Unsupported or unknown provider op
 - `Event`: append-only operational/history event.
 - `SchedulePolicy`: manual, auto, fixed-cycle, custom-time or active-hours
   activation preference. Legacy target-reset/work-window records remain readable
-  for compatibility until an activation policy replaces them.
+  and executable by the compatibility reconciler until an activation policy
+  replaces them. The activation read model does not reinterpret those records:
+  a legacy reset target is not the same fact as a new-window anchor.
 - `ActionIntent`: durable side-effect intention with dedupe key and lifecycle.
 - `RuntimeSetting`: UI-owned mutable, non-secret configuration.
 
