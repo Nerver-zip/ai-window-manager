@@ -113,6 +113,18 @@ describe('settings UI helpers', () => {
     expect(manualSettings).toContain('data-timezone-auto-detect="false"');
   });
 
+  it('groups the provider settings heading for readable narrow layouts', () => {
+    const html = renderSettingsPage({
+      csrfToken,
+      providers: [provider],
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+    });
+
+    expect(html).toContain(
+      '<div class="section-heading"><div class="heading-copy"><p class="eyebrow">Provider connection</p><h2 id="provider-settings-title">Connection and monitoring</h2></div>',
+    );
+  });
+
   it('explains missing or uncertain selected windows in human language', () => {
     const html = renderActivationSchedulePage({
       csrfToken,

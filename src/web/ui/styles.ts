@@ -185,6 +185,7 @@ summary { display: flex; align-items: center; min-height: 44px; color: var(--tex
 pre, code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
 pre { max-width: 100%; overflow: auto; border-radius: 6px; background: var(--input); padding: 16px; }
 .notice, .alert { margin-bottom: 20px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--surface-raised); padding: 14px 18px; }
+.notice > strong + .muted, .alert > strong + .muted { display: block; margin-top: 4px; }
 .stale { border-color: #79603d; }
 .stale-notice { color: var(--warning); font-size: 12px; }
 .empty-state { border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text-muted); padding: 32px; text-align: center; }
@@ -328,6 +329,7 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   .dynamic-list-remove, .dynamic-list-add { width: 100%; }
   .current-window-read { grid-template-columns: 1fr; gap: 14px; }
   .current-window-read > :last-child { text-align: left; }
+  .settings-page .section-heading { align-items: flex-start; flex-direction: column; gap: 6px; }
   .upcoming-list li { grid-template-columns: 1fr; gap: 4px; }
   .window-card { padding: 16px; }
   .chart-card { padding: 16px; }
@@ -340,6 +342,7 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   .history-pagination { align-items: flex-start; flex-direction: column; }
   .history-pagination-actions, .history-pagination-actions .button { width: 100%; }
   .history-pagination-actions .button { flex: 1; }
+  .provider-settings dl { grid-template-columns: 1fr; }
   .page-footer { flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) {
