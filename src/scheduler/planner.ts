@@ -262,15 +262,27 @@ function planActiveHours(
     0,
     Math.floor((span.end.getTime() - input.now.getTime()) / 1000),
   );
+  const scheduleDetails =
+    span.startResolution !== 'exact' ? { dstAdjustment: span.startResolution } : {};
   if (input.currentWindow.status === 'ACTIVE') {
     return wait(
-      { ...base, anchorAt: span.start.toISOString(), nextAnchorAt: span.start.toISOString() },
+      {
+        ...base,
+        ...scheduleDetails,
+        anchorAt: span.start.toISOString(),
+        nextAnchorAt: span.start.toISOString(),
+      },
       PlannerReasonCode.CurrentWindowActive,
     );
   }
   if (span.start.getTime() > input.now.getTime()) {
     return wait(
-      { ...base, anchorAt: span.start.toISOString(), nextAnchorAt: span.start.toISOString() },
+      {
+        ...base,
+        ...scheduleDetails,
+        anchorAt: span.start.toISOString(),
+        nextAnchorAt: span.start.toISOString(),
+      },
       PlannerReasonCode.AnchorNotDue,
     );
   }
@@ -281,7 +293,7 @@ function planActiveHours(
         anchorAt: span.start.toISOString(),
         nextAnchorAt: nextActiveHourStart(policy, span.start).toISOString(),
         coverageSeconds: remainingSeconds,
-        ...(span.startResolution !== 'exact' ? { dstAdjustment: span.startResolution } : {}),
+        ...scheduleDetails,
       },
       PlannerReasonCode.ActiveHoursTooShort,
     );
@@ -293,7 +305,7 @@ function planActiveHours(
       anchorAt: span.start.toISOString(),
       nextAnchorAt: nextActiveHourStart(policy, span.start).toISOString(),
       coverageSeconds: remainingSeconds,
-      ...(span.startResolution !== 'exact' ? { dstAdjustment: span.startResolution } : {}),
+      ...scheduleDetails,
     },
     span.start,
     span.end,
