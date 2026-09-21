@@ -4,7 +4,12 @@ import type {
   ProviderCapabilities,
   WindowSnapshot,
 } from '../domain/types.js';
-import { localDateAt, resolveLocalOccurrenceOnDate, shiftLocalDate } from './time.js';
+import {
+  localDateAt,
+  resolveLocalOccurrenceOnDate,
+  shiftLocalDate,
+  type LocalOccurrenceResolution,
+} from './time.js';
 import { MIN_ACTIVE_HOURS_COVERAGE_SECONDS, localTimeMinutes } from './policy.js';
 
 export const PlannerReasonCode = {
@@ -68,6 +73,7 @@ export interface PlannerExplanation {
   windowDurationSeconds?: number;
   durationConfidence?: NonNullable<WindowSnapshot['durationSeconds']>['confidence'];
   observationAgeSeconds?: number;
+  dstAdjustment?: Exclude<LocalOccurrenceResolution, 'exact'>;
   anchorAt?: string;
   nextAnchorAt?: string;
   validFrom?: string;
@@ -219,8 +225,8 @@ function planFixed(
   if (!durationConfidenceOk(input.window)) {
     return wait(base, PlannerReasonCode.WindowDurationConfidenceTooLow);
   }
-  const [anchor, next] = fixedCandidate(policy, input.now, duration);
-  return planAnchor(input, base, anchor, next, policy.toleranceSeconds);
+  const [anchor, next, resolution] = fixedCandidate(policy, input.now, duration);
+  return planAnchor(input, base, anchor, next, policy.toleranceSeconds, resolution);
 }
 
 function planCustom(
@@ -228,7 +234,7 @@ function planCustom(
   base: Omit<PlannerExplanation, 'decision' | 'reasonCode'>,
   policy: Extract<ActivationPolicy, { kind: 'custom_schedule' }>,
 ): PlannerDecision {
-  const [anchor, next] = customCandidate(policy, input.now);
+  const [anchor, next, resolution] = customCandidate(policy, input.now);
   if (!anchor) return wait(base, PlannerReasonCode.AnchorNotDue);
   return planAnchor(
     input,
@@ -236,6 +242,7 @@ function planCustom(
     anchor,
     next ?? new Date(anchor.getTime() + 86_400_000),
     policy.toleranceSeconds,
+    resolution,
   );
 }
 
@@ -274,6 +281,7 @@ function planActiveHours(
         anchorAt: span.start.toISOString(),
         nextAnchorAt: nextActiveHourStart(policy, span.start).toISOString(),
         coverageSeconds: remainingSeconds,
+        ...(span.startResolution !== 'exact' ? { dstAdjustment: span.startResolution } : {}),
       },
       PlannerReasonCode.ActiveHoursTooShort,
     );
@@ -285,6 +293,7 @@ function planActiveHours(
       anchorAt: span.start.toISOString(),
       nextAnchorAt: nextActiveHourStart(policy, span.start).toISOString(),
       coverageSeconds: remainingSeconds,
+      ...(span.startResolution !== 'exact' ? { dstAdjustment: span.startResolution } : {}),
     },
     span.start,
     span.end,
@@ -298,6 +307,7 @@ function planAnchor(
   anchor: Date,
   next: Date,
   toleranceSeconds: number,
+  scheduleResolution: LocalOccurrenceResolution = 'exact',
 ): PlannerDecision {
   const anchorEnd = new Date(anchor.getTime() + toleranceSeconds * 1000);
   const atOrAfterAnchor = input.now.getTime() >= anchor.getTime();
@@ -316,6 +326,7 @@ function planAnchor(
     validFrom: anchor.toISOString(),
     validUntil: anchorEnd.toISOString(),
     toleranceSeconds,
+    ...(scheduleResolution !== 'exact' ? { dstAdjustment: scheduleResolution } : {}),
   };
 
   if (!atOrAfterAnchor) return wait(explanation, PlannerReasonCode.AnchorNotDue);
@@ -372,18 +383,19 @@ function fixedCandidate(
   policy: Extract<ActivationPolicy, { kind: 'fixed' }>,
   now: Date,
   durationSeconds: number,
-): [Date, Date] {
+): [Date, Date, LocalOccurrenceResolution] {
   const date = localDateAt(now, policy.timezone);
-  const base = resolveLocalOccurrenceOnDate({
+  const baseOccurrence = resolveLocalOccurrenceOnDate({
     localTime: policy.anchorLocalTime,
     timeZone: policy.timezone,
     localDate: date,
-  }).instant;
+  });
+  const base = baseOccurrence.instant;
   const intervalMs = durationSeconds * 1000;
   const lastOffset = Math.floor((now.getTime() - base.getTime()) / intervalMs);
   const last =
     now.getTime() < base.getTime() ? base : new Date(base.getTime() + lastOffset * intervalMs);
-  return [last, new Date(last.getTime() + intervalMs)];
+  return [last, new Date(last.getTime() + intervalMs), baseOccurrence.resolution];
 }
 
 function fixedAnchors(
@@ -432,50 +444,63 @@ function customAnchors(
 function customCandidate(
   policy: Extract<ActivationPolicy, { kind: 'custom_schedule' }>,
   now: Date,
-): [Date | undefined, Date | undefined] {
+): [Date | undefined, Date | undefined, LocalOccurrenceResolution | undefined] {
   const date = localDateAt(now, policy.timezone);
-  const candidates: Date[] = [];
+  const candidates: Array<{ instant: Date; resolution: LocalOccurrenceResolution }> = [];
   for (let dayOffset = -1; dayOffset <= 3; dayOffset += 1) {
     const localDate = shiftLocalDate(date, dayOffset);
     for (const time of policy.times) {
-      candidates.push(
-        resolveLocalOccurrenceOnDate({ localTime: time, timeZone: policy.timezone, localDate })
-          .instant,
-      );
+      const occurrence = resolveLocalOccurrenceOnDate({
+        localTime: time,
+        timeZone: policy.timezone,
+        localDate,
+      });
+      candidates.push({ instant: occurrence.instant, resolution: occurrence.resolution });
     }
   }
   const sorted = candidates
-    .sort((left, right) => left.getTime() - right.getTime())
+    .sort((left, right) => left.instant.getTime() - right.instant.getTime())
     .filter(
-      (candidate, index, all) => index === 0 || candidate.getTime() !== all[index - 1]?.getTime(),
+      (candidate, index, all) =>
+        index === 0 || candidate.instant.getTime() !== all[index - 1]?.instant.getTime(),
     );
-  const last = sorted.filter((candidate) => candidate.getTime() <= now.getTime()).at(-1);
-  const next = sorted.find((candidate) => candidate.getTime() > now.getTime());
-  const lastIsToday = last ? localDateAt(last, policy.timezone) === date : false;
+  const last = sorted.filter((candidate) => candidate.instant.getTime() <= now.getTime()).at(-1);
+  const next = sorted.find((candidate) => candidate.instant.getTime() > now.getTime());
+  const lastIsToday = last ? localDateAt(last.instant, policy.timezone) === date : false;
   const selected =
-    last && (now.getTime() - last.getTime() <= policy.toleranceSeconds * 1000 || lastIsToday)
+    last &&
+    (now.getTime() - last.instant.getTime() <= policy.toleranceSeconds * 1000 || lastIsToday)
       ? last
       : next;
   const selectedIndex = selected
-    ? sorted.findIndex((candidate) => candidate.getTime() === selected.getTime())
+    ? sorted.findIndex((candidate) => candidate.instant.getTime() === selected.instant.getTime())
     : -1;
-  return [selected, selectedIndex >= 0 ? sorted[selectedIndex + 1] : undefined];
+  return [
+    selected?.instant,
+    selectedIndex >= 0 ? sorted[selectedIndex + 1]?.instant : undefined,
+    selected?.resolution,
+  ];
 }
 
 function activeHourSpanAtOrAfter(
   policy: Extract<ActivationPolicy, { kind: 'active_hours' }>,
   now: Date,
-): { start: Date; end: Date } | undefined {
+): { start: Date; end: Date; startResolution: LocalOccurrenceResolution } | undefined {
   const date = localDateAt(now, policy.timezone);
-  const spans: Array<{ start: Date; end: Date }> = [];
+  const spans: Array<{
+    start: Date;
+    end: Date;
+    startResolution: LocalOccurrenceResolution;
+  }> = [];
   for (let dayOffset = -1; dayOffset <= 3; dayOffset += 1) {
     const startDate = shiftLocalDate(date, dayOffset);
     for (const period of policy.periods) {
-      const start = resolveLocalOccurrenceOnDate({
+      const startOccurrence = resolveLocalOccurrenceOnDate({
         localTime: period.start,
         timeZone: policy.timezone,
         localDate: startDate,
-      }).instant;
+      });
+      const start = startOccurrence.instant;
       const endDate =
         localTimeMinutes(period.end) <= localTimeMinutes(period.start)
           ? shiftLocalDate(startDate, 1)
@@ -485,7 +510,8 @@ function activeHourSpanAtOrAfter(
         timeZone: policy.timezone,
         localDate: endDate,
       }).instant;
-      if (end.getTime() > now.getTime() - 1) spans.push({ start, end });
+      if (end.getTime() > now.getTime() - 1)
+        spans.push({ start, end, startResolution: startOccurrence.resolution });
     }
   }
   return spans.sort((left, right) => left.start.getTime() - right.start.getTime())[0];

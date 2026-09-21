@@ -250,6 +250,47 @@ describe('planWindowAction', () => {
     ).toMatchObject({ kind: 'SKIP', reasonCode: PlannerReasonCode.AnchorExpired });
   });
 
+  it.each([
+    {
+      label: 'spring-forward gap',
+      now: '2024-03-10T07:00:00.000Z',
+      timezone: 'America/New_York',
+      anchorLocalTime: '02:30',
+      adjustment: 'nonexistent_shifted_to_next_valid',
+    },
+    {
+      label: 'fall-back ambiguity',
+      now: '2024-11-03T05:30:00.000Z',
+      timezone: 'America/New_York',
+      anchorLocalTime: '01:30',
+      adjustment: 'ambiguous_earlier',
+    },
+  ])(
+    '$label is retained in the planner explanation',
+    ({ now: instant, timezone, anchorLocalTime, adjustment }) => {
+      const current = new Date(instant);
+      const observedAt = new Date(current.getTime() - 10_000).toISOString();
+      const decision = planWindowAction(
+        input({
+          now: current,
+          policy: policy({ timezone, anchorLocalTime }),
+          currentWindow: { ...inactive, observedAt },
+          window: window({
+            observedAt,
+            phase: { ...window().phase, observedAt },
+            durationSeconds: { ...window().durationSeconds!, observedAt },
+          }),
+          observation: { observedAt, staleAfterSeconds: 300 },
+        }),
+      );
+      expect(decision).toMatchObject({
+        kind: 'START',
+        reasonCode: PlannerReasonCode.ScheduledAnchor,
+      });
+      expect(decision.explanation.dstAdjustment).toBe(adjustment);
+    },
+  );
+
   it('handles custom times before, within and after a tolerance', () => {
     const custom = policy({
       kind: 'custom_schedule',
