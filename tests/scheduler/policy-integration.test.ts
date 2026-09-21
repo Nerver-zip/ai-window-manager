@@ -195,6 +195,18 @@ describe('activation policy integration', () => {
     });
   });
 
+  it('fails closed when the selected activation window is not reported', async () => {
+    const context = createContext('auto', { windowKind: 'weekly' });
+    const report = await reconciler(context).reconcile();
+
+    expect(report.createdIntentIds).toEqual([]);
+    expect(report.decisions[0]?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'WINDOW_NOT_REPORTED',
+    });
+    expect(context.repositories.actionIntents.listOpen('fake')).toHaveLength(0);
+  });
+
   it.each([
     [
       'fixed',

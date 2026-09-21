@@ -164,10 +164,11 @@ export class Reconciler {
           continue;
         }
         const config = asRecord(policy.config);
-        const window = selectWindow(
-          state.observation,
-          config.windowKind ?? activationPolicyWindowKind(activationPolicy),
-        );
+        const selectedWindowKind =
+          typeof config.windowKind === 'string'
+            ? config.windowKind
+            : activationPolicyWindowKind(activationPolicy);
+        const window = selectWindow(state.observation, selectedWindowKind);
         const decision = planWindowAction({
           now,
           providerId: provider.id,
@@ -176,7 +177,7 @@ export class Reconciler {
             provider.id,
             state.observation,
             state.health,
-            window?.windowKind,
+            selectedWindowKind,
           ),
           ...(window ? { window } : {}),
           observation: {
