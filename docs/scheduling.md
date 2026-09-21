@@ -57,7 +57,11 @@ different meanings.
 a fresh preflight inspection says an action is eligible. For Codex this also
 requires `AWM_CODEX_TRIGGER_ENABLED=true`.
 
-### Target reset
+### Legacy target reset compatibility
+
+This section describes the compatibility path for persisted `target_reset`
+records. New policies should use `fixed`, whose local time is the activation
+anchor rather than the provider reset target.
 
 User configures a local wall-clock reset target, e.g. 13:00. When an exact/high-confidence window duration and phase fact are known:
 
@@ -69,7 +73,7 @@ For a 5h window and 13:00 target, the candidate trigger is 08:00 local for that 
 
 The current pure decision consumer requires both `durationSeconds.confidence` and `phase.confidence` to be `exact` or `high`, and requires `phase.value` to be `INACTIVE`. A low-confidence phase produces `WINDOW_PHASE_CONFIDENCE_TOO_LOW`; it is not silently treated as inactive.
 
-### Desired work period
+### Legacy desired work period compatibility
 
 MVP computes a deterministic recommendation; it does **not** solve a generalized optimization problem. Initial heuristic:
 

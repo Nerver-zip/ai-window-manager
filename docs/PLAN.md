@@ -515,25 +515,25 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 
 ## X. MVP Definition of Done
 
-- [ ] `docker compose up -d` reaches healthy state from a clean checkout/config.
-- [ ] SQLite initializes/migrates automatically and survives container/host restart.
-- [ ] FakeProvider exercises active/inactive/reset/failure/action-uncertain flows.
-- [ ] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
-- [ ] Codex automation, if enabled, is explicit opt-in and performs only one persisted/confirmed minimal ordinary action per target cycle.
-- [ ] Antigravity is available as monitor-only **only if** official-CLI auth/inspection is proven; otherwise it is explicitly `UNAVAILABLE/AUTH_REQUIRED` with no hack.
-- [ ] no Antigravity trigger ships without resolved semantics/compliance evidence.
-- [ ] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
+- [x] `docker compose up -d` reaches healthy state from a clean checkout/config.
+- [x] SQLite initializes/migrates automatically and survives container/host restart.
+- [x] FakeProvider exercises active/inactive/reset/failure/action-uncertain flows.
+- [x] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
+- [x] Codex automation, if enabled, is explicit opt-in and performs only one persisted/confirmed minimal ordinary action per target cycle.
+- [x] Antigravity is available as monitor-only **only if** official-CLI auth/inspection is proven; otherwise it is explicitly `UNAVAILABLE/AUTH_REQUIRED` with no hack.
+- [x] no Antigravity trigger ships without resolved semantics/compliance evidence.
+- [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
 - [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.
-- [ ] duplicate trigger protection is enforced by DB uniqueness + action lifecycle tests.
-- [ ] restart/uncertain trigger recovery is tested.
-- [ ] missed action during downtime is skipped/recorded by default.
-- [ ] UTC/IANA/DST rules are tested.
-- [ ] `/metrics` and `/healthz` work with bounded labels/no secrets.
-- [ ] runtime config authority is SQLite after bootstrap; UI never exposes secrets.
-- [ ] image runs non-root with hardening, no Docker socket, no whole-home mount.
-- [ ] CI runs format/lint/typecheck/tests/build + Docker/Compose smoke.
-- [ ] ordinary tests make no real provider requests/spend no quota.
-- [ ] documentation and agent skills are consistent with code.
+- [x] duplicate trigger protection is enforced by DB uniqueness + action lifecycle tests.
+- [x] restart/uncertain trigger recovery is tested.
+- [x] missed action during downtime is skipped/recorded by default.
+- [x] UTC/IANA/DST rules are tested.
+- [x] `/metrics` and `/healthz` work with bounded labels/no secrets.
+- [x] runtime config authority is SQLite after bootstrap; UI never exposes secrets.
+- [x] image runs non-root with hardening, no Docker socket, no whole-home mount.
+- [x] CI runs format/lint/typecheck/tests/build + Docker/Compose smoke.
+- [x] ordinary tests make no real provider requests/spend no quota.
+- [x] documentation and agent skills are consistent with code.
 
 ## Y. Risks / unknowns / spikes
 
