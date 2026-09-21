@@ -23,10 +23,12 @@ describe('openDatabase', () => {
     ).toEqual([
       { version: 1, applied_at_ms: appliedAtMs },
       { version: 2, applied_at_ms: appliedAtMs },
+      { version: 3, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(db.pragma('busy_timeout', { simple: true })).toBe(5000);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     expect(
       db
         .prepare("SELECT 1 FROM pragma_table_info('window_samples') WHERE name = 'phase_source'")
@@ -40,7 +42,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(2);
+    ).toBe(3);
     reopened.close();
   });
 
@@ -98,7 +100,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toEqual([{ version: 1 }, { version: 2 }]);
+    ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
     expect(
       upgraded
         .prepare(
@@ -106,6 +108,7 @@ describe('openDatabase', () => {
         )
         .get(),
     ).toEqual({ name: 'phase_confidence' });
+    expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     upgraded.close();
   });
 });

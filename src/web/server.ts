@@ -17,11 +17,17 @@ import type {
 import { registry } from '../metrics/metrics.js';
 import { createCommandApi } from './api-commands.js';
 import { createReadApi } from './api-read.js';
-import { updateProviderSettings, updateScheduleSettings } from './settings-api.js';
 import {
-  renderSchedulePage as renderScheduleUiPage,
+  readTimezoneSetting,
+  updateActivationPolicy,
+  updateProviderSettings,
+  updateScheduleSettings,
+  updateTimezoneSetting,
+} from './settings-api.js';
+import { readScheduling } from './scheduling-api.js';
+import {
+  renderActivationSchedulePage,
   renderSettingsPage as renderSettingsUiPage,
-  type SchedulePolicyView,
   type SettingsProviderView,
 } from './settings-ui.js';
 import {
@@ -224,6 +230,31 @@ export function buildServer(input: BuildServerInput) {
   });
 
   app.get('/api/v1/settings', () => readApi.getSettings().body);
+  app.get('/api/v1/scheduling', () =>
+    readScheduling({
+      repositories: input.repositories,
+      adapters: input.adapters,
+      clock: input.clock,
+    }),
+  );
+
+  app.post('/api/v1/settings/timezone', async (request, reply) => {
+    const result = updateTimezoneSetting(settingsInput, request.body);
+    return reply
+      .code(result.ok ? 200 : result.statusCode)
+      .send(result.ok ? result.value : { error: { code: result.code, message: result.message } });
+  });
+
+  app.post('/api/v1/scheduling', async (request, reply) => {
+    const result = updateActivationPolicy(settingsInput, request.body);
+    if (result.ok) {
+      input.requestReconcile?.();
+      return reply.code(200).send(result.value);
+    }
+    return reply
+      .code(result.statusCode)
+      .send({ error: { code: result.code, message: result.message } });
+  });
 
   app.get('/history', async (request, reply) => {
     const query = asRecord(request.query);
@@ -272,9 +303,11 @@ export function buildServer(input: BuildServerInput) {
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     reply.type('text/html; charset=utf-8');
     const notice = queryMessage(request.query);
+    const timezone = readTimezoneSetting(settingsInput);
     return renderSettingsUiPage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
+      ...(timezone ? { timezone } : {}),
       ...(notice ? { notice } : {}),
     });
   });
@@ -286,12 +319,23 @@ export function buildServer(input: BuildServerInput) {
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     reply.type('text/html; charset=utf-8');
     const notice = queryMessage(request.query);
-    const policy = schedulePolicyView(input);
-    return renderScheduleUiPage({
+    const scheduling = readScheduling({
+      repositories: input.repositories,
+      adapters: input.adapters,
+      clock: input.clock,
+    });
+    const selected =
+      scheduling.providers.find(
+        (provider) => provider.policy?.providerId === provider.providerId,
+      ) ?? scheduling.providers[0];
+    return renderActivationSchedulePage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
-      referenceInstant: input.clock.now(),
-      ...(policy ? { policy } : {}),
+      ...(selected?.policy ? { policy: selected.policy } : {}),
+      ...(scheduling.timezone ? { timezone: scheduling.timezone } : {}),
+      ...(selected?.currentWindow ? { currentWindow: selected.currentWindow } : {}),
+      ...(selected?.decision ? { decision: selected.decision } : {}),
+      ...(selected?.upcoming ? { upcoming: selected.upcoming } : {}),
       ...(notice ? { notice } : {}),
     });
   });
@@ -309,11 +353,24 @@ export function buildServer(input: BuildServerInput) {
     return reply.code(303).redirect('/settings?updated=provider');
   });
 
-  app.post('/schedule', async (request, reply) => {
-    const result = updateScheduleSettings(
+  app.post('/settings/timezone', async (request, reply) => {
+    const result = updateTimezoneSetting(
       settingsInput,
-      normalizeScheduleSettingsBody(request.body),
+      normalizeTimezoneSettingsBody(request.body),
     );
+    if (!result.ok) {
+      return reply.code(result.statusCode).type('text/plain; charset=utf-8').send(result.message);
+    }
+    input.requestReconcile?.();
+    return reply.code(303).redirect('/settings?updated=timezone');
+  });
+
+  app.post('/schedule', async (request, reply) => {
+    const body = request.body;
+    const normalized = normalizeActivationScheduleBody(body);
+    const result = normalized
+      ? updateActivationPolicy(settingsInput, normalized)
+      : updateScheduleSettings(settingsInput, normalizeScheduleSettingsBody(body));
     if (!result.ok) {
       return reply.code(result.statusCode).type('text/plain; charset=utf-8').send(result.message);
     }
@@ -402,6 +459,64 @@ function normalizeScheduleSettingsBody(body: unknown): unknown {
   };
 }
 
+function normalizeActivationScheduleBody(body: unknown): unknown {
+  const record = asRecord(body);
+  if (typeof record.policyKind !== 'string') return undefined;
+  const base = {
+    kind: record.policyKind,
+    providerId: record.providerId,
+    enabled: formBoolean(record.enabled ?? true),
+  };
+  if (typeof record.timezone === 'string' && record.timezone.length > 0) {
+    (base as Record<string, unknown>).timezone = record.timezone;
+  }
+  if (record.policyKind === 'fixed') {
+    return {
+      ...base,
+      windowKind: record.windowKind,
+      anchorLocalTime: record.anchorLocalTime,
+      toleranceSeconds: Number(record.toleranceSeconds),
+    };
+  }
+  if (record.policyKind === 'custom_schedule') {
+    return {
+      ...base,
+      windowKind: record.windowKind,
+      times: splitList(record.times),
+      toleranceSeconds: Number(record.toleranceSeconds),
+    };
+  }
+  if (record.policyKind === 'active_hours') {
+    return {
+      ...base,
+      windowKind: record.windowKind,
+      periods: splitList(record.periods).map((value) => {
+        const [start, end] = value.split('-');
+        return { start, end };
+      }),
+    };
+  }
+  return base;
+}
+
+function normalizeTimezoneSettingsBody(body: unknown): unknown {
+  const record = asRecord(body);
+  return {
+    timezone: record.timezone,
+    source: record.source === 'detected' ? 'detected' : 'manual',
+  };
+}
+
+function splitList(value: unknown): string[] {
+  if (Array.isArray(value))
+    return value.filter((entry): entry is string => typeof entry === 'string');
+  if (typeof value !== 'string') return [];
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function formBoolean(value: unknown): boolean {
   return value === true || value === 'on' || value === 'true' || value === '1';
 }
@@ -429,26 +544,6 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
       windows: input.repositories.providerState.get(provider.id)?.observation?.windows ?? [],
     };
   });
-}
-
-function schedulePolicyView(input: BuildServerInput): SchedulePolicyView | undefined {
-  const policy = input.repositories.schedulePolicies
-    .list()
-    .find((candidate) => candidate.kind === 'target_reset');
-  if (!policy) return undefined;
-  const config = asRecord(policy.config);
-  const windowKind = stringValue(config.windowKind);
-  const targetResetLocalTime = stringValue(config.targetResetLocalTime);
-  const toleranceSeconds = numberValue(config.toleranceSeconds);
-  if (!windowKind || !targetResetLocalTime || toleranceSeconds === null) return undefined;
-  return {
-    enabled: policy.enabled,
-    providerId: policy.providerId,
-    windowKind,
-    targetResetLocalTime,
-    timezone: policy.timezone,
-    toleranceSeconds,
-  };
 }
 
 function readProviders(input: BuildServerInput): ProviderRead[] {
@@ -571,10 +666,6 @@ function isSafeExplanationValue(value: unknown): value is string | number | bool
 
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
-}
-
-function numberValue(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -11,7 +11,8 @@ import { parseProviderObservation, WindowSnapshotSchema } from '../domain/schema
 import type { SqliteDatabase } from './database.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
-export type SchedulePolicyKind = 'manual' | 'target_reset' | 'work_window';
+export type SchedulePolicyKind =
+  'manual' | 'auto' | 'fixed' | 'custom_schedule' | 'active_hours' | 'target_reset' | 'work_window';
 export type ActionIntentState =
   | 'planned'
   | 'executing'

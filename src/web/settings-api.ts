@@ -1,6 +1,13 @@
 import { z } from 'zod';
+import type { ActivationPolicy } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
+import {
+  isValidTimeZone,
+  parseActivationPolicy,
+  type TimezoneSetting,
+  validateToleranceAgainstDuration,
+} from '../scheduler/policy.js';
 import { resolveLocalOccurrence } from '../scheduler/time.js';
 import type {
   ProviderMode,
@@ -33,6 +40,57 @@ export const ScheduleSettingsSchema = z
   })
   .strict();
 
+const ActivationPolicyBaseSchema = z.object({
+  enabled: z.boolean().default(true),
+  providerId: ID,
+  timezone: z.string().min(1).max(128).optional(),
+});
+
+export const ActivationPolicySettingsSchema = z.discriminatedUnion('kind', [
+  ActivationPolicyBaseSchema.extend({ kind: z.literal('manual') }),
+  ActivationPolicyBaseSchema.extend({
+    kind: z.literal('auto'),
+    windowKind: z.string().min(1).max(64).optional(),
+  }),
+  ActivationPolicyBaseSchema.extend({
+    kind: z.literal('fixed'),
+    windowKind: z.string().min(1).max(64),
+    anchorLocalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    toleranceSeconds: z.number().int().min(0).max(3_600),
+  }),
+  ActivationPolicyBaseSchema.extend({
+    kind: z.literal('custom_schedule'),
+    windowKind: z.string().min(1).max(64),
+    times: z
+      .array(z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/))
+      .min(1)
+      .max(24),
+    toleranceSeconds: z.number().int().min(0).max(3_600),
+  }),
+  ActivationPolicyBaseSchema.extend({
+    kind: z.literal('active_hours'),
+    windowKind: z.string().min(1).max(64),
+    periods: z
+      .array(
+        z
+          .object({
+            start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+            end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(24),
+  }),
+]);
+
+export const TimezoneSettingsSchema = z
+  .object({
+    timezone: z.string().min(1).max(128).refine(isValidTimeZone),
+    source: z.enum(['detected', 'manual']).default('manual'),
+  })
+  .strict();
+
 export interface SettingsApiInput {
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
@@ -50,6 +108,146 @@ export interface ScheduleSettingsValue {
   targetResetLocalTime: string;
   timezone: string;
   toleranceSeconds: number;
+}
+
+export interface ActivationPolicySettingsValue {
+  policy: ActivationPolicy;
+  timezone: TimezoneSetting;
+}
+
+export function readTimezoneSetting(
+  input: Pick<SettingsApiInput, 'repositories'>,
+): TimezoneSetting | undefined {
+  const timezone = input.repositories.settings.get<string>('timezone')?.value;
+  const source = input.repositories.settings.get<string>('timezone_source')?.value;
+  if (typeof timezone !== 'string' || !isValidTimeZone(timezone)) return undefined;
+  return {
+    timezone,
+    source: source === 'manual' ? 'manual' : 'detected',
+  };
+}
+
+export function updateTimezoneSetting(
+  input: SettingsApiInput,
+  body: unknown,
+): SettingsApiResult<{ timezone: TimezoneSetting }> {
+  const parsed = TimezoneSettingsSchema.safeParse(body);
+  if (!parsed.success)
+    return failure(400, 'INVALID_TIMEZONE', 'timezone must be a valid IANA identifier');
+  const existing = readTimezoneSetting(input);
+  if (existing?.source === 'manual' && parsed.data.source === 'detected') {
+    return { ok: true, value: { timezone: existing } };
+  }
+  const nowMs = input.clock.now().getTime();
+  input.repositories.settings.set('timezone', parsed.data.timezone, nowMs);
+  input.repositories.settings.set('timezone_source', parsed.data.source, nowMs);
+  input.repositories.events.append({
+    occurredAtMs: nowMs,
+    providerId: null,
+    type: 'timezone_updated',
+    severity: 'info',
+    reasonCode: 'TIMEZONE_UPDATED',
+    data: { timezone: parsed.data.timezone, source: parsed.data.source },
+  });
+  return { ok: true, value: { timezone: parsed.data } };
+}
+
+export function updateActivationPolicy(
+  input: SettingsApiInput,
+  body: unknown,
+): SettingsApiResult<ActivationPolicySettingsValue> {
+  const parsed = ActivationPolicySettingsSchema.safeParse(body);
+  if (!parsed.success) return failure(400, 'BAD_REQUEST', 'activation policy settings are invalid');
+  const provider = input.repositories.providers.get(parsed.data.providerId);
+  if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
+  const existingTimezone = readTimezoneSetting(input);
+  const timezone = parsed.data.timezone ?? existingTimezone?.timezone;
+  if (!timezone || !isValidTimeZone(timezone)) {
+    return failure(400, 'TIMEZONE_REQUIRED', 'choose a valid time zone before saving this policy');
+  }
+  if (parsed.data.timezone) {
+    const timezoneResult = updateTimezoneSetting(input, {
+      timezone: parsed.data.timezone,
+      source: 'manual',
+    });
+    if (!timezoneResult.ok)
+      return failure(timezoneResult.statusCode, timezoneResult.code, timezoneResult.message);
+  }
+
+  const currentObservation = input.repositories.providerState.get(
+    parsed.data.providerId,
+  )?.observation;
+  const selectedWindow = currentObservation?.windows.find(
+    (window) => 'windowKind' in parsed.data && window.windowKind === parsed.data.windowKind,
+  );
+  if ('toleranceSeconds' in parsed.data) {
+    try {
+      validateToleranceAgainstDuration(
+        parsed.data.toleranceSeconds,
+        selectedWindow?.durationSeconds?.value,
+      );
+    } catch (error) {
+      return failure(
+        400,
+        'INVALID_TOLERANCE',
+        error instanceof Error ? error.message : 'tolerance is invalid',
+      );
+    }
+  }
+
+  const nowMs = input.clock.now().getTime();
+  const policyId = `activation-${parsed.data.providerId}`;
+  const previous = input.repositories.schedulePolicies.get(policyId);
+  const config: Record<string, unknown> = {};
+  if ('windowKind' in parsed.data && parsed.data.windowKind)
+    config.windowKind = parsed.data.windowKind;
+  if (parsed.data.kind === 'fixed') {
+    config.anchorLocalTime = parsed.data.anchorLocalTime;
+    config.toleranceSeconds = parsed.data.toleranceSeconds;
+  } else if (parsed.data.kind === 'custom_schedule') {
+    config.times = parsed.data.times;
+    config.toleranceSeconds = parsed.data.toleranceSeconds;
+  } else if (parsed.data.kind === 'active_hours') {
+    config.periods = parsed.data.periods;
+  }
+  const record = {
+    id: policyId,
+    providerId: parsed.data.providerId,
+    kind: parsed.data.kind,
+    enabled: parsed.data.enabled,
+    timezone,
+    config,
+    createdAtMs: previous?.createdAtMs ?? nowMs,
+    updatedAtMs: nowMs,
+  };
+  const policy = parseActivationPolicy({
+    id: record.id,
+    providerId: record.providerId,
+    kind: record.kind,
+    enabled: record.enabled,
+    timezone: record.timezone,
+    updatedAtMs: record.updatedAtMs,
+    ...config,
+  });
+  input.repositories.schedulePolicies.upsert(record);
+  input.repositories.events.append({
+    occurredAtMs: nowMs,
+    providerId: policy.providerId,
+    type: 'schedule_policy_updated',
+    severity: 'info',
+    reasonCode: 'SCHEDULE_POLICY_UPDATED',
+    data: { policyId, policyKind: policy.kind, enabled: policy.enabled, timezone },
+  });
+  return {
+    ok: true,
+    value: {
+      policy,
+      timezone: {
+        timezone,
+        source: parsed.data.timezone ? 'manual' : (existingTimezone?.source ?? 'detected'),
+      },
+    },
+  };
 }
 
 export function updateProviderSettings(
@@ -178,13 +376,4 @@ function failure(
   message: string,
 ): SettingsApiResult<never> {
   return { ok: false, statusCode, code, message };
-}
-
-function isValidTimeZone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
-    return true;
-  } catch {
-    return false;
-  }
 }

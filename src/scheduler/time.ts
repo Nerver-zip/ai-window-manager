@@ -39,6 +39,12 @@ export interface LocalOccurrenceInput {
   referenceInstant: Date;
 }
 
+export interface LocalDateOccurrenceInput {
+  localTime: string;
+  timeZone: string;
+  localDate: string;
+}
+
 export type LocalOccurrenceResolution =
   'exact' | 'nonexistent_shifted_to_next_valid' | 'ambiguous_earlier';
 
@@ -131,6 +137,40 @@ export function resolveLocalOccurrence(input: LocalOccurrenceInput): LocalOccurr
   };
 }
 
+/** Resolve an HH:mm occurrence on an explicit local calendar date. */
+export function resolveLocalOccurrenceOnDate(input: LocalDateOccurrenceInput): LocalOccurrence {
+  const date = parseLocalDate(input.localDate);
+  const formatter = createFormatter(input.timeZone);
+  const utcMidnight = Date.UTC(date.year, date.month - 1, date.day);
+  let referenceInstant: Date | undefined;
+  for (let offsetHours = -48; offsetHours <= 48; offsetHours += 1) {
+    const candidateMs = utcMidnight + offsetHours * HOUR_MS;
+    if (formatLocalDate(formatFields(formatter, candidateMs)) === input.localDate) {
+      referenceInstant = new Date(candidateMs);
+      break;
+    }
+  }
+  if (!referenceInstant) throw new RangeError(`Local date cannot be resolved: ${input.localDate}`);
+  return resolveLocalOccurrence({
+    localTime: input.localTime,
+    timeZone: input.timeZone,
+    referenceInstant,
+  });
+}
+
+export function localDateAt(instant: Date, timeZone: string): string {
+  const formatter = createFormatter(timeZone);
+  return formatLocalDate(formatFields(formatter, validDateMs(instant, 'instant')));
+}
+
+export function shiftLocalDate(localDate: string, days: number): string {
+  const parsed = parseLocalDate(localDate);
+  const shifted = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day) + days * 86_400_000);
+  return `${shifted.getUTCFullYear().toString().padStart(4, '0')}-${(shifted.getUTCMonth() + 1)
+    .toString()
+    .padStart(2, '0')}-${shifted.getUTCDate().toString().padStart(2, '0')}`;
+}
+
 /**
  * Compare elapsed wall-clock time with elapsed monotonic time.
  *
@@ -172,6 +212,23 @@ function parseLocalTime(value: string): Pick<CalendarFields, 'hour' | 'minute'> 
     throw new RangeError('localTime must be a valid 24-hour time');
   }
   return { hour, minute };
+}
+
+function parseLocalDate(value: string): { year: number; month: number; day: number } {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new RangeError('localDate must use YYYY-MM-DD');
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() + 1 !== month ||
+    check.getUTCDate() !== day
+  ) {
+    throw new RangeError('localDate must be a valid calendar date');
+  }
+  return { year, month, day };
 }
 
 function createFormatter(timeZone: string): Intl.DateTimeFormat {

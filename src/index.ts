@@ -156,19 +156,37 @@ function registerCodexProvider(): void {
 }
 
 function seedProvider(input: { id: string; kind: string; config: unknown }): void {
-  if (repositories.providers.get(input.id)) return;
   const nowMs = clock.now().getTime();
-  repositories.providers.upsert({
-    id: input.id,
-    kind: input.kind,
-    enabled: true,
-    mode: 'monitor_only',
-    pollIntervalSeconds: Math.max(30, config.AWM_RECONCILE_INTERVAL_SECONDS),
-    config: input.config,
-    configVersion: 1,
-    createdAtMs: nowMs,
-    updatedAtMs: nowMs,
-  });
+  if (!repositories.providers.get(input.id)) {
+    repositories.providers.upsert({
+      id: input.id,
+      kind: input.kind,
+      enabled: true,
+      mode: 'monitor_only',
+      pollIntervalSeconds: Math.max(30, config.AWM_RECONCILE_INTERVAL_SECONDS),
+      config: input.config,
+      configVersion: 1,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+  }
+  if (!repositories.settings.get('timezone')) {
+    repositories.settings.set('timezone', config.AWM_TIMEZONE, nowMs);
+    repositories.settings.set('timezone_source', 'manual', nowMs);
+  }
+  if (repositories.schedulePolicies.list(input.id).length === 0) {
+    const policy: SchedulePolicyRecord = {
+      id: `activation-${input.id}`,
+      providerId: input.id,
+      kind: 'manual',
+      enabled: true,
+      timezone: config.AWM_TIMEZONE,
+      config: {},
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+    repositories.schedulePolicies.upsert(policy);
+  }
 }
 
 function hydrateMetricsFromState(): void {

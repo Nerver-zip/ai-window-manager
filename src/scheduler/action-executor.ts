@@ -26,6 +26,7 @@ export const ActionReasonCode = {
   Confirmed: 'ACTION_CONFIRMED',
   RecoveryRequired: 'ACTION_RECOVERY_REQUIRED',
   AlreadySatisfied: 'ACTION_ALREADY_SATISFIED',
+  PolicyChanged: 'ACTION_POLICY_CHANGED',
 } as const;
 
 export type ActionReasonCode = (typeof ActionReasonCode)[keyof typeof ActionReasonCode];
@@ -147,6 +148,10 @@ export class ActionExecutor {
 
     const provider = this.input.repositories.providers.get(intent.providerId);
     const adapter = this.input.adapters.get(intent.providerId);
+    if (!policyStillCurrent(this.input.repositories, intent)) {
+      this.markSkipped(intent, nowMs, ActionReasonCode.PolicyChanged, report);
+      return;
+    }
     if (!provider || !provider.enabled || provider.mode !== 'automation' || !adapter) {
       this.markSkipped(intent, nowMs, ActionReasonCode.ProviderUnavailable, report);
       return;
@@ -481,6 +486,17 @@ function isEligibleForTrigger(
     ['exact', 'high'].includes(window.phase.confidence) &&
     window.phase.value === 'INACTIVE'
   );
+}
+
+function policyStillCurrent(
+  repositories: StorageRepositories,
+  intent: ActionIntentRecord,
+): boolean {
+  if (!intent.policyId) return true;
+  const policy = repositories.schedulePolicies.get(intent.policyId);
+  if (!policy || !policy.enabled) return false;
+  const expected = asRecord(intent.explanation).policyUpdatedAtMs;
+  return typeof expected !== 'number' || expected === policy.updatedAtMs;
 }
 
 function isSatisfied(observation: ProviderObservation, intent: ActionIntentRecord): boolean {

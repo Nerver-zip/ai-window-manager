@@ -3,6 +3,9 @@ import { parseProviderObservation } from '../domain/schemas.js';
 import type { ProviderObservation } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import { decideTargetReset, type SchedulerDecision } from './decision.js';
+import { deriveCurrentWindow } from './current-window.js';
+import { planWindowAction, type PlannerDecision } from './planner.js';
+import { activationPolicyFromRecord } from './policy.js';
 import type { Clock } from './clock.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import {
@@ -41,7 +44,7 @@ export interface ReconcilerInput {
 export interface ReconcileDecisionResult {
   providerId: string;
   policyId: string;
-  decision: SchedulerDecision;
+  decision: SchedulerDecision | PlannerDecision;
   intent?: ActionIntentRecord;
 }
 
@@ -112,7 +115,7 @@ export class Reconciler {
         } else {
           const inspection = await this.inspect(adapter);
           if (inspection.ok) {
-            state = this.persistObservation(provider, inspection.observation, nowMs);
+            state = this.persistObservation(provider, inspection.observation, nowMs, previousState);
             this.input.onInspection?.(provider.id, 'success');
             this.input.onObservation?.(inspection.observation);
           } else {
@@ -127,22 +130,38 @@ export class Reconciler {
       if (inspectionFailed || !state?.observation || state.health !== 'UP') continue;
 
       for (const policy of this.input.repositories.schedulePolicies.list(provider.id)) {
-        if (!policy.enabled || policy.kind !== 'target_reset') continue;
+        if (!policy.enabled && policy.kind === 'target_reset') continue;
+        if (policy.kind === 'target_reset') {
+          const result = this.planLegacyTargetReset(provider, policy, state, adapter, now, nowMs);
+          if (result) {
+            decisions.push(result.result);
+            if (result.intentId) createdIntentIds.push(result.intentId);
+          }
+          continue;
+        }
 
-        const targetResetAt = (this.input.resolveTargetResetAt ?? defaultResolveTargetResetAt)(
-          policy,
-          now,
-        );
-        if (!targetResetAt) continue;
-
+        const activationPolicy = safeActivationPolicy(policy);
+        if (!activationPolicy) {
+          this.appendEventIfChanged({
+            occurredAtMs: nowMs,
+            providerId: provider.id,
+            type: 'schedule_policy_invalid',
+            severity: 'warn',
+            reasonCode: 'INVALID_ACTIVATION_POLICY',
+            data: { policyId: policy.id },
+          });
+          continue;
+        }
         const config = asRecord(policy.config);
-        const window = selectWindow(state.observation, config.windowKind);
-        const toleranceSeconds = positiveInteger(config.toleranceSeconds) ?? 30;
-        const decision = decideTargetReset({
+        const window = selectWindow(
+          state.observation,
+          config.windowKind ?? activationPolicyWindowKind(activationPolicy),
+        );
+        const decision = planWindowAction({
           now,
           providerId: provider.id,
-          policyId: policy.id,
-          targetResetAt,
+          policy: activationPolicy,
+          currentWindow: deriveCurrentWindow(provider.id, state.observation, state.health),
           ...(window ? { window } : {}),
           observation: {
             observedAt: state.observation.observedAt,
@@ -150,17 +169,26 @@ export class Reconciler {
           },
           capabilities: adapter.capabilities(),
           automationEnabled: provider.mode === 'automation',
-          toleranceSeconds,
+          pendingIntents: this.input.repositories.actionIntents.listOpen(provider.id),
         });
         const result: ReconcileDecisionResult = {
           providerId: provider.id,
           policyId: policy.id,
           decision,
         };
-        this.input.onSchedulerDecision?.(provider.id, decision.kind);
+        this.input.onSchedulerDecision?.(
+          provider.id,
+          decision.kind === 'START' ? 'create_intent' : 'noop',
+        );
 
-        if (decision.kind === 'create_intent') {
-          const intentResult = this.createIntent(provider, policy, decision, nowMs);
+        if (decision.kind === 'START' && decision.dedupeKey) {
+          const intentResult = this.createPlannerIntent(
+            provider,
+            policy,
+            decision,
+            nowMs,
+            window?.windowKind,
+          );
           result.intent = intentResult.intent;
           if (intentResult.created) {
             createdIntentIds.push(intentResult.intent.id);
@@ -178,18 +206,15 @@ export class Reconciler {
             });
           }
         } else {
-          const type =
-            decision.reasonCode === 'TARGET_MISSED' ? 'schedule_missed' : 'scheduler_noop';
           this.appendEventIfChanged({
             occurredAtMs: nowMs,
             providerId: provider.id,
-            type,
-            severity: decision.reasonCode === 'TARGET_MISSED' ? 'warn' : 'info',
+            type: decision.kind === 'SKIP' ? 'schedule_missed' : 'scheduler_noop',
+            severity: decision.kind === 'SKIP' ? 'warn' : 'info',
             reasonCode: decision.reasonCode,
             data: decision.explanation,
           });
         }
-
         decisions.push(result);
       }
     }
@@ -211,6 +236,74 @@ export class Reconciler {
   ): boolean {
     if (!state) return true;
     return nowMs - state.updatedAtMs >= provider.pollIntervalSeconds * 1000;
+  }
+
+  private planLegacyTargetReset(
+    provider: ProviderRecord,
+    policy: SchedulePolicyRecord,
+    state: ProviderStateRecord,
+    adapter: ProviderAdapter,
+    now: Date,
+    nowMs: number,
+  ): { result: ReconcileDecisionResult; intentId?: string } | undefined {
+    const targetResetAt = (this.input.resolveTargetResetAt ?? defaultResolveTargetResetAt)(
+      policy,
+      now,
+    );
+    if (!targetResetAt || !state.observation) return undefined;
+    const config = asRecord(policy.config);
+    const window = selectWindow(state.observation, config.windowKind);
+    const toleranceSeconds = positiveInteger(config.toleranceSeconds) ?? 30;
+    const decision = decideTargetReset({
+      now,
+      providerId: provider.id,
+      policyId: policy.id,
+      targetResetAt,
+      ...(window ? { window } : {}),
+      observation: {
+        observedAt: state.observation.observedAt,
+        staleAfterSeconds: state.observation.staleAfterSeconds,
+      },
+      capabilities: adapter.capabilities(),
+      automationEnabled: provider.mode === 'automation',
+      toleranceSeconds,
+    });
+    const result: ReconcileDecisionResult = {
+      providerId: provider.id,
+      policyId: policy.id,
+      decision,
+    };
+    this.input.onSchedulerDecision?.(provider.id, decision.kind);
+
+    if (decision.kind === 'create_intent') {
+      const intentResult = this.createIntent(provider, policy, decision, nowMs);
+      result.intent = intentResult.intent;
+      if (intentResult.created) {
+        this.appendEventIfChanged({
+          occurredAtMs: nowMs,
+          providerId: provider.id,
+          type: 'action_intent_planned',
+          severity: 'info',
+          reasonCode: decision.reasonCode,
+          data: {
+            intentId: intentResult.intent.id,
+            dedupeKey: intentResult.intent.dedupeKey,
+            explanation: decision.explanation,
+          },
+        });
+      }
+      return intentResult.created ? { result, intentId: intentResult.intent.id } : { result };
+    }
+
+    this.appendEventIfChanged({
+      occurredAtMs: nowMs,
+      providerId: provider.id,
+      type: decision.reasonCode === 'TARGET_MISSED' ? 'schedule_missed' : 'scheduler_noop',
+      severity: decision.reasonCode === 'TARGET_MISSED' ? 'warn' : 'info',
+      reasonCode: decision.reasonCode,
+      data: decision.explanation,
+    });
+    return { result };
   }
 
   private async inspect(
@@ -236,6 +329,7 @@ export class Reconciler {
     provider: ProviderRecord,
     observation: ProviderObservation,
     nowMs: number,
+    previousState?: ProviderStateRecord,
   ): ProviderStateRecord {
     const state: ProviderStateRecord = {
       providerId: provider.id,
@@ -264,6 +358,34 @@ export class Reconciler {
           windowKinds: observation.windows.map((window) => window.windowKind),
         },
       });
+      const previousWindow = deriveCurrentWindow(
+        provider.id,
+        previousState?.observation,
+        previousState?.health,
+      );
+      const currentWindow = deriveCurrentWindow(provider.id, observation, observation.health);
+      if (previousWindow.status === 'ACTIVE' && currentWindow.status === 'INACTIVE') {
+        this.input.repositories.events.append({
+          occurredAtMs: nowMs,
+          providerId: provider.id,
+          type: 'unexpected_reset_detected',
+          severity: 'warn',
+          reasonCode: 'UNEXPECTED_WINDOW_RESET',
+          data: {
+            windowKind: currentWindow.windowKind ?? previousWindow.windowKind ?? null,
+            retainedForScheduling: true,
+          },
+        });
+      } else if (previousWindow.status === 'INACTIVE' && currentWindow.status === 'ACTIVE') {
+        this.input.repositories.events.append({
+          occurredAtMs: nowMs,
+          providerId: provider.id,
+          type: 'external_window_started',
+          severity: 'info',
+          reasonCode: 'EXTERNAL_WINDOW_STARTED',
+          data: { windowKind: currentWindow.windowKind ?? null },
+        });
+      }
     });
 
     return state;
@@ -329,6 +451,41 @@ export class Reconciler {
     return this.input.repositories.actionIntents.createIfAbsent(intent);
   }
 
+  private createPlannerIntent(
+    provider: ProviderRecord,
+    policy: SchedulePolicyRecord,
+    decision: PlannerDecision,
+    nowMs: number,
+    windowKind: string | undefined,
+  ) {
+    const scheduledForMs = decision.anchorAt ? Date.parse(decision.anchorAt) : nowMs;
+    const explanation = {
+      ...decision.explanation,
+      policyUpdatedAtMs: policy.updatedAtMs,
+      ...(windowKind ? { windowKind } : {}),
+    };
+    const intent: ActionIntentRecord = {
+      id: (this.input.idFactory ?? randomUUID)(),
+      providerId: provider.id,
+      policyId: policy.id,
+      actionType: 'trigger_window',
+      dedupeKey: decision.dedupeKey ?? `${provider.id}:start_window:${policy.id}:${scheduledForMs}`,
+      state: 'planned',
+      scheduledForMs,
+      notBeforeMs: decision.notBefore ? Date.parse(decision.notBefore) : null,
+      expiresAtMs: decision.validUntil ? Date.parse(decision.validUntil) : null,
+      attemptCount: 0,
+      reasonCode: decision.reasonCode,
+      explanation,
+      lastErrorCode: null,
+      createdAtMs: nowMs,
+      startedAtMs: null,
+      finishedAtMs: null,
+      updatedAtMs: nowMs,
+    };
+    return this.input.repositories.actionIntents.createIfAbsent(intent);
+  }
+
   private appendEventIfChanged(event: EventRecord): void {
     const recent = this.input.repositories.events.list(event.providerId ?? undefined, {
       limit: 50,
@@ -352,6 +509,26 @@ function policyIdFromEventData(value: unknown): string | null {
   const explanation = asRecord(data.explanation);
   const policyId = explanation.policyId ?? data.policyId;
   return typeof policyId === 'string' ? policyId : null;
+}
+
+function safeActivationPolicy(policy: SchedulePolicyRecord) {
+  try {
+    return activationPolicyFromRecord(policy);
+  } catch {
+    return undefined;
+  }
+}
+
+function activationPolicyWindowKind(
+  policy: ReturnType<typeof activationPolicyFromRecord>,
+): string | undefined {
+  if (!policy || policy.kind === 'manual' || policy.kind === 'auto') return undefined;
+  return (
+    policy as Exclude<
+      NonNullable<ReturnType<typeof activationPolicyFromRecord>>,
+      { kind: 'manual' | 'auto' }
+    >
+  ).windowKind;
 }
 
 function selectWindow(
