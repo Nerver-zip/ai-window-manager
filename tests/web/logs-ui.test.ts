@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   HISTORY_RANGES,
+  LOG_TAGS,
   MAX_HISTORY_EVENTS,
   MAX_USAGE_POINTS,
   buildBoundedHistoryView,
@@ -8,14 +9,15 @@ import {
   chartRangeKey,
   filterHistoryEvents,
   getHistoryRange,
+  normalizeLogTag,
   normalizeChartRanges,
-  renderHistoryPage,
+  renderLogsPage,
   renderTimeline,
   renderUsageSeries,
   type HistoryTimelineEvent,
   type HistoryRange,
   type HistoryUsageSample,
-} from '../../src/web/history-ui.js';
+} from '../../src/web/logs-ui.js';
 
 const NOW = new Date('2026-09-19T12:00:00.000Z');
 
@@ -87,6 +89,68 @@ describe('history UI helpers', () => {
     expect(html).not.toContain('Provider checked');
     expect(html).not.toContain('Scheduling update');
     expect(html).toContain('Automatic action completed');
+    expect(
+      filterHistoryEvents(events, NOW, { range: '24h', tag: 'sync' }).map((item) => item.type),
+    ).toContain('provider_inspected');
+    expect(
+      filterHistoryEvents(events, NOW, { range: '24h', eventType: 'scheduler_noop' }),
+    ).toHaveLength(1);
+    expect(
+      filterHistoryEvents(events, NOW, { range: '24h', tag: 'sync' }).map((item) => item.type),
+    ).not.toContain('scheduler_noop');
+  });
+
+  it('assigns stable multi-category tags without exposing event payloads', () => {
+    const cases = [
+      { type: 'action_uncertain', severity: 'warn' as const, tags: ['trigger', 'alert'] },
+      { type: 'unexpected_reset_detected', severity: 'info' as const, tags: ['reset'] },
+      { type: 'provider_inspection_failed', severity: 'warn' as const, tags: ['sync', 'alert'] },
+      { type: 'schedule_policy_updated', severity: 'info' as const, tags: ['config'] },
+      {
+        type: 'manual_trigger_rejected',
+        severity: 'warn' as const,
+        tags: ['trigger', 'alert', 'manual'],
+      },
+      { type: 'inspect_requested', severity: 'info' as const, tags: ['sync', 'manual'] },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const [result] = filterHistoryEvents(
+        [
+          event({
+            id: index + 1,
+            type: testCase.type,
+            severity: testCase.severity,
+            data: { token: 'never-render-this' },
+          }),
+        ],
+        NOW,
+        { range: '24h' },
+      );
+      expect(result?.tags).toEqual(testCase.tags);
+    }
+
+    expect(LOG_TAGS.map((tag) => tag.value)).toEqual([
+      'trigger',
+      'reset',
+      'sync',
+      'config',
+      'alert',
+      'manual',
+    ]);
+    expect(normalizeLogTag('unexpected')).toBeNull();
+  });
+
+  it('filters by category in addition to provider and range', () => {
+    const visible = filterHistoryEvents(
+      [
+        event({ id: 1, type: 'action_succeeded', providerId: 'codex' }),
+        event({ id: 2, type: 'unexpected_reset_detected', providerId: 'codex' }),
+        event({ id: 3, type: 'action_succeeded', providerId: 'fake' }),
+      ],
+      NOW,
+      { range: '24h', providerId: 'codex', tag: 'trigger' },
+    );
+    expect(visible.map((item) => item.id)).toEqual([1]);
   });
 
   it('explains known provider failures instead of showing an empty technical fallback', () => {
@@ -291,7 +355,7 @@ describe('history UI helpers', () => {
   });
 
   it('renders the shared-shell history page with responsive semantic sections', () => {
-    const html = renderHistoryPage({
+    const html = renderLogsPage({
       now: NOW,
       filter: { range: '30d', providerId: 'fake' },
       providers: [
@@ -308,12 +372,17 @@ describe('history UI helpers', () => {
     expect(html).toContain('value="30d" selected');
     expect(html).toContain('value="fake" selected');
     expect(html).toContain('viewport');
-    expect(html).toContain('history-toolbar');
+    expect(html).toContain('logs-page');
     expect(html).toContain('class="timeline"');
     expect(html).not.toContain('data-chart-root');
     expect(html).not.toContain('class="card chart-card"');
     expect(html).toContain('2 events');
+    expect(html).toContain('<title>Logs · AI Window Manager</title>');
+    expect(html).toContain('<h1>Activity Logs</h1>');
     expect(html).toContain('Timeline');
+    expect(html).toContain('aria-label="Filter logs by category"');
+    expect(html).toContain('class="log-tag-filter is-active"');
+    expect(html).toContain('badge-tag-trigger');
     expect(html).toContain('Usage');
     expect(html).not.toContain('<style');
     expect(html).not.toContain(' style=');
@@ -322,7 +391,7 @@ describe('history UI helpers', () => {
   });
 
   it('shows event times in the saved timezone without milliseconds or ISO jargon', () => {
-    const html = renderHistoryPage({
+    const html = renderLogsPage({
       now: NOW,
       timeZone: 'America/Sao_Paulo',
       providers: [{ id: 'codex' }],
@@ -333,12 +402,12 @@ describe('history UI helpers', () => {
     expect(html).toContain('Times shown in São Paulo.');
     expect(html).toContain('>Sep 19, 2026, 8:00 AM GMT-3</time>');
     expect(html).not.toContain('2026-09-19 11:00:00.000Z');
-    expect(html).not.toContain('aria-label="History pages"');
+    expect(html).not.toContain('aria-label="Log pages"');
     expect(html).not.toContain('event · page 1');
   });
 
   it('renders activity chronology and accessible history pagination only', () => {
-    const html = renderHistoryPage({
+    const html = renderLogsPage({
       now: NOW,
       providers: [{ id: 'fake' }],
       events: [event({ id: 21 }), event({ id: 22 })],
@@ -350,13 +419,13 @@ describe('history UI helpers', () => {
         page: 2,
         pageSize: 20,
         hasNext: true,
-        previousHref: '/history?range=24h&page=1',
-        nextHref: '/history?range=24h&page=3',
+        previousHref: '/logs?range=24h&page=1',
+        nextHref: '/logs?range=24h&page=3',
       },
     });
 
     expect(html).not.toContain('data-chart-root');
-    expect(html).toContain('aria-label="History pages"');
+    expect(html).toContain('aria-label="Log pages"');
     expect(html).toContain('rel="prev"');
     expect(html).toContain('rel="next"');
     expect(html).toContain('page 2');
@@ -375,14 +444,14 @@ describe('history UI helpers', () => {
     expect(view.providerId).toBeNull();
     expect(view.events).toEqual([]);
     expect(view.series).toEqual([]);
-    const html = renderHistoryPage({ now: NOW, providers: [], events: [], samples: [] });
+    const html = renderLogsPage({ now: NOW, providers: [], events: [], samples: [] });
     expect(html).toContain('empty-state');
     expect(html).not.toContain('data-chart-root');
     expect(html).not.toContain('<style');
   });
 
   it('deduplicates provider options and rejects unsafe provider keys', () => {
-    const html = renderHistoryPage({
+    const html = renderLogsPage({
       now: NOW,
       providers: [
         { id: 'fake', label: '\u0000' },

@@ -3,7 +3,7 @@ import { shiftLocalDate } from '../../src/scheduler/time.js';
 import type { DailyUsageCell } from '../../src/usage/aggregation.js';
 import type { UsagePageData } from '../../src/usage/service.js';
 import { renderUsagePage } from '../../src/web/usage-ui.js';
-import type { HistoryUsageSeries } from '../../src/web/history-ui.js';
+import type { HistoryUsageSeries } from '../../src/web/logs-ui.js';
 
 const today = '2026-09-23';
 const nowMs = Date.parse('2026-09-23T12:00:00.000Z');

@@ -7,7 +7,7 @@ import {
   serializeChartRangeSelection,
   type HistoryUsageSeries,
   type HistoryRange,
-} from './history-ui.js';
+} from './logs-ui.js';
 import { escapeHtml, renderAppShell } from './ui/layout.js';
 import { providerDisplayName, timeZoneDisplayName, windowDisplayName } from './ui/presentation.js';
 

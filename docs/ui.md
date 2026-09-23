@@ -91,7 +91,7 @@ auth state are never editable or rendered.
 
 The server-rendered `/usage` page and `GET /api/v1/usage` read only persisted
 SQLite state; neither route inspects a provider or starts a Codex turn. Usage
-charts appear first, followed by the daily-use heatmap; History stays focused on
+charts appear first, followed by the daily-use heatmap; Logs stays focused on
 events. Each chart keeps its own selected time range, smooths nearby readings,
 and fills the area under its line while leaving missing samples and outages
 visible. A calendar day is derived from positive changes in one trustworthy
@@ -122,14 +122,18 @@ endpoints, extrema and outage breaks. Chart labels use the saved timezone.
 Keyboard grid navigation and a plain day-list alternative complement the
 calendar; the controls remain server-rendered and work without JavaScript.
 
-## History
+## Logs
 
-The server-rendered `/history` page reads persisted SQLite events and never
-inspects a provider. Timeline events have their own bounded range filter and
-are read in pages of 20, with explicit previous/next navigation, so a busy
-daemon does not create an unbounded page. Existing History URLs that contain
-chart-period selections link to Usage while preserving valid selections.
-Keep it small:
+The server-rendered `/logs` page reads persisted SQLite events and never
+inspects a provider. `/history` remains a permanent `301` alias that preserves
+the query string. Events may carry multiple in-memory category tags (Triggers,
+Resets, Sync, Config, Alerts and Manual); tags are derived from safe event
+metadata and are not persisted or exposed through the JSON history contract.
+Routine provider checks and scheduler no-ops are hidden by default; Sync shows
+provider checks, and `?type=scheduler_noop` explicitly reveals routine scheduler
+checks. Category and provider/range filters are combined and paginated in
+bounded pages of 20. Existing chart-period selections link to Usage while
+preserving valid selections. Keep it small:
 
 - recent lifecycle/action timeline;
 - plain-language event names, reasons and provider labels;

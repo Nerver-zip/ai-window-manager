@@ -9,7 +9,7 @@ GET  /healthz
 GET  /metrics
 GET  /
 GET  /schedule
-GET  /history
+GET  /logs
 GET  /usage
 GET  /settings
 
@@ -60,6 +60,9 @@ POST /schedule
 
 The JSON settings routes accept only validated non-secret timezone and
 activation-policy fields. They use the same SQLite services as the HTML forms.
+
+The former HTML route `/history` redirects permanently to `/logs`, preserving
+its query string. The JSON endpoint `/api/v1/history` remains unchanged.
 
 They require a same-origin request and a CSRF token, return `303` on success,
 and write only validated non-secret SQLite configuration. Invalid input returns

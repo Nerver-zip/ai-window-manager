@@ -202,20 +202,56 @@ describe('web server persisted overview', () => {
     expect(response.body).not.toContain('PRIVATE WORKSPACE');
   });
 
-  it.each(['/settings', '/schedule', '/history'])(
-    'serves %s in the shared shell',
-    async (route) => {
-      const { app } = createApp((repositories) => seedObservedProvider(repositories));
-      const response = await app.inject(route);
+  it('adds a reduced-motion-safe online pulse only to connected providers', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedObservedProvider(repositories, 'paused');
+      repositories.providers.upsert(providerRecord({ id: 'paused', enabled: false }));
+      seedObservedProvider(repositories, 'failed');
+      const state = repositories.providerState.get('failed');
+      if (!state) throw new Error('missing failed provider state');
+      repositories.providerState.upsert({
+        ...state,
+        health: 'ERROR',
+        lastErrorCode: 'INSPECTION_FAILED',
+      });
+    });
 
-      expect(response.statusCode).toBe(200);
-      expect(response.headers['content-type']).toContain('text/html');
-      expect(response.body).toContain('href="/assets/app.css"');
-      expect(response.body).toContain('<script defer src="/assets/app.js"></script>');
-      expect(response.body).not.toMatch(/<style|style=|<script>/);
-      expect(response.body).toContain('aria-current="page"');
-    },
-  );
+    const page = await app.inject('/');
+    expect(page.body).toContain(
+      '<span class="badge badge-success"><span class="online-indicator" aria-hidden="true"></span>Connected</span>',
+    );
+    expect(page.body).toContain('<span class="badge badge-warning">Monitoring paused</span>');
+    expect(page.body).toContain('<span class="badge badge-warning">Needs attention</span>');
+    expect(page.body.match(/class="online-indicator"/g)).toHaveLength(1);
+
+    const css = await app.inject('/assets/app.css');
+    expect(css.body).toContain('@keyframes online-pulse');
+    expect(css.body).toContain('@media (prefers-reduced-motion: reduce)');
+  });
+
+  it.each(['/settings', '/schedule', '/logs'])('serves %s in the shared shell', async (route) => {
+    const { app } = createApp((repositories) => seedObservedProvider(repositories));
+    const response = await app.inject(route);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/html');
+    expect(response.body).toContain('href="/assets/app.css"');
+    expect(response.body).toContain('<script defer src="/assets/app.js"></script>');
+    expect(response.body).not.toMatch(/<style|style=|<script>/);
+    expect(response.body).toContain('aria-current="page"');
+  });
+
+  it('redirects legacy History URLs to Logs without losing filters', async () => {
+    const { app } = createApp(() => {});
+    const response = await app.inject(
+      '/history?tag=sync&range=7d&provider=codex&chartRange=codex%7Cweekly%7C7d',
+    );
+    expect(response.statusCode).toBe(301);
+    expect(response.headers.location).toBe(
+      '/logs?tag=sync&range=7d&provider=codex&chartRange=codex%7Cweekly%7C7d',
+    );
+  });
 
   it('serves static images and favicon safely with cache headers', async () => {
     const { app } = createApp(() => {});
@@ -780,11 +816,16 @@ describe('web server persisted overview', () => {
           data: {},
         });
       }
-      for (let index = 0; index < 30; index += 1) {
+      for (let index = 0; index < 75; index += 1) {
         repositories.events.append({
           occurredAtMs: Date.parse(NOW) - index,
           providerId: 'fake',
-          type: index % 2 === 0 ? 'provider_inspected' : 'scheduler_noop',
+          type:
+            index % 3 === 0
+              ? 'provider_inspected'
+              : index % 3 === 1
+                ? 'scheduler_noop'
+                : 'action_succeeded',
           severity: 'info',
           reasonCode: 'TARGET_NOT_DUE',
           data: {},
@@ -798,14 +839,16 @@ describe('web server persisted overview', () => {
     const historyBody = JSON.parse(history.body) as { events: unknown[] };
     expect(historyBody.events).toHaveLength(1);
     const historyPage = await app.inject(
-      '/history?range=24h&provider=fake&chartRange=fake%7Cfive_hour%7C6h',
+      '/logs?range=24h&provider=fake&chartRange=fake%7Cfive_hour%7C6h&tag=trigger',
     );
-    expect(historyPage.statusCode).toBe(200);
+    expect(historyPage.statusCode, historyPage.body).toBe(200);
     expect(historyPage.headers['content-type']).toContain('text/html');
     expect(historyPage.body).toContain('Timeline');
     expect(historyPage.body).not.toContain('data-chart-root');
     expect(historyPage.body).toContain('Timeline range');
     expect(historyPage.body).toContain('page=2');
+    expect(historyPage.body).toContain('aria-label="Filter logs by category"');
+    expect(historyPage.body).toContain('href="/logs?range=24h&amp;tag=sync&amp;provider=fake"');
     expect(historyPage.body).not.toContain('Provider checked');
     expect(historyPage.body).not.toContain('Scheduling update');
     expect(historyPage.body).toContain('Usage charts have moved to');
@@ -833,7 +876,7 @@ describe('web server persisted overview', () => {
       selectedWindowKind: null,
       days: [],
     });
-    const historyPageTwo = await app.inject('/history?range=24h&provider=fake&page=2');
+    const historyPageTwo = await app.inject('/logs?range=24h&provider=fake&tag=trigger&page=2');
     expect(historyPageTwo.statusCode).toBe(200);
     expect(historyPageTwo.body).toContain('rel="prev"');
     expect(historyPage.body).not.toContain('synthetic-not-a-secret');
@@ -857,6 +900,43 @@ describe('web server persisted overview', () => {
 
     expect((await app.inject('/usage')).statusCode).toBe(200);
     expect((await app.inject('/api/v1/usage')).statusCode).toBe(200);
+    expect(inspected.count).toBe(0);
+  });
+
+  it('serves Logs from persisted events without inspecting a provider', async () => {
+    const inspected = { count: 0 };
+    const { app, repositories } = createApp(
+      (store) => {
+        seedObservedProvider(store);
+        store.events.append({
+          occurredAtMs: Date.parse(NOW),
+          providerId: 'fake',
+          type: 'provider_inspected',
+          severity: 'info',
+          reasonCode: null,
+          data: { internal: 'never-render-this' },
+        });
+      },
+      inspectionSpy('fake', inspected),
+    );
+
+    const logs = await app.inject('/logs?tag=sync&range=24h');
+    expect(logs.statusCode, logs.body).toBe(200);
+    expect(logs.body).toContain('Provider checked');
+    expect(logs.body).not.toContain('never-render-this');
+    expect(inspected.count).toBe(0);
+
+    repositories.events.append({
+      occurredAtMs: Date.parse(NOW) - 1,
+      providerId: 'fake',
+      type: 'scheduler_noop',
+      severity: 'info',
+      reasonCode: 'TARGET_NOT_DUE',
+      data: {},
+    });
+    const routine = await app.inject('/logs?type=scheduler_noop');
+    expect(routine.body).toContain('Scheduling update');
+    expect(routine.body).toContain('Routine scheduler checks are included.');
     expect(inspected.count).toBe(0);
   });
 
@@ -907,10 +987,10 @@ describe('web server persisted overview', () => {
     const schedule = await app.inject('/schedule');
     expect(schedule.body).not.toContain('option value="fake"');
     expect(schedule.body).not.toContain('Test provider');
-    const historyPage = await app.inject('/history');
+    const historyPage = await app.inject('/logs');
     expect(historyPage.body).not.toContain('fake / five_hour');
     expect(historyPage.body).not.toContain('option value="fake"');
-    expect((await app.inject('/history?provider=fake')).statusCode).toBe(404);
+    expect((await app.inject('/logs?provider=fake')).statusCode).toBe(404);
     const usagePage = await app.inject('/usage');
     expect(usagePage.statusCode).toBe(200);
     expect(usagePage.body).toContain('Codex');

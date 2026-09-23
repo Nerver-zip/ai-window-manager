@@ -1,5 +1,5 @@
 /**
- * Pure SSR helpers for the bounded history view.
+ * Pure SSR helpers for the bounded activity logs view and shared usage charts.
  *
  * The route integration owns database reads and must pass already-sanitized
  * provider keys, events, and window samples. This module deliberately accepts
@@ -32,12 +32,21 @@ export const HISTORY_RANGES = [
 export type HistoryRange = (typeof HISTORY_RANGES)[number]['value'];
 export const DEFAULT_HISTORY_RANGE: HistoryRange = '24h';
 export type HistorySeverity = 'debug' | 'info' | 'warn' | 'error';
+export type LogTag = 'trigger' | 'reset' | 'sync' | 'config' | 'alert' | 'manual';
+
+export const LOG_TAGS: readonly { value: LogTag; label: string; icon: string }[] = [
+  { value: 'trigger', label: 'Triggers', icon: '⚡' },
+  { value: 'reset', label: 'Resets', icon: '🔄' },
+  { value: 'sync', label: 'Sync', icon: '🔍' },
+  { value: 'config', label: 'Config', icon: '⚙️' },
+  { value: 'alert', label: 'Alerts', icon: '⚠️' },
+  { value: 'manual', label: 'Manual', icon: '👤' },
+];
 
 export const MAX_HISTORY_EVENTS = 100;
 export const HISTORY_PAGE_SIZE = 20;
 export const MAX_USAGE_SERIES = 16;
 export const MAX_USAGE_POINTS = 384;
-const ROUTINE_EVENT_TYPES = new Set(['provider_inspected', 'scheduler_noop']);
 
 export interface HistoryProviderOption {
   id: string;
@@ -52,6 +61,8 @@ export interface HistoryTimelineEvent {
   type: string;
   severity: HistorySeverity;
   reasonCode: string | null;
+  /** Read only for narrow tag classification; never included in rendered output. */
+  data?: unknown;
 }
 
 /** A sanitized projection of a persisted window sample for the usage graph. */
@@ -68,12 +79,15 @@ export interface HistoryFilter {
   range: HistoryRange;
   providerId?: string;
   chartRanges?: Readonly<Record<string, HistoryRange>>;
+  tag?: LogTag | null;
+  eventType?: string | null;
 }
 
 export interface HistoryTimelineItem extends HistoryTimelineEvent {
   displayType: string;
   displaySeverity: HistorySeverity;
   displayReason: string;
+  tags: readonly LogTag[];
 }
 
 export interface HistoryUsagePoint {
@@ -93,12 +107,19 @@ export interface HistoryUsageSeries {
 export interface HistoryPageInput {
   now: Date;
   timeZone?: string;
-  filter?: { range?: unknown; providerId?: unknown; chartRanges?: unknown };
+  filter?: {
+    range?: unknown;
+    providerId?: unknown;
+    chartRanges?: unknown;
+    tag?: unknown;
+    eventType?: unknown;
+  };
   providers: readonly HistoryProviderOption[];
   events: readonly HistoryTimelineEvent[];
   samples: readonly HistoryUsageSample[];
   pagination?: HistoryPagination;
   usageChartsHref?: string;
+  routineEventsHref?: string;
 }
 
 export interface HistoryPagination {
@@ -113,6 +134,8 @@ export interface BoundedHistoryView {
   range: HistoryRange;
   providerId: string | null;
   chartRanges: Readonly<Record<string, HistoryRange>>;
+  tag: LogTag | null;
+  eventType: string | null;
   events: HistoryTimelineItem[];
   series: HistoryUsageSeries[];
 }
@@ -135,6 +158,10 @@ const SAFE_WINDOW_KIND = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export function normalizeHistoryRange(value: unknown): HistoryRange {
   return isHistoryRange(value) ? value : DEFAULT_HISTORY_RANGE;
+}
+
+export function normalizeLogTag(value: unknown): LogTag | null {
+  return LOG_TAGS.some((tag) => tag.value === value) ? (value as LogTag) : null;
 }
 
 export function getHistoryRange(value: HistoryRange) {
@@ -197,7 +224,15 @@ export function filterHistoryEvents(
   return events
     .map(sanitizeEvent)
     .filter((event): event is HistoryTimelineItem => event !== null)
-    .filter((event) => !ROUTINE_EVENT_TYPES.has(event.type))
+    .filter((event) => event.type !== 'scheduler_noop' || filter.eventType === 'scheduler_noop')
+    .filter(
+      (event) =>
+        event.type !== 'provider_inspected' ||
+        filter.tag === 'sync' ||
+        filter.eventType === 'provider_inspected',
+    )
+    .filter((event) => filter.eventType == null || event.type === filter.eventType)
+    .filter((event) => filter.tag == null || event.tags.includes(filter.tag))
     .filter((event) => {
       const occurredAtMs = Date.parse(event.occurredAt);
       if (!Number.isFinite(occurredAtMs)) return false;
@@ -269,21 +304,27 @@ export function buildBoundedHistoryView(input: HistoryPageInput): BoundedHistory
   const range = normalizeHistoryRange(input.filter?.range);
   const providerId = normalizeProviderFilter(input.filter?.providerId);
   const chartRanges = normalizeChartRanges(input.filter?.chartRanges);
+  const tag = normalizeLogTag(input.filter?.tag);
+  const eventType = safeCode(input.filter?.eventType);
   const filter: HistoryFilter = {
     range,
     ...(providerId ? { providerId } : {}),
     chartRanges,
+    tag,
+    eventType,
   };
   return {
     range,
     providerId: providerId ?? null,
     chartRanges,
+    tag,
+    eventType,
     events: filterHistoryEvents(input.events, input.now, filter),
     series: buildUsageSeries(input.samples, input.now, filter),
   };
 }
 
-export function renderHistoryPage(input: HistoryPageInput): string {
+export function renderLogsPage(input: HistoryPageInput): string {
   const view = buildBoundedHistoryView(input);
   const pagination = normalizePagination(input.pagination);
   const providers = safeProviderOptions(input.providers);
@@ -304,13 +345,29 @@ export function renderHistoryPage(input: HistoryPageInput): string {
   const usageNotice = input.usageChartsHref
     ? `<p class="usage-notice" role="status">Usage charts have moved to <a href="${escapeAttribute(input.usageChartsHref)}">Usage</a>. Your selected chart periods are preserved.</p>`
     : '';
+  const selectedTag = view.tag ?? 'all';
+  const tagFilters = [
+    `<a class="log-tag-filter${selectedTag === 'all' ? ' is-active' : ''}" href="${escapeAttribute(logTagHref('all', view.range, view.providerId))}"${selectedTag === 'all' ? ' aria-current="page"' : ''}>All</a>`,
+    ...LOG_TAGS.map(
+      (tag) =>
+        `<a class="log-tag-filter${selectedTag === tag.value ? ' is-active' : ''}" href="${escapeAttribute(logTagHref(tag.value, view.range, view.providerId))}"${selectedTag === tag.value ? ' aria-current="page"' : ''}><span aria-hidden="true">${tag.icon}</span> ${tag.label}</a>`,
+    ),
+  ].join('');
+  const hiddenTag = view.tag ? `<input type="hidden" name="tag" value="${view.tag}">` : '';
+  const hiddenType = view.eventType
+    ? `<input type="hidden" name="type" value="${escapeAttribute(view.eventType)}">`
+    : '';
+  const routineToggle = input.routineEventsHref
+    ? `<p class="log-routine-toggle">${view.eventType === 'scheduler_noop' ? 'Routine scheduler checks are included.' : 'Routine scheduler checks are hidden.'} <a href="${escapeAttribute(input.routineEventsHref)}">${view.eventType === 'scheduler_noop' ? 'Hide routine checks' : 'Show routine checks'}</a></p>`
+    : '';
   const timeZone = input.timeZone ?? 'UTC';
-  const content = `<div class="history-page">
+  const content = `<div class="logs-page">
     ${usageNotice}
-    <form class="history-toolbar card" method="get" action="/history" aria-label="History filters">
+    <form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters">
+      ${hiddenTag}${hiddenType}
       <div class="history-toolbar-summary">
         <span class="eyebrow">Explore</span>
-        <strong>Activity history</strong>
+        <strong>Activity logs</strong>
         <span class="muted">Review saved provider updates and why decisions were made.</span>
       </div>
       <div class="history-toolbar-fields">
@@ -325,28 +382,48 @@ export function renderHistoryPage(input: HistoryPageInput): string {
         <button class="button button-primary" type="submit">Apply filters</button>
       </div>
     </form>
+    <nav class="log-tag-filters" aria-label="Filter logs by category">${tagFilters}</nav>
+    ${routineToggle}
     <div class="history-sections">
-      ${renderTimeline(view.events, pagination, timeZone)}
+      ${renderTimeline(view.events, pagination, timeZone, view.eventType, view.tag)}
     </div>
   </div>`;
 
   return renderAppShell({
-    page: 'history',
-    title: 'History',
+    page: 'logs',
+    title: 'Logs',
+    heading: 'Activity Logs',
     description: 'Review important usage changes and automatic starts.',
     content,
   });
+}
+
+/** @deprecated Use renderLogsPage. Kept for callers migrating from the old page name. */
+export const renderHistoryPage = renderLogsPage;
+
+function logTagHref(tag: 'all' | LogTag, range: HistoryRange, providerId: string | null): string {
+  const params = new URLSearchParams({ range, tag });
+  if (providerId) params.set('provider', providerId);
+  return `/logs?${params.toString()}`;
 }
 
 export function renderTimeline(
   events: readonly (HistoryTimelineItem | HistoryTimelineEvent)[],
   pagination?: HistoryPagination,
   timeZone = 'UTC',
+  eventType?: string | null,
+  selectedTag?: LogTag | null,
 ): string {
   const safeEvents = events
     .map((event) => ('displayType' in event ? event : sanitizeEvent(event)))
     .filter((event): event is HistoryTimelineItem => event !== null)
-    .filter((event) => !ROUTINE_EVENT_TYPES.has(event.type));
+    .filter((event) => event.type !== 'scheduler_noop' || eventType === 'scheduler_noop')
+    .filter(
+      (event) =>
+        event.type !== 'provider_inspected' ||
+        selectedTag === 'sync' ||
+        eventType === 'provider_inspected',
+    );
   if (safeEvents.length === 0) {
     return `<section class="history-section card" aria-labelledby="timeline-title">
       <div class="section-heading">
@@ -371,6 +448,7 @@ export function renderTimeline(
               formatTimestamp(event.occurredAt, timeZone),
             )}</time>
             <span class="badge badge-${severity}">${escapeHtml(severityLabel(severity))}</span>
+            <span class="log-event-tags" aria-label="Event categories">${renderLogTagBadges(event.tags ?? classifyLogEvent(event.type, event.severity, event.data))}</span>
             <span class="timeline-provider">${event.providerId && providerLogoUrl(event.providerId) ? `<img class="provider-logo-xs" src="${providerLogoUrl(event.providerId)}" alt="" width="14" height="14">` : ''}${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
           </div>
           <h3 class="timeline-event">${escapeHtml(event.displayType)}</h3>
@@ -535,17 +613,75 @@ function sanitizeEvent(event: HistoryTimelineEvent): HistoryTimelineItem | null 
   const type = safeCode(event.type);
   const reason = event.reasonCode === null ? null : safeCode(event.reasonCode);
   const providerId = event.providerId === null ? null : safeProviderId(event.providerId);
+  const eventType = type ?? 'unknown';
   return {
     id: Number.isSafeInteger(event.id) && event.id >= 0 ? event.id : 0,
     occurredAt: new Date(occurredAtMs).toISOString(),
     providerId,
-    type: type ?? 'unknown',
+    type: eventType,
     severity,
     reasonCode: reason,
-    displayType: eventLabel(type ?? ''),
+    displayType: eventLabel(eventType),
     displaySeverity: severity,
-    displayReason: eventReasonLabel(type ?? '', reason),
+    displayReason: eventReasonLabel(eventType, reason),
+    tags: classifyLogEvent(eventType, severity, event.data),
   };
+}
+
+function classifyLogEvent(
+  type: string,
+  severity: HistorySeverity,
+  data: unknown,
+): readonly LogTag[] {
+  const tags = new Set<LogTag>();
+  const manualTrigger = type.startsWith('manual_trigger_');
+  const alertEvent =
+    type === 'action_uncertain' ||
+    type.startsWith('action_failed_') ||
+    type === 'provider_auth_required';
+
+  if (type.startsWith('action_') || manualTrigger) tags.add('trigger');
+  if (type === 'unexpected_reset_detected' || type === 'external_window_started') tags.add('reset');
+  if (
+    type === 'provider_inspected' ||
+    type === 'inspect_requested' ||
+    type === 'provider_inspection_failed' ||
+    type === 'provider_auth_required' ||
+    type === 'scheduler_noop'
+  )
+    tags.add('sync');
+  if (
+    type === 'schedule_policy_updated' ||
+    type === 'provider_settings_updated' ||
+    type === 'timezone_updated' ||
+    type === 'schedule_policy_invalid' ||
+    type === 'settings_changed' ||
+    type === 'schedule_changed'
+  )
+    tags.add('config');
+  if (severity === 'warn' || severity === 'error' || alertEvent) tags.add('alert');
+  if (manualTrigger || type === 'inspect_requested' || hasManualOrigin(data)) tags.add('manual');
+
+  // Unknown informational events still receive a neutral operational category;
+  // their human-facing copy remains sanitized by eventLabel().
+  if (tags.size === 0) tags.add('sync');
+  return LOG_TAGS.filter((tag) => tags.has(tag.value)).map((tag) => tag.value);
+}
+
+function hasManualOrigin(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
+  const record = data as Record<string, unknown>;
+  return ['source', 'origin', 'initiator'].some((key) => record[key] === 'manual');
+}
+
+function renderLogTagBadges(tags: readonly LogTag[]): string {
+  return tags
+    .map((tag) => {
+      const descriptor = LOG_TAGS.find((candidate) => candidate.value === tag);
+      if (!descriptor) return '';
+      return `<span class="badge badge-tag badge-tag-${tag}">${descriptor.label}</span>`;
+    })
+    .join('');
 }
 
 function safeProviderOptions(
@@ -655,7 +791,7 @@ function renderHistoryPagination(
   const next = pagination.nextHref
     ? `<a class="button button-secondary" href="${escapeAttribute(pagination.nextHref)}" rel="next">Next</a>`
     : `<span class="button button-secondary is-disabled" aria-disabled="true">Next</span>`;
-  return `<nav class="history-pagination" aria-label="History pages">
+  return `<nav class="history-pagination" aria-label="Log pages">
     <p class="history-pagination-summary">${range} · page ${pagination.page}${pagination.hasNext ? ' · more available' : ''}</p>
     <div class="history-pagination-actions">${previous}${next}</div>
   </nav>`;

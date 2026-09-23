@@ -3,7 +3,7 @@ import { escapeHtml, renderAppShell } from '../../src/web/ui/layout.js';
 import { APP_CSS } from '../../src/web/ui/styles.js';
 
 describe('shared application shell', () => {
-  it.each(['overview', 'schedule', 'history', 'settings'] as const)(
+  it.each(['overview', 'schedule', 'logs', 'settings'] as const)(
     'marks only %s as current and serves local assets',
     (page) => {
       const html = renderAppShell({
@@ -33,6 +33,17 @@ describe('shared application shell', () => {
     expect(html).toContain('&lt;img onerror=&quot;bad&quot;&gt;');
     expect(escapeHtml('&<>"\'')).toBe('&amp;&lt;&gt;&quot;&#39;');
   });
+  it('allows the browser title and visible page heading to use distinct product copy', () => {
+    const html = renderAppShell({
+      page: 'logs',
+      title: 'Logs',
+      heading: 'Activity Logs',
+      content: '',
+    });
+    expect(html).toContain('<title>Logs · AI Window Manager</title>');
+    expect(html).toContain('<h1>Activity Logs</h1>');
+    expect(html).toContain('<span>Logs</span>');
+  });
   it('defines mobile, focus, reduced-motion and bounded graph styling without remote dependencies', () => {
     expect(APP_CSS).toContain('@media (max-width: 700px)');
     expect(APP_CSS).toContain(':focus-visible');
@@ -43,6 +54,9 @@ describe('shared application shell', () => {
     expect(APP_CSS).toContain('.chart-svg { height: 205px; }');
     expect(APP_CSS).toContain('.chart-axis-label, .chart-axis-time { font-size: 18px; }');
     expect(APP_CSS).toContain('prefers-reduced-motion');
+    expect(APP_CSS).toContain('.log-tag-filters');
+    expect(APP_CSS).toContain('.online-indicator');
+    expect(APP_CSS).toContain('@keyframes online-pulse');
     expect(APP_CSS).not.toMatch(/@import|https?:/);
   });
 });

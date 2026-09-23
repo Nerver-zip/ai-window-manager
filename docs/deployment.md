@@ -86,7 +86,9 @@ curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/healthz
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/metrics
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/usage
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/history
+curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/logs
+# Legacy HTML alias redirects while preserving query parameters.
+curl --fail --location http://127.0.0.1:${AWM_HOST_PORT:-8787}/history?range=24h
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/api/v1/usage
 ```
 

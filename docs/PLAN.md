@@ -19,7 +19,7 @@ Completed: `SCHED-001`, `TIME-001`, `SCHED-002`, `CODEX-001`, `WEB-001`,
 The executor is quota-safe by default, confirms outcomes with fresh observation,
 and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
 non-secret provider settings and target-reset schedule forms. Usage reads a
-persisted reset-safe weekly-usage projection; History remains a bounded event
+persisted reset-safe weekly-usage projection; Logs remains a bounded event
 timeline. Neither read page inspects providers. Daily aggregate visualization
 is delivered; work-window recommendations and broader statistics remain out of
 scope.
@@ -291,7 +291,7 @@ Use a small `/api/v1` for UI/local inspection. Read providers/history/settings; 
 
 ## O. Web UI
 
-Three small areas: Overview, Schedule, Settings/History. SSR + tiny JS. Cards show each window separately, evidence/confidence, freshness and next action explanation. No React/router/state framework. Render inferred times with `~` and labels rather than false precision.
+Small areas: Overview, Usage, Schedule, Logs and Settings. SSR + tiny JS. Cards show each window separately, evidence/confidence, freshness and next action explanation. No React/router/state framework. Render inferred times with `~` and labels rather than false precision.
 
 ## P. Metrics + statistics
 
@@ -483,7 +483,7 @@ request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
 **Acceptance**: safe auth persistence + stable parser or deliberate disabled adapter.  
 **Trigger**: remains out unless separate spike succeeds.
 
-### Phase 7 — Settings/history/usage polish
+### Phase 7 — Settings/logs/usage polish
 
 **Status: Usage heatmap and independent charts complete; richer recommendations
 deferred.**
@@ -603,7 +603,7 @@ Explicitly still not future goals: agent orchestration, prompt management, accou
 20. **Adapter interface**: capabilities + health + inspect + optional trigger action; partial normalized observations allowed.
 21. **Third provider**: adapter + capabilities + fixtures + research classification + registration, no scheduler special-case.
 22. **Metrics**: provider up, usage/remaining, reset seconds, age, inspect/trigger counters, decisions, intent states, last success timestamp.
-23. **History**: window samples, lifecycle/action/config/provider events, intent outcomes.
+23. **Logs**: window samples, lifecycle/action/config/provider events, intent outcomes.
 24. **Retention**: samples/ordinary usage 90d; lifecycle/action/config 365d; current state no TTL.
 25. **UI config**: validated forms write DB runtime settings.
 26. **File + UI config**: not as competing mutable sources; env is bootstrap/process only.

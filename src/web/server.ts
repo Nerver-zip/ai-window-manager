@@ -50,13 +50,16 @@ import {
   MAX_USAGE_POINTS,
   buildUsageSeries,
   chartRangeKey,
+  filterHistoryEvents,
   normalizeChartRanges,
+  normalizeLogTag,
   normalizeHistoryRange,
-  renderHistoryPage,
+  renderLogsPage,
   serializeChartRangeSelection,
+  type LogTag,
   type HistoryTimelineEvent,
   type HistoryUsageSample,
-} from './history-ui.js';
+} from './logs-ui.js';
 import {
   DEFAULT_HTTP_BODY_LIMIT_BYTES,
   ensureCsrfToken,
@@ -297,17 +300,22 @@ export function buildServer(input: BuildServerInput) {
   });
 
   app.get('/history', async (request, reply) => {
+    const requestedUrl = request.raw.url ?? '/history';
+    return reply.code(301).redirect(requestedUrl.replace(/^\/history(?=\?|$)/, '/logs'));
+  });
+
+  app.get('/logs', async (request, reply) => {
     const query = asRecord(request.query);
     const providerId = stringValue(query.provider) ?? undefined;
     if (providerId && !isProviderVisible(providerId, input.config.AWM_FAKE_PROVIDER_ENABLED)) {
       return reply.code(404).type('text/plain; charset=utf-8').send('Provider not found');
     }
     const range = normalizeHistoryRange(query.range);
+    const tag = normalizeLogTag(query.tag);
+    const eventType = normalizeEventType(query.type);
     const chartRangeQuery = queryStringValues(query.chartRange);
     const page = positivePage(query.page);
     const now = input.clock.now();
-    const nowMs = now.getTime();
-    const offset = (page - 1) * HISTORY_PAGE_SIZE;
     const providers = filterVisibleProviders(
       input.repositories.providers.list(),
       input.config.AWM_FAKE_PROVIDER_ENABLED,
@@ -315,49 +323,68 @@ export function buildServer(input: BuildServerInput) {
     const selectedProviders = providerId
       ? providers.filter((provider) => provider.id === providerId)
       : providers;
-    const events = input.repositories.events.list(providerId, {
-      limit: HISTORY_PAGE_SIZE + 1,
-      offset,
-      afterMs: nowMs - getHistoryRange(range).durationMs,
-      beforeMs: nowMs + 1,
-      excludeTypes: ['provider_inspected', 'scheduler_noop'],
-      ...(input.config.AWM_FAKE_PROVIDER_ENABLED ? {} : { excludeProviderId: 'fake' }),
+    const logPage = readLogsPage(input, {
+      providerId,
+      range,
+      tag,
+      eventType,
+      page,
+      now,
     });
-    const hasNext = events.length > HISTORY_PAGE_SIZE;
-    const usageChartsHref = historyUsageHref(
+    const usageChartsHref = logsUsageHref(
       chartRangeQuery,
       providerId,
       providers.map((provider) => provider.id),
+    );
+    const routineEventsHref = logsPageHref(
+      range,
+      providerId,
+      1,
+      chartRangeQuery,
+      eventType === 'scheduler_noop' ? tag : 'sync',
+      eventType === 'scheduler_noop' ? null : 'scheduler_noop',
     );
     const samples = selectedProviders.flatMap((provider) =>
       input.repositories.windowSamples.list(provider.id, { limit: MAX_USAGE_POINTS * 8 }),
     );
 
     reply.type('text/html; charset=utf-8');
-    return renderHistoryPage({
+    return renderLogsPage({
       now,
       timeZone: readTimezoneSetting(settingsInput)?.timezone ?? input.config.AWM_TIMEZONE,
       filter: {
         range,
         ...(providerId ? { providerId } : {}),
         chartRanges: chartRangeQuery,
+        tag,
+        eventType,
       },
       providers: providers.map((provider) => ({
         id: provider.id,
         label: providerDisplayName(provider.id),
       })),
-      events: events.slice(0, HISTORY_PAGE_SIZE).map(historyTimelineEvent),
+      events: logPage.events,
       samples: samples.map(historyUsageSample),
       ...(usageChartsHref ? { usageChartsHref } : {}),
+      routineEventsHref,
       pagination: {
         page,
         pageSize: HISTORY_PAGE_SIZE,
-        hasNext,
+        hasNext: logPage.hasNext,
         ...(page > 1
-          ? { previousHref: historyPageHref(range, providerId, page - 1, chartRangeQuery) }
+          ? {
+              previousHref: logsPageHref(
+                range,
+                providerId,
+                page - 1,
+                chartRangeQuery,
+                tag,
+                eventType,
+              ),
+            }
           : {}),
-        ...(hasNext
-          ? { nextHref: historyPageHref(range, providerId, page + 1, chartRangeQuery) }
+        ...(logPage.hasNext
+          ? { nextHref: logsPageHref(range, providerId, page + 1, chartRangeQuery, tag, eventType) }
           : {}),
       },
     });
@@ -593,19 +620,82 @@ function positivePage(value: unknown): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 50_000) : 1;
 }
 
-function historyPageHref(
+function logsPageHref(
   range: string,
   providerId: string | undefined,
   page: number,
   chartRanges: readonly string[] = [],
+  tag: LogTag | null = null,
+  eventType: string | null = null,
 ): string {
   const params = new URLSearchParams({ range, page: String(page) });
   if (providerId) params.set('provider', providerId);
+  if (tag) params.set('tag', tag);
+  if (eventType) params.set('type', eventType);
   for (const chartRange of chartRanges) params.append('chartRange', chartRange);
-  return `/history?${params.toString()}`;
+  return `/logs?${params.toString()}`;
 }
 
-function historyUsageHref(
+function readLogsPage(
+  input: BuildServerInput,
+  options: {
+    providerId: string | undefined;
+    range: ReturnType<typeof normalizeHistoryRange>;
+    tag: LogTag | null;
+    eventType: string | null;
+    page: number;
+    now: Date;
+  },
+): { events: HistoryTimelineEvent[]; hasNext: boolean } {
+  const pageStart = (options.page - 1) * HISTORY_PAGE_SIZE;
+  const requiredCount = pageStart + HISTORY_PAGE_SIZE + 1;
+  const includeInspections = options.tag === 'sync' || options.eventType === 'provider_inspected';
+  const includeRoutineChecks = options.eventType === 'scheduler_noop';
+  const excludeTypes = [
+    ...(!includeInspections ? ['provider_inspected'] : []),
+    ...(!includeRoutineChecks ? ['scheduler_noop'] : []),
+  ];
+  const matchingPage: HistoryTimelineEvent[] = [];
+  let matchingCount = 0;
+  let offset = 0;
+  const fetchSize = 100;
+  const maxOffset = 1_000_000;
+
+  while (offset < maxOffset && matchingCount < requiredCount) {
+    const batch = input.repositories.events.list(options.providerId, {
+      limit: fetchSize,
+      offset,
+      afterMs: options.now.getTime() - getHistoryRange(options.range).durationMs,
+      beforeMs: options.now.getTime() + 1,
+      excludeTypes,
+      ...(input.config.AWM_FAKE_PROVIDER_ENABLED ? {} : { excludeProviderId: 'fake' }),
+    });
+    if (batch.length === 0) break;
+
+    const filtered = filterHistoryEvents(batch.map(historyTimelineEvent), options.now, {
+      range: options.range,
+      ...(options.providerId ? { providerId: options.providerId } : {}),
+      tag: options.tag,
+      eventType: options.eventType,
+    });
+    for (const event of filtered) {
+      if (matchingCount >= pageStart && matchingPage.length < HISTORY_PAGE_SIZE + 1) {
+        matchingPage.push(event);
+      }
+      matchingCount += 1;
+    }
+
+    offset += batch.length;
+    if (batch.length < fetchSize) break;
+  }
+
+  return {
+    events: matchingPage.slice(0, HISTORY_PAGE_SIZE),
+    hasNext: matchingPage.length > HISTORY_PAGE_SIZE,
+  };
+}
+
+function logsUsageHref(
   chartRangeQuery: readonly string[],
   providerId: string | undefined,
   visibleProviderIds: readonly string[],
@@ -922,6 +1012,10 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+function normalizeEventType(value: unknown): string | null {
+  return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value) ? value : null;
+}
+
 function queryStringValues(value: unknown): string[] {
   if (typeof value === 'string') return [value];
   if (!Array.isArray(value)) return [];
@@ -954,6 +1048,7 @@ function historyTimelineEvent(event: EventRecord): HistoryTimelineEvent {
     type: event.type,
     severity: event.severity,
     reasonCode: event.reasonCode,
+    data: event.data,
   };
 }
 
@@ -986,6 +1081,7 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
     : provider.health === 'AUTH_REQUIRED'
       ? 'Sign-in required'
       : healthLabel(provider.health);
+  const isConnected = provider.enabled && provider.health === 'UP';
   const automationState = !provider.enabled
     ? 'Automatic starts paused'
     : provider.activationPolicyNeedsAttention
@@ -1013,9 +1109,13 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
     provider.health === 'AUTH_REQUIRED'
       ? '<p class="notice">Sign in with the official provider app, then return here to check again.</p>'
       : '';
+  const onlineIndicator = isConnected
+    ? '<span class="online-indicator" aria-hidden="true"></span>'
+    : '';
+  const connectionBadgeClass = isConnected ? 'badge-success' : 'badge-warning';
   const selectedPolicy = renderSelectedPolicy(provider);
   const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
-  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${provider.health === 'UP' && provider.enabled ? 'badge-success' : 'badge-warning'}">${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${selectedPolicy}${windows}${details}</article>`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${selectedPolicy}${windows}${details}</article>`;
 }
 
 function renderSelectedPolicy(provider: ProviderRead): string {
