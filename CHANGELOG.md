@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed same-origin form submissions in Chrome sending `Origin: null` by using
+  `Referrer-Policy: same-origin` while retaining cross-origin referrer
+  suppression and Origin/CSRF enforcement.
 - Architecture-first scaffold created.
 - Provider research snapshot dated 2026-09-19.
 - FakeProvider/domain/scheduler/storage/web seams added.

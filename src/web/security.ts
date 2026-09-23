@@ -255,7 +255,9 @@ export function getSecurityHeaders(options: { noStore?: boolean } = {}): Record<
   const headers: Record<string, string> = {
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': CONTENT_SECURITY_POLICY,
-    'Referrer-Policy': 'no-referrer',
+    // `no-referrer` makes Chrome send `Origin: null` for native same-origin
+    // form POSTs. Keep referrers private cross-origin without breaking forms.
+    'Referrer-Policy': 'same-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   };
   if (options.noStore) {

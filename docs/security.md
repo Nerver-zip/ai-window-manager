@@ -69,6 +69,8 @@ If the service is exposed to an untrusted LAN, authentication becomes a requirem
 
 - CSP: `default-src 'self'` with the smallest script/style exceptions necessary.
 - `X-Content-Type-Options: nosniff`.
+- `Referrer-Policy: same-origin` preserves the browser Origin on same-origin form
+  submissions while omitting referrers from cross-origin requests.
 - no inline rendering of provider HTML.
 - request body size limits.
 - state-changing routes reject unexpected Origins.

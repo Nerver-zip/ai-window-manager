@@ -174,7 +174,7 @@ describe('HTTP security helpers', () => {
     expect(getSecurityHeaders()).toEqual({
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,
-      'Referrer-Policy': 'no-referrer',
+      'Referrer-Policy': 'same-origin',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     });
     expect(getSecurityHeaders({ noStore: true })['Cache-Control']).toBe('no-store');
