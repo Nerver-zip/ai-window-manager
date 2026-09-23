@@ -93,9 +93,10 @@ POST /api/v1/providers/:id/trigger
 ```
 
 Read paths use persisted repositories and do not call provider inspection. The
-history page bounds events and usage samples, supports `24h`/`7d`/`30d` and a
-provider filter, escapes event labels/reasons and renders missing values as
-`unknown`.
+history page bounds events and usage samples, supports independent
+`1h`/`3h`/`6h`/`12h`/`24h`/`7d`/`30d` periods per usage chart, plus a timeline
+range and provider filter, escapes event labels/reasons and renders missing
+values as `unknown`.
 
 ## Backup/restore
 

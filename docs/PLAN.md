@@ -18,13 +18,16 @@ Completed: `SCHED-001`, `TIME-001`, `SCHED-002`, `CODEX-001`, `WEB-001`,
 `STORAGE-002`, `OPS-001`, `OPS-002`, `CI-001`, and `DOC-001`.
 The executor is quota-safe by default, confirms outcomes with fresh observation,
 and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
-non-secret provider settings and target-reset schedule forms. The bounded
-history page reads persisted events/samples and does not inspect providers.
+non-secret provider settings and target-reset schedule forms. Usage reads a
+persisted reset-safe weekly-usage projection; History remains a bounded event
+timeline. Neither read page inspects providers. Daily aggregate visualization
+is delivered; work-window recommendations and broader statistics remain out of
+scope.
 `CODEX-002` is implemented behind an explicit trigger gate and has passed one
 operator-authorized live `Hi!` heartbeat acceptance; production enablement
 remains explicit and the action path now has a separate bounded timeout with
-uncertain-outcome confirmation. Antigravity work,
-aggregate statistics and richer charting remain out of scope.
+uncertain-outcome confirmation. Antigravity work, work-window recommendations
+and broader statistics remain out of scope.
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
@@ -480,12 +483,16 @@ request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
 **Acceptance**: safe auth persistence + stable parser or deliberate disabled adapter.  
 **Trigger**: remains out unless separate spike succeeds.
 
-### Phase 7 — Settings/history/stats polish
+### Phase 7 — Settings/history/usage polish
 
-**Status: bounded history view complete; aggregate statistics deferred.**
+**Status: Usage heatmap and independent charts complete; richer recommendations
+deferred.**
 
-**Goal**: complete small UI/API and useful deterministic history.  
-**Acceptance**: user understands current window/remaining/reset/next action/reason in seconds.
+**Goal**: complete small UI/API, readable event history, and reset-safe daily
+usage visualization.
+**Acceptance**: users can inspect persisted window state, event history, weekly
+allowance consumption by local day, and independent per-window trends without
+provider I/O.
 
 ### Phase 8 — Hardening/acceptance
 

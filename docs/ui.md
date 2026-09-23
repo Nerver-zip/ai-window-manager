@@ -1,10 +1,15 @@
 # Web UI
 
+The deterministic FakeProvider is shown only when
+`AWM_FAKE_PROVIDER_ENABLED=true`. With the setting false, previously persisted
+fake state is omitted from the overview, provider settings, schedule, history,
+JSON read/command routes, Usage, and metrics; SQLite history is preserved.
+
 Goal: within seconds answer:
 
-1. which window is active?
-2. how much remains?
-3. when does it reset, and how confident is that time?
+1. which usage window is active?
+2. how much has been used and how much remains?
+3. when does it reset in my local time and in UTC?
 4. what is the next planned/recommended action?
 5. why?
 
@@ -14,81 +19,112 @@ One provider card per configured provider:
 
 ```text
 Codex                         Connected
-5-hour window  ████████████░░  82% remaining
-Reset   13:04 UTC             Reported by provider · High confidence
-Updated 03:52 ago             Fresh
-Weekly window ████████░░░░░░░  56% remaining
+5-hour window  25% used · 75% left
+Resets Sep 23, 7:00 PM · in about 5 hours
+UTC Sep 23, 10:00 PM
+Weekly window  56% used · 44% left
 
 Next: automatic action planned for 08:00 tomorrow
 Why: the window can start before the target reset
 ```
 
 The user-facing vocabulary deliberately hides provider and scheduler identifiers.
-For example, `codex_primary` is shown as `5-hour window`, `codex_secondary` as
-`Weekly window`, `official_supported` as `Reported by provider`, and inferred
-values use `Approximately` plus a plain-language confidence label. Internal
-provider ids, window keys, reason codes and evidence enums remain available to
-the JSON/API and logs, but are not presented as normal UI copy.
+For example, `codex_primary` is shown as `5-hour window` and `codex_secondary`
+as `Weekly window`. Estimated values are prefixed with `About`; confidence,
+evidence enums, and provider transport details are not part of the main view.
+Internal provider ids, window keys and reason codes remain available to the
+JSON/API and logs, but are not presented as normal UI copy.
 
-If data is inferred, render `Approximately 13:04` and the evidence/confidence
-label. If stale, visually say `last observed 12m ago` and explain that
-automatic planning is paused instead of presenting old data as live.
+If data is estimated, render `About 7:00 PM` and the corresponding UTC time.
+If stale, say `Last checked 12 min ago`, make that information visibly out of
+date, and explain that automatic starts wait for a fresh update.
 
 The overview is backed by persisted `provider_state`, recent scheduler/events,
 and action-intent records. Opening `/` or `/api/v1/providers` does not call a
 provider adapter. A provider with no persisted observation renders health,
 freshness and window facts as `unknown` rather than fabricated zeroes.
 
-Each provider card also shows the factual current-window state separately from
-the activation policy: active/inactive, expected end when available, confidence,
-freshness and a plain-language reason when monitoring is unavailable. Technical
-window keys such as `codex_primary` never appear as normal labels.
+Each provider card shows connection and monitoring status, human-readable window
+names, used/remaining amounts, local and UTC reset times, and a plain-language
+next step. Technical window keys never appear as normal labels.
 
 ## Schedule
 
 - current observed window;
-- manual, whenever-possible, regular-cycle, specific-time and active-hours
-  activation choices;
-- an IANA timezone with first-use browser detection and an explicit manual
-  override;
+- start when a window becomes available, on a regular cycle, at chosen times,
+  during selected hours, or manually;
+- the saved local time zone, with first-use device detection and an explicit
+  override in Settings;
 - add/remove controls for custom times and active-hour periods;
 - upcoming occurrences and the authoritative next decision/reason;
 - manual `Trigger now` only when capability/automation mode permits.
 
-The current server-rendered `/schedule` page separates factual current-window
-state from the activation policy. It offers whenever-possible, regular-cycle,
-specific-time, active-hours and never-automatically choices, revealing only the
-fields relevant to the selected policy. Fixed-cycle previews use one local anchor
-and the observed window duration; custom schedules use explicit local times; all
-scheduled choices show the persisted account timezone and timing tolerance without
-exposing the stored window key. `/settings` edits monitoring state, automatic-action
-mode, refresh interval and the account timezone. Both forms contain a CSRF token;
-invalid or unsupported values are rejected before SQLite writes. Secrets and
-provider-owned auth state are never editable or rendered.
+The current server-rendered `/schedule` page reveals only the fields relevant to
+the selected preference. The next-start preview uses saved provider information
+and shows a local time and time zone, along with a plain-language explanation.
+Internal timing tolerance and daylight-saving resolution details do not appear
+in the normal form. `/settings` edits monitoring, automatic starts, check
+frequency and the account time zone. Both forms contain a CSRF token; invalid or
+unsupported values are rejected before SQLite writes. Secrets and provider-owned
+auth state are never editable or rendered.
 
 ## Provider settings
 
 - enabled;
 - monitoring on/off;
 - automatic actions (if supported);
-- refresh interval within validated range;
+- check frequency presets for every 1, 5 or 15 minutes, plus custom seconds;
 - auth/setup status (never credential values);
-- capability matrix;
+- a collapsed, plain-language summary of provider capabilities and quota impact;
 - “inspect now”.
+
+## Usage
+
+The server-rendered `/usage` page and `GET /api/v1/usage` read only persisted
+SQLite state; neither route inspects a provider or starts a Codex turn. Usage
+charts appear first, followed by the daily-use heatmap; History stays focused on
+events. Each chart keeps its own selected time range, smooths nearby readings,
+and fills the area under its line while leaving missing samples and outages
+visible. A calendar day is derived from positive changes in one trustworthy
+seven-day window, not from the current remaining balance. Each weekly reset
+starts a new counter baseline without subtracting or fabricating the previous
+cycle's use. The first observation is a baseline, and gaps, corrections, and
+unproven resets are visibly marked partial/unknown.
+
+Short observed intervals are apportioned across local midnight in the saved
+IANA timezone. Longer intervals are not given false daily precision. The
+heatmap uses percentage points of one weekly allowance, with explicit `No data`,
+zero-observed, intensity bands, partial markers and an in-progress label for
+today. This is an estimate from saved provider snapshots, not a message/token
+counter. Only weekly windows qualify; a five-hour window is never silently used
+as a substitute. FakeProvider follows the same visibility setting as the other
+UI/API surfaces.
+
+The heatmap shows up to 365 local dates; changing the saved timezone reprojects
+the same persisted UTC contribution intervals instead of changing or losing the
+underlying total. Derived intervals are retained for 400 days, beyond the
+90-day raw sample retention. Older days without retained evidence remain `No
+data`. Aggregation runs incrementally in bounded batches; page reads do not
+rebuild historical data.
+
+Usage charts have independent `1h`, `3h`, `6h`, `12h`, `24h`, `7d` and `30d`
+periods. Queries cover the selected time domain and downsample while preserving
+endpoints, extrema and outage breaks. Chart labels use the saved timezone.
+Keyboard grid navigation and a plain day-list alternative complement the
+calendar; the controls remain server-rendered and work without JavaScript.
 
 ## History
 
-The server-rendered `/history` page reads persisted SQLite state and never
-inspects a provider. It supports bounded `24h`, `7d` and `30d` ranges plus a
-provider filter. Timeline events are read in bounded pages of 20, with explicit
-previous/next navigation, so a busy daemon does not create an unbounded page.
+The server-rendered `/history` page reads persisted SQLite events and never
+inspects a provider. Timeline events have their own bounded range filter and
+are read in pages of 20, with explicit previous/next navigation, so a busy
+daemon does not create an unbounded page. Existing History URLs that contain
+chart-period selections link to Usage while preserving valid selections.
 Keep it small:
 
 - recent lifecycle/action timeline;
-- usage over time per five-hour/weekly bucket;
-- compact shared SVG usage series with quiet horizontal grid lines, explicit 0–100% axes, contextual UTC ticks and unknown values;
-- keyboard- and pointer-inspectable points with a compact same-origin tooltip showing the exact observation time and value;
-- simple day/hour aggregates after sufficient data (deferred).
+- plain-language event names, reasons and provider labels;
+- bounded filters and previous/next navigation.
 
 No enterprise dashboard, no Grafana clone.
 

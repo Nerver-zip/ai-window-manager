@@ -44,6 +44,7 @@ function createApp(
   seed: (repositories: StorageRepositories, clock: FakeClock) => void,
   adapter: ProviderAdapter | undefined = inspectionSpy('fake'),
   requestReconcile?: () => void,
+  fakeProviderEnabled = true,
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-web-'));
   const dbPath = path.join(dir, 'awm.db');
@@ -52,7 +53,11 @@ function createApp(
   const repositories = createRepositories(db);
   seed(repositories, clock);
   const app = buildServer({
-    config: loadConfig({ AWM_DB_PATH: dbPath, AWM_LOG_LEVEL: 'silent' }),
+    config: loadConfig({
+      AWM_DB_PATH: dbPath,
+      AWM_LOG_LEVEL: 'silent',
+      AWM_FAKE_PROVIDER_ENABLED: String(fakeProviderEnabled),
+    }),
     db,
     repositories,
     adapters: adapter ? new Map([[adapter.id, adapter]]) : new Map(),
@@ -161,9 +166,9 @@ describe('web server persisted overview', () => {
   it('renders an empty workspace with useful navigation', async () => {
     const { app } = createApp(() => {});
     const response = await app.inject('/');
-    expect(response.body).toContain('No providers are being monitored');
+    expect(response.body).toContain('No providers are set up');
     expect(response.body).toContain('aria-current="page"');
-    expect(response.body).toContain('Providers monitored');
+    expect(response.body).toContain('Private usage dashboard');
   });
 
   it.each(['/settings', '/schedule', '/history'])(
@@ -225,6 +230,33 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Codex');
   });
 
+  it('does not imply automatic starts are active when the saved schedule is manual', async () => {
+    const automationAdapter: ProviderAdapter = {
+      ...inspectionSpy('fake'),
+      capabilities: () => ({
+        ...capabilities,
+        windowTrigger: { supported: true, contract: 'official_supported', consumesQuota: true },
+      }),
+    };
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.providers.upsert(providerRecord({ mode: 'automation' }));
+      repositories.events.append({
+        providerId: 'fake',
+        occurredAtMs: Date.parse(NOW),
+        type: 'scheduler_noop',
+        severity: 'info',
+        reasonCode: 'MANUAL_POLICY',
+        data: {},
+      });
+    }, automationAdapter);
+
+    const page = await app.inject('/');
+    expect(page.body).toContain('Manual starts only');
+    expect(page.body).not.toContain('Automatic starts enabled');
+    expect(page.body).toContain('New windows are started only by you.');
+  });
+
   it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
     'shows a human status for %s without a fabricated zero',
     async (health) => {
@@ -261,7 +293,7 @@ describe('web server persisted overview', () => {
       });
     });
     const page = await app.inject('/');
-    expect(page.body).toContain('Automatic action planned');
+    expect(page.body).toContain('A new window is ready to start');
     expect(page.body).toContain('The window can start before the target reset.');
     expect(page.body).not.toContain('<summary>Technical details</summary>');
   });
@@ -309,12 +341,13 @@ describe('web server persisted overview', () => {
     expect(javascript.statusCode).toBe(200);
     expect(javascript.headers['content-type']).toContain('application/javascript');
     expect(javascript.body).toContain('data-chart-point');
-    expect(page.body).toContain('Status</dt><dd>Connected');
-    expect(page.body).toContain('Remaining');
+    expect(page.body).toContain('Connection</dt><dd>Connected');
+    expect(page.body).toContain('left');
     expect(page.body).toContain('75%');
-    expect(page.body).toContain('Why this time is shown');
-    expect(page.body).toContain('Reset in approximately 5 hours');
-    expect(page.body).toContain('Reported by provider · Good confidence');
+    expect(page.body).toContain('In about 5 hours');
+    expect(page.body).toContain('UTC</small>');
+    expect(page.body).not.toContain('official_supported');
+    expect(page.body).not.toContain('exact confidence');
     expect(page.body).not.toContain('official_client_internal');
     expect(page.body).not.toContain('five_hour');
     expect(page.body).not.toContain('<script>persisted text</script>');
@@ -357,11 +390,11 @@ describe('web server persisted overview', () => {
     });
 
     const page = await app.inject('/');
-    expect(page.body).toContain('Reset in approximately 5 minutes');
-    expect(page.body).toContain('Reset in approximately 30 seconds');
-    expect(page.body).toContain('Reset in approximately 2 days');
-    expect(page.body).toContain('Reset approximately 1 hour ago');
-    expect(page.body).toContain('Reset</dt><dd><span class="unknown">Not available yet</span>');
+    expect(page.body).toContain('In about 5 minutes');
+    expect(page.body).toContain('In about 30 seconds');
+    expect(page.body).toContain('In about 2 days');
+    expect(page.body).toContain('About 1 hour ago');
+    expect(page.body).toContain('Reset time</span><strong class="unknown">Not available yet');
   });
 
   it('renders the persisted scheduler explanation and escapes its text', async () => {
@@ -430,13 +463,12 @@ describe('web server persisted overview', () => {
     });
 
     const page = await app.inject('/');
-    expect(page.body).toContain('STALE');
-    expect(page.body).toContain('STALE · never observed');
+    expect(page.body).toContain('out of date');
     expect(page.body).toContain('Waiting for the first update');
     expect(page.body).toContain('Waiting for first observation');
     expect(page.body).not.toContain('&lt;unsafe-kind&gt;');
     expect(page.body).not.toContain('<unsafe-kind>');
-    expect(page.body).toContain('Usage windows will appear after the provider is checked.');
+    expect(page.body).toContain('The first provider update has not arrived yet.');
   });
 
   it('keeps health and metrics side-effect free', async () => {
@@ -491,7 +523,7 @@ describe('web server persisted overview', () => {
       repositories.events.append({
         occurredAtMs: Date.parse(NOW),
         providerId: 'fake',
-        type: 'provider_inspected',
+        type: 'schedule_changed',
         severity: 'info',
         reasonCode: null,
         data: { health: 'UP' },
@@ -500,7 +532,17 @@ describe('web server persisted overview', () => {
         repositories.events.append({
           occurredAtMs: Date.parse(NOW) - index * 1_000,
           providerId: 'fake',
-          type: 'scheduler_noop',
+          type: 'action_succeeded',
+          severity: 'info',
+          reasonCode: 'TARGET_NOT_DUE',
+          data: {},
+        });
+      }
+      for (let index = 0; index < 30; index += 1) {
+        repositories.events.append({
+          occurredAtMs: Date.parse(NOW) - index,
+          providerId: 'fake',
+          type: index % 2 === 0 ? 'provider_inspected' : 'scheduler_noop',
           severity: 'info',
           reasonCode: 'TARGET_NOT_DUE',
           data: {},
@@ -513,13 +555,42 @@ describe('web server persisted overview', () => {
     expect(history.statusCode).toBe(200);
     const historyBody = JSON.parse(history.body) as { events: unknown[] };
     expect(historyBody.events).toHaveLength(1);
-    const historyPage = await app.inject('/history?range=24h&provider=fake');
+    const historyPage = await app.inject(
+      '/history?range=24h&provider=fake&chartRange=fake%7Cfive_hour%7C6h',
+    );
     expect(historyPage.statusCode).toBe(200);
     expect(historyPage.headers['content-type']).toContain('text/html');
     expect(historyPage.body).toContain('Timeline');
-    expect(historyPage.body).toContain('Usage');
-    expect(historyPage.body).toContain('25%');
+    expect(historyPage.body).not.toContain('data-chart-root');
+    expect(historyPage.body).toContain('Timeline range');
     expect(historyPage.body).toContain('page=2');
+    expect(historyPage.body).not.toContain('Provider checked');
+    expect(historyPage.body).not.toContain('Scheduling update');
+    expect(historyPage.body).toContain('Usage charts have moved to');
+    expect(historyPage.body).toContain(
+      'href="/usage?provider=fake&amp;chartRange=fake%7Cfive_hour%7C6h"',
+    );
+    const usagePage = await app.inject('/usage?provider=fake&chartRange=fake%7Cfive_hour%7C6h');
+    expect(usagePage.statusCode).toBe(200);
+    expect(usagePage.body).toContain('<h1>Usage</h1>');
+    expect(usagePage.body).toContain('25%');
+    expect(usagePage.body).toContain('<option value="fake|five_hour|6h" selected>6h</option>');
+    expect(usagePage.body).not.toContain('class="timeline"');
+    const changedChartRange = await app.inject(
+      '/usage?provider=fake&window=five_hour&chartRange=fake%7Cfive_hour%7C3h',
+    );
+    expect(changedChartRange.statusCode).toBe(200);
+    expect(changedChartRange.body).toContain(
+      '<option value="fake|five_hour|3h" selected>3h</option>',
+    );
+    const usageApi = await app.inject('/api/v1/usage?provider=fake&window=five_hour');
+    expect(usageApi.statusCode).toBe(200);
+    expect(usageApi.json()).toMatchObject({
+      timezone: 'America/Sao_Paulo',
+      selectedProviderId: 'fake',
+      selectedWindowKind: null,
+      days: [],
+    });
     const historyPageTwo = await app.inject('/history?range=24h&provider=fake&page=2');
     expect(historyPageTwo.statusCode).toBe(200);
     expect(historyPageTwo.body).toContain('rel="prev"');
@@ -528,6 +599,99 @@ describe('web server persisted overview', () => {
     expect(settings.statusCode).toBe(200);
     expect(settings.body).toContain('America/Sao_Paulo');
     expect(settings.body).not.toContain('synthetic-not-a-secret');
+  });
+
+  it('serves Usage HTML and JSON strictly from persisted data without provider I/O', async () => {
+    const inspected = { count: 0 };
+    const { app } = createApp(
+      (repositories) => {
+        seedObservedProvider(repositories);
+        const window = observation().windows[0];
+        if (!window) throw new Error('test observation window missing');
+        repositories.windowSamples.insert(window);
+      },
+      inspectionSpy('fake', inspected),
+    );
+
+    expect((await app.inject('/usage')).statusCode).toBe(200);
+    expect((await app.inject('/api/v1/usage')).statusCode).toBe(200);
+    expect(inspected.count).toBe(0);
+  });
+
+  it('hides persisted fake provider data from every user-facing read surface when disabled', async () => {
+    const { app } = createApp(
+      (repositories) => {
+        seedObservedProvider(repositories, 'fake', NOW, 'fake');
+        seedObservedProvider(repositories, 'codex', NOW, 'codex');
+        const fakeWindow = observation('fake').windows[0];
+        if (!fakeWindow) throw new Error('fake test window missing');
+        repositories.windowSamples.insert(fakeWindow);
+        repositories.events.append({
+          occurredAtMs: Date.parse(NOW),
+          providerId: 'fake',
+          type: 'provider_inspected',
+          severity: 'info',
+          reasonCode: null,
+          data: {},
+        });
+        repositories.events.append({
+          occurredAtMs: Date.parse(NOW) - 1,
+          providerId: 'codex',
+          type: 'provider_inspected',
+          severity: 'info',
+          reasonCode: null,
+          data: {},
+        });
+        repositories.events.append({
+          occurredAtMs: Date.parse(NOW) - 2,
+          providerId: null,
+          type: 'timezone_updated',
+          severity: 'info',
+          reasonCode: null,
+          data: {},
+        });
+      },
+      inspectionSpy('codex'),
+      undefined,
+      false,
+    );
+
+    const overview = await app.inject('/');
+    expect(overview.body).toContain('Codex');
+    expect(overview.body).not.toContain('Test provider');
+    const settings = await app.inject('/settings');
+    expect(settings.body).not.toContain('provider-fake');
+    expect(settings.body).not.toContain('Test provider');
+    const schedule = await app.inject('/schedule');
+    expect(schedule.body).not.toContain('option value="fake"');
+    expect(schedule.body).not.toContain('Test provider');
+    const historyPage = await app.inject('/history');
+    expect(historyPage.body).not.toContain('fake / five_hour');
+    expect(historyPage.body).not.toContain('option value="fake"');
+    expect((await app.inject('/history?provider=fake')).statusCode).toBe(404);
+    const usagePage = await app.inject('/usage');
+    expect(usagePage.statusCode).toBe(200);
+    expect(usagePage.body).toContain('Codex');
+    expect(usagePage.body).not.toContain('Test provider');
+    expect(usagePage.body).not.toContain('fake / five_hour');
+    expect((await app.inject('/usage?provider=fake')).statusCode).toBe(404);
+    const usage = await app.inject('/api/v1/usage');
+    expect(usage.statusCode).toBe(200);
+    expect(usage.body).toContain('codex');
+    expect(usage.body).not.toContain('fake');
+    expect((await app.inject('/api/v1/usage?provider=fake')).statusCode).toBe(404);
+
+    const providers = await app.inject('/api/v1/providers');
+    expect(providers.json()).toMatchObject({ providers: [{ id: 'codex' }] });
+    expect((await app.inject('/api/v1/providers/fake')).statusCode).toBe(404);
+    const history = await app.inject('/api/v1/history?limit=50');
+    expect(history.body).not.toContain('fake');
+    expect(history.body).toContain('codex');
+    expect(history.body).toContain('timezone_updated');
+    expect((await app.inject('/api/v1/history?provider=fake')).body).not.toContain('fake');
+    const scheduling = await app.inject('/api/v1/scheduling');
+    expect(scheduling.body).not.toContain('fake');
+    expect(scheduling.body).toContain('codex');
   });
 
   it('protects inspect and trigger commands with Origin and CSRF without provider I/O in handlers', async () => {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { APP_CSS } from '../../src/web/ui/styles.js';
 import {
+  averageChartPoints,
   buildTickIndices,
   formatChartTick,
   formatChartTooltipTime,
@@ -9,9 +11,39 @@ import {
 } from '../../src/web/ui/charts.js';
 
 describe('shared chart primitives', () => {
+  it('averages neighboring readings without crossing missing samples or explicit gaps', () => {
+    const points = [
+      { observedAt: '2026-09-19T10:00:00.000Z', value: 0 },
+      { observedAt: '2026-09-19T10:01:00.000Z', value: 0 },
+      { observedAt: '2026-09-19T10:02:00.000Z', value: 1, gapBefore: true },
+      { observedAt: '2026-09-19T10:03:00.000Z', value: 0 },
+      { observedAt: '2026-09-19T10:04:00.000Z', value: null },
+      { observedAt: '2026-09-19T10:05:00.000Z', value: 0.8 },
+    ];
+
+    expect(averageChartPoints(points, 5, 0, 1).map((point) => point.value)).toEqual([
+      0,
+      0,
+      0.5,
+      0.5,
+      null,
+      0.8,
+    ]);
+    expect(averageChartPoints(points, 0, 0, 1).map((point) => point.value)).toEqual([
+      0,
+      0,
+      1,
+      0,
+      null,
+      0.8,
+    ]);
+  });
+
   it('formats short and long ranges in UTC and fails closed for bad timestamps', () => {
     const timestamp = '2026-09-19T14:05:00.000Z';
     expect(formatChartTick(timestamp, '24h')).toBe('14:05 UTC');
+    expect(formatChartTick(timestamp, '1h')).toBe('14:05 UTC');
+    expect(formatChartTick(timestamp, '12h')).toBe('14:05 UTC');
     expect(formatChartTick(timestamp, '7d')).toBe('19 Sep');
     expect(formatChartTick(timestamp, '30d')).toBe('19 Sep');
     expect(formatChartTick('not-a-date', '24h')).toBe('unknown');
@@ -86,6 +118,21 @@ describe('shared chart primitives', () => {
     expect(html).not.toContain('<Usage>');
   });
 
+  it('omits an empty footer while retaining the series legend', () => {
+    const html = renderTimeSeriesChart({
+      id: 'usage',
+      title: 'Usage',
+      range: '24h',
+      summary: [],
+      series: [{ key: 'used', label: 'Usage trend', colorIndex: 1, points: [] }],
+      yAxis: { min: 0, max: 1, ticks: [1, 0], format: formatRatioPercent },
+      footer: '',
+    });
+
+    expect(html).toContain('Usage trend');
+    expect(html).not.toContain('chart-legend-context');
+  });
+
   it('supports a degenerate domain and a stable empty state', () => {
     const html = renderTimeSeriesChart({
       id: 'single',
@@ -123,5 +170,35 @@ describe('shared chart primitives', () => {
     });
     expect(html).toContain('Waiting for a valid observation');
     expect(html).not.toContain('data-chart-point');
+  });
+
+  it('fills each known segment while leaving missing samples and gaps unbridged', () => {
+    const html = renderTimeSeriesChart({
+      id: 'filled',
+      title: 'Filled usage',
+      range: '1h',
+      summary: [],
+      series: [
+        {
+          key: 'usage',
+          label: 'Usage',
+          colorIndex: 1,
+          points: [
+            { observedAt: '2026-09-19T10:00:00.000Z', value: 0.1 },
+            { observedAt: '2026-09-19T10:01:00.000Z', value: 0.2 },
+            { observedAt: '2026-09-19T10:02:00.000Z', value: null },
+            { observedAt: '2026-09-19T10:03:00.000Z', value: 0.7, gapBefore: true },
+            { observedAt: '2026-09-19T10:04:00.000Z', value: 0.8 },
+          ],
+        },
+      ],
+      yAxis: { min: 0, max: 1, ticks: [1, 0], format: formatRatioPercent },
+      footer: '5 observations',
+    });
+
+    expect(html.match(/class="chart-area chart-series-1"/g)).toHaveLength(2);
+    expect(html.match(/class="chart-line chart-series-1"/g)).toHaveLength(2);
+    expect(html).toContain(' L 624,188 Z"');
+    expect(APP_CSS).toContain('.chart-area.chart-series-1 { fill: var(--chart-1); stroke: none; }');
   });
 });

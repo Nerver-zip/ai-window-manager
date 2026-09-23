@@ -2,6 +2,29 @@
 export const APP_JS = `(() => {
   const roots = document.querySelectorAll('[data-chart-root]');
 
+  for (const form of document.querySelectorAll('form[action^="/settings/providers/"]')) {
+    const preset = form.querySelector('[data-refresh-preset]');
+    const custom = form.querySelector('[data-refresh-custom]');
+    const customInput = custom?.querySelector('input');
+    if (!preset || !custom || !customInput) continue;
+
+    const syncCustomInterval = () => {
+      const active = preset.value === 'custom';
+      custom.hidden = !active;
+      custom.open = active;
+      customInput.disabled = !active;
+    };
+    preset.addEventListener('change', syncCustomInterval);
+    syncCustomInterval();
+  }
+
+  for (const select of document.querySelectorAll('[data-chart-range-select]')) {
+    select.addEventListener('change', () => {
+      const form = select.closest('form');
+      if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+    });
+  }
+
   function setPolicyFieldState(section, active) {
     section.hidden = !active;
     section.setAttribute('aria-hidden', active ? 'false' : 'true');
@@ -78,8 +101,19 @@ export const APP_JS = `(() => {
     renumberList(list);
   }
 
-  for (const input of document.querySelectorAll('[data-timezone-input]')) {
-    if (input.dataset.timezoneAutoDetect !== 'true' || input.value.trim() !== '') continue;
+  for (const select of document.querySelectorAll('[data-timezone-select]')) {
+    const form = select.closest('form');
+    const custom = form?.querySelector('[data-timezone-custom]');
+    const customInput = form?.querySelector('[data-timezone-custom-input]');
+    const syncTimeZoneChoice = () => {
+      const useCustom = select.value === 'custom';
+      if (custom) custom.open = useCustom;
+      if (customInput) customInput.required = useCustom;
+    };
+    select.addEventListener('change', syncTimeZoneChoice);
+    syncTimeZoneChoice();
+
+    if (select.dataset.timezoneAutoDetect !== 'true' || select.value !== '') continue;
 
     let detected;
     try {
@@ -89,8 +123,11 @@ export const APP_JS = `(() => {
     }
     if (!detected) continue;
 
-    input.value = detected;
-    const form = input.closest('form');
+    const isPreset = Array.from(select.options).some((option) => option.value === detected);
+    select.value = isPreset ? detected : 'custom';
+    if (!isPreset && customInput) customInput.value = detected;
+    syncTimeZoneChoice();
+
     const source = form?.querySelector('[name="source"]');
     const status = form?.querySelector('[data-timezone-status]');
     if (source) source.value = 'detected';
@@ -167,6 +204,35 @@ export const APP_JS = `(() => {
     });
     root.addEventListener('focusout', (event) => {
       if (!root.contains(event.relatedTarget)) hide(root);
+    });
+  }
+
+  for (const grid of document.querySelectorAll('[data-usage-grid]')) {
+    const cells = Array.from(grid.querySelectorAll('[data-usage-cell]'));
+    const cellsByDay = new Map(cells.map((cell) => [Number(cell.dataset.usageIndex), cell]));
+    const selected = cells.find((cell) => cell.getAttribute('aria-selected') === 'true');
+    const recent = selected || cells.at(-1);
+    if (recent && window.matchMedia?.('(max-width: 700px)').matches) {
+      const scroll = grid.closest('.usage-calendar-scroll');
+      if (scroll) scroll.scrollLeft = scroll.scrollWidth;
+    }
+    grid.addEventListener('keydown', (event) => {
+      const current = event.target.closest?.('[data-usage-cell]');
+      if (!current) return;
+      const index = Number(current.dataset.usageIndex);
+      const offsets = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 };
+      const offset = offsets[event.key];
+      if (offset !== undefined) {
+        const next = cellsByDay.get(index + offset);
+        if (!next) return;
+        event.preventDefault();
+        for (const cell of cells) cell.tabIndex = -1;
+        next.tabIndex = 0;
+        next.focus();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        (selected || cells[0])?.focus();
+      }
     });
   }
 })();`;

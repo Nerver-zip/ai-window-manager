@@ -20,6 +20,7 @@ export type EventRetentionClass = 'ordinary' | 'lifecycle' | 'action' | 'securit
  */
 export interface RetentionPolicy {
   windowSamplesMs: number;
+  usageIntervalsMs: number;
   ordinaryEventsMs: number;
   lifecycleEventsMs: number;
   actionEventsMs: number;
@@ -29,6 +30,7 @@ export interface RetentionPolicy {
 
 export const DEFAULT_RETENTION_POLICY: Readonly<RetentionPolicy> = {
   windowSamplesMs: 90 * DAY_MS,
+  usageIntervalsMs: 400 * DAY_MS,
   ordinaryEventsMs: 90 * DAY_MS,
   lifecycleEventsMs: 365 * DAY_MS,
   actionEventsMs: 365 * DAY_MS,
@@ -46,6 +48,7 @@ export interface RetentionMaintenanceOptions {
 export interface RetentionMaintenanceResult {
   asOfMs: number;
   windowSamplesDeleted: number;
+  usageIntervalsDeleted: number;
   eventsDeleted: Record<EventRetentionClass, number>;
   terminalActionIntentsDeleted: number;
   totalDeleted: number;
@@ -148,8 +151,18 @@ export function runRetentionMaintenance(
       'window_samples',
       'observed_at_ms',
       asOfMs - policy.windowSamplesMs,
+      `id <= COALESCE((SELECT last_sample_id FROM usage_aggregation_checkpoint WHERE id = 1), 0)`,
+      batchSize,
+    );
+    const usageIntervalsDeleted = deleteBatch(
+      db,
+      'usage_intervals',
+      'to_ms',
+      asOfMs - policy.usageIntervalsMs,
       '1 = 1',
       batchSize,
+      [],
+      'source_sample_id',
     );
 
     const eventPolicies: Array<{
@@ -203,11 +216,13 @@ export function runRetentionMaintenance(
 
     const totalDeleted =
       windowSamplesDeleted +
+      usageIntervalsDeleted +
       Object.values(eventsDeleted).reduce((total, count) => total + count, 0) +
       terminalActionIntentsDeleted;
     return {
       asOfMs,
       windowSamplesDeleted,
+      usageIntervalsDeleted,
       eventsDeleted,
       terminalActionIntentsDeleted,
       totalDeleted,
@@ -220,6 +235,7 @@ export function runRetentionMaintenance(
 function resolvePolicy(overrides: Partial<RetentionPolicy> | undefined): RetentionPolicy {
   const policy = { ...DEFAULT_RETENTION_POLICY, ...overrides };
   validateNonNegativeInteger(policy.windowSamplesMs, 'windowSamplesMs');
+  validateNonNegativeInteger(policy.usageIntervalsMs, 'usageIntervalsMs');
   validateNonNegativeInteger(policy.ordinaryEventsMs, 'ordinaryEventsMs');
   validateNonNegativeInteger(policy.lifecycleEventsMs, 'lifecycleEventsMs');
   validateNonNegativeInteger(policy.actionEventsMs, 'actionEventsMs');
@@ -238,21 +254,22 @@ function validateNonNegativeInteger(value: number, name: string, allowZero = fal
 
 function deleteBatch(
   db: SqliteDatabase,
-  table: 'window_samples' | 'events' | 'action_intents',
+  table: 'window_samples' | 'usage_intervals' | 'events' | 'action_intents',
   timestampExpression: string,
   cutoffMs: number,
   predicate: string,
   batchSize: number,
   predicateParameters: readonly string[] = [],
+  idColumn: 'id' | 'source_sample_id' = 'id',
 ): number {
   const result = db
     .prepare(
       `DELETE FROM ${table}
-       WHERE id IN (
-         SELECT id FROM ${table}
+       WHERE ${idColumn} IN (
+         SELECT ${idColumn} FROM ${table}
          WHERE ${timestampExpression} < ?
            AND (${predicate})
-         ORDER BY id
+         ORDER BY ${idColumn}
          LIMIT ?
        )`,
     )

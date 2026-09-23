@@ -97,12 +97,16 @@ Included now:
 - injectable clock;
 - pure target-reset scheduler decision engine with freshness/confidence gates and explanations;
 - IANA local-time occurrence resolution with deterministic DST rules and a wall/monotonic clock-jump seam;
-- FakeProvider;
+- FakeProvider for deterministic tests and optional local UI development (`AWM_FAKE_PROVIDER_ENABLED=true`);
 - SQLite schema and migration runner;
 - durable provider reconciliation with last-known-good state, samples, events and deduplicated planned intents;
 - safe action-intent executor with atomic claims, preflight checks, confirmation, uncertainty and restart recovery;
 - health, metrics, and persisted provider overview/API (HTTP reads do not inspect providers);
-- bounded persisted history page with 24h/7d/30d and provider filters;
+- Usage page with a reset-safe daily weekly-allowance heatmap and independent
+  1h/3h/6h/12h/24h/7d/30d charts;
+- paginated History timeline with filters, independent of Usage visualization;
+- incremental SQLite contribution intervals retained for 400 days, even though
+  detailed provider samples are retained for 90 days;
 - read-only command endpoints plus CSRF/Origin-protected settings and target-reset schedule forms;
 - bounded retention maintenance for samples, events and terminal intent history;
 - official Codex app-server adapter with offline protocol fixtures and an opt-in

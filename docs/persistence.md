@@ -10,6 +10,11 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
 
 - `provider_state`: one current last-known normalized state per provider.
 - `window_samples`: normalized historical measurements.
+- `usage_aggregation_checkpoint` and `usage_series_state`: incremental processing
+  cursor and last-known cumulative weekly-usage baseline/high-water per provider
+  window.
+- `usage_intervals`: derived UTC contribution/quality intervals used to project
+  daily usage in the saved timezone.
 - `events`: append-only human/metric history, not the source of truth for reconstructing all state.
 - `action_intents`: durable side-effect state and duplicate prevention.
 - `settings`/`providers`/`schedule_policies`: current runtime config.
@@ -21,12 +26,19 @@ This is **not event sourcing**.
 MVP defaults:
 
 - `window_samples`: 90 days;
+- derived `usage_intervals`: 400 days, so the annual local-calendar view survives
+  the shorter raw-sample retention;
 - ordinary `usage_sampled` events: 90 days;
 - lifecycle/action/config/security-relevant events: 365 days;
 - action intents required for current dedupe/recovery are retained at least 365 days;
 - current state/config: no TTL.
 
-A daily low-priority maintenance pass deletes eligible rows in bounded batches. No downsampling/OLAP pipeline in MVP.
+A daily low-priority maintenance pass deletes eligible rows in bounded batches.
+It will not delete a window sample until the aggregation checkpoint has passed
+that sample. Adjacent equivalent zero/unknown intervals are coalesced while
+preserving their covered UTC span, limiting idle-poll storage growth. Derived
+intervals have no cascading foreign key to raw samples and are pruned separately
+after 400 days. No downsampling/OLAP platform is used.
 
 Action intents use conditional SQL transitions for claim, success, uncertainty,
 retryable failure, confirmation and terminal recovery. `executing` intents are
@@ -99,6 +111,8 @@ The forward-only schema currently consists of:
 - `migrations/002_window_fact_evidence.sql` for provenance columns on every persisted window fact, including phase.
 - `migrations/003_activation_policies.sql` for the explicit manual/auto/fixed/
   custom-schedule/active-hours policy model and its compatibility migration.
+- `migrations/004_usage_aggregation.sql` for the durable usage checkpoint,
+  per-window baseline and reset-safe UTC contribution intervals.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys
@@ -106,7 +120,7 @@ and a bounded busy timeout, and resolves migrations from the packaged applicatio
 path rather than relying only on the process working directory.
 
 `src/storage/repositories.ts` provides repositories for providers, current
-provider state, window samples, events, settings, schedule policies and action
+provider state, window samples, usage aggregation, events, settings, schedule policies and action
 intents. Provider observations are validated at the persistence boundary, window
 samples round-trip evidence/source/confidence metadata, and action-intent
 creation uses a transaction plus the database `UNIQUE(dedupe_key)` constraint.
@@ -117,6 +131,9 @@ health/error metadata while retaining the previous normalized observation; no
 fabricated empty observation replaces last-known-good state. Policy updates are
 append-audited separately and do not rewrite observation history.
 
-The server-rendered history view queries events by UTC range in bounded pages
+The server-rendered History view queries events by UTC range in bounded pages
 of 20 using the event timestamp index/order; pagination changes the read window
-only and does not alter retention or append-only history semantics.
+only and does not alter retention or append-only history semantics. A separate
+Usage read service projects persisted contribution intervals into at most 365
+local days and bounds chart queries to 30 days with time-bucket downsampling.
+Neither page performs provider I/O or backfills during an HTTP request.

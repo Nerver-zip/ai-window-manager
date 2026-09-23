@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import type { ProviderAdapter } from './providers/provider.js';
 import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
+import { filterVisibleProviders } from './providers/visibility.js';
 import {
   recordInspection,
   recordObservation,
@@ -18,6 +19,7 @@ import { ActionExecutor } from './scheduler/action-executor.js';
 import { openDatabase } from './storage/database.js';
 import { createRepositories, type SchedulePolicyRecord } from './storage/repositories.js';
 import { runRetentionMaintenance } from './storage/retention.js';
+import { processUsageAggregationBatch } from './usage/service.js';
 import { buildServer } from './web/server.js';
 
 const config = loadConfig();
@@ -63,6 +65,7 @@ const app = buildServer({
 let reconcileTimer: NodeJS.Timeout | undefined;
 let executorTimer: NodeJS.Timeout | undefined;
 let retentionTimer: NodeJS.Timeout | undefined;
+const usageAggregationTimer: { current?: NodeJS.Timeout } = {};
 let reconcileInFlight: Promise<unknown> | undefined;
 let executorInFlight: Promise<unknown> | undefined;
 let stopping = false;
@@ -113,6 +116,17 @@ function startRetentionLoop(): void {
   }, config.AWM_RETENTION_INTERVAL_SECONDS * 1000);
 }
 
+function processUsageAggregation(): void {
+  if (stopping) return;
+  try {
+    const result = processUsageAggregationBatch(db, repositories, clock.now().getTime());
+    if (result.pending)
+      app.log.debug({ processed: result.processed }, 'usage aggregation backlog remains');
+  } catch (error) {
+    app.log.error({ error }, 'usage aggregation failed');
+  }
+}
+
 async function shutdown(signal: string): Promise<void> {
   if (stopping) return;
   stopping = true;
@@ -120,6 +134,7 @@ async function shutdown(signal: string): Promise<void> {
   if (reconcileTimer) clearInterval(reconcileTimer);
   if (executorTimer) clearInterval(executorTimer);
   if (retentionTimer) clearInterval(retentionTimer);
+  if (usageAggregationTimer.current) clearInterval(usageAggregationTimer.current);
   if (reconcileInFlight) await reconcileInFlight;
   if (executorInFlight) await executorInFlight;
   await app.close();
@@ -198,7 +213,10 @@ function seedProvider(input: { id: string; kind: string; config: unknown }): voi
 }
 
 function hydrateMetricsFromState(): void {
-  for (const provider of repositories.providers.list()) {
+  for (const provider of filterVisibleProviders(
+    repositories.providers.list(),
+    config.AWM_FAKE_PROVIDER_ENABLED,
+  )) {
     const state = repositories.providerState.get(provider.id);
     if (state?.observation) {
       recordObservation(state.observation, {
@@ -215,7 +233,10 @@ function hydrateMetricsFromState(): void {
 function refreshRuntimeMetrics(): void {
   const nowMs = clock.now().getTime();
   refreshObservationMetrics(nowMs);
-  for (const provider of repositories.providers.list()) {
+  for (const provider of filterVisibleProviders(
+    repositories.providers.list(),
+    config.AWM_FAKE_PROVIDER_ENABLED,
+  )) {
     setActionIntentCounts(provider.id, repositories.actionIntents.countsByState(provider.id));
   }
 }
@@ -263,8 +284,10 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 await reconciler.reconcile();
 await executor.executeDue();
 refreshRuntimeMetrics();
+processUsageAggregation();
 runRetentionMaintenance(db, { clock });
 startReconcileLoop();
 startExecutorLoop();
 startRetentionLoop();
+usageAggregationTimer.current = setInterval(processUsageAggregation, 1_000);
 await app.listen({ host: config.AWM_BIND, port: config.AWM_PORT });

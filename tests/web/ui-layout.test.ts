@@ -41,6 +41,7 @@ describe('shared application shell', () => {
     expect(APP_CSS).toContain('.chart-point-hit:hover .chart-point-active');
     expect(APP_CSS).toContain('stroke-width: 1.6');
     expect(APP_CSS).toContain('.chart-svg { height: 205px; }');
+    expect(APP_CSS).toContain('.chart-axis-label, .chart-axis-time { font-size: 18px; }');
     expect(APP_CSS).toContain('prefers-reduced-motion');
     expect(APP_CSS).not.toMatch(/@import|https?:/);
   });

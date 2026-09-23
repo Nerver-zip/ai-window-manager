@@ -41,9 +41,12 @@ it does not turn an ambiguous outcome into a retryable failure.
 
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight
-read-only work, closes the HTTP server, and then closes SQLite. The default
-FakeProvider remains monitor-only unless runtime automation is explicitly enabled;
-Codex has no trigger capability unless the explicit trigger gate is enabled.
+read-only work, closes the HTTP server, and then closes SQLite. FakeProvider is
+opt-in through `AWM_FAKE_PROVIDER_ENABLED=true`. When false, any previously
+persisted FakeProvider is hidden from HTML, JSON read/command routes, history,
+and Prometheus metrics; its SQLite state and history are retained. Set it true to
+enable and show the deterministic provider for local development. Codex has no
+trigger capability unless the explicit trigger gate is enabled.
 
 ## Dockge
 
@@ -82,7 +85,9 @@ docker compose ps
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/healthz
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/metrics
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/
+curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/usage
 curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/history
+curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/api/v1/usage
 ```
 
 Then restart:

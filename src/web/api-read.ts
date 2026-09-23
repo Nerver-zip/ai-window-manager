@@ -22,6 +22,7 @@ import type {
   SettingRecord,
   StorageRepositories,
 } from '../storage/repositories.js';
+import { isProviderVisible } from '../providers/visibility.js';
 
 export const MAX_HISTORY_LIMIT = 500;
 export const DEFAULT_HISTORY_LIMIT = 100;
@@ -120,6 +121,7 @@ export interface ReadApiInput {
   repositories: StorageRepositories;
   clock: Clock;
   adapters?: ReadonlyMap<string, ProviderAdapter>;
+  fakeProviderEnabled?: boolean;
 }
 
 export interface ReadApiSuccess<T> {
@@ -286,6 +288,7 @@ function readProviders(input: ReadApiInput): ProviderDto[] {
   const nowMs = input.clock.now().getTime();
   return input.repositories.providers
     .list()
+    .filter((provider) => isProviderVisible(provider.id, input.fakeProviderEnabled ?? true))
     .map((provider) => readProviderDto(input, provider, nowMs));
 }
 
@@ -294,7 +297,8 @@ function readProvider(input: ReadApiInput, rawId: unknown): ReadApiResult<Provid
   if (!parsedId.success) return badRequest('provider id is invalid');
 
   const provider = input.repositories.providers.get(parsedId.data);
-  if (!provider) return notFound('provider not found');
+  if (!provider || !isProviderVisible(provider.id, input.fakeProviderEnabled ?? true))
+    return notFound('provider not found');
 
   return success({
     provider: readProviderDetailDto(input, provider, input.clock.now().getTime()),
@@ -309,7 +313,10 @@ function readHistory(input: ReadApiInput, rawQuery: unknown): ReadApiResult<Hist
   const toMs = query.to ? Date.parse(query.to) : undefined;
 
   const events = input.repositories.events
-    .list(undefined, { limit: HISTORY_SCAN_LIMIT })
+    .list(undefined, {
+      limit: HISTORY_SCAN_LIMIT,
+      ...(input.fakeProviderEnabled === false ? { excludeProviderId: 'fake' } : {}),
+    })
     .filter((event) => {
       if (query.provider !== undefined && event.providerId !== query.provider) return false;
       if (query.type !== undefined && event.type !== query.type) return false;

@@ -93,6 +93,20 @@ function seedState(repositories: StorageRepositories, current = observation()): 
 }
 
 describe('readScheduling', () => {
+  it('omits persisted fake provider policies when the provider is disabled by configuration', () => {
+    const context = setup();
+    seedState(context.repositories);
+
+    const result = readScheduling({
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.fake]]),
+      clock: context.clock,
+      fakeProviderEnabled: false,
+    });
+
+    expect(result.providers).toEqual([]);
+  });
+
   it('returns an empty persisted workspace without provider I/O', () => {
     const context = setup();
     const result = readScheduling({

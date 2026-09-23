@@ -4,6 +4,7 @@ import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { StorageRepositories } from '../storage/repositories.js';
 import type { ActionIntentRecord, EventRecord } from '../storage/repositories.js';
+import { isProviderVisible } from '../providers/visibility.js';
 
 const MAX_MANUAL_IDEMPOTENCY_KEY = 128;
 
@@ -25,6 +26,7 @@ export interface CommandApiInput {
   clock: Clock;
   requestReconcile?: (() => void) | undefined;
   idFactory?: () => string;
+  fakeProviderEnabled?: boolean;
 }
 
 export interface CommandAcceptedBody {
@@ -59,6 +61,8 @@ export function createCommandApi(input: CommandApiInput): CommandApiHandlers {
 function inspectProvider(input: CommandApiInput, rawProviderId: unknown): CommandResult {
   const providerId = providerIdValue(rawProviderId);
   if (!providerId) return badRequest('provider id is invalid');
+  if (!isProviderVisible(providerId, input.fakeProviderEnabled ?? true))
+    return notFound('provider not found');
   const provider = input.repositories.providers.get(providerId);
   if (!provider) return notFound('provider not found');
   if (!provider.enabled) return conflict('provider is disabled');
@@ -82,6 +86,8 @@ function triggerProvider(
 ): CommandResult {
   const providerId = providerIdValue(rawProviderId);
   if (!providerId) return badRequest('provider id is invalid');
+  if (!isProviderVisible(providerId, input.fakeProviderEnabled ?? true))
+    return notFound('provider not found');
   const provider = input.repositories.providers.get(providerId);
   const adapter = input.adapters.get(providerId);
   if (!provider || !adapter) return notFound('provider not found');

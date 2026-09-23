@@ -24,6 +24,7 @@ describe('openDatabase', () => {
       { version: 1, applied_at_ms: appliedAtMs },
       { version: 2, applied_at_ms: appliedAtMs },
       { version: 3, applied_at_ms: appliedAtMs },
+      { version: 4, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -42,7 +43,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(3);
+    ).toBe(4);
     reopened.close();
   });
 
@@ -100,7 +101,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
     expect(
       upgraded
         .prepare(

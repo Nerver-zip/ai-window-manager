@@ -53,6 +53,21 @@ function setup() {
 }
 
 describe('command API', () => {
+  it('does not accept commands for a provider hidden by environment configuration', () => {
+    const context = setup();
+    const api = createCommandApi({
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.fake]]),
+      clock: context.clock,
+      fakeProviderEnabled: false,
+    });
+
+    expect(api.inspect('fake')).toMatchObject({ statusCode: 404 });
+    expect(api.trigger('fake', {})).toMatchObject({ statusCode: 404 });
+    expect(context.repositories.events.list('fake')).toEqual([]);
+    expect(context.repositories.actionIntents.listOpen('fake')).toEqual([]);
+  });
+
   it('accepts inspect as a reconcile signal without provider I/O', () => {
     const context = setup();
     let requested = 0;

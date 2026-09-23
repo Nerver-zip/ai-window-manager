@@ -48,6 +48,10 @@ describe('retention maintenance', () => {
     const recent = NOW - DAY_MS;
     repositories.windowSamples.insert(sample(oldOrdinary));
     repositories.windowSamples.insert(sample(recent));
+    repositories.usageAggregation.advanceCheckpoint(
+      repositories.usageAggregation.maxSampleId(),
+      NOW,
+    );
     appendEvent(repositories.events, 'usage_sampled', oldOrdinary);
     appendEvent(repositories.events, 'usage_sampled', recent);
     appendEvent(repositories.events, 'provider_inspected', oldImportant);
@@ -139,6 +143,10 @@ describe('retention maintenance', () => {
         }),
       );
     }
+    repositories.usageAggregation.advanceCheckpoint(
+      repositories.usageAggregation.maxSampleId(),
+      NOW,
+    );
 
     const clock = new FakeClock(new Date(NOW));
     const first = runRetentionMaintenance(db, { clock, policy, batchSize: 2 });
@@ -163,7 +171,56 @@ describe('retention maintenance', () => {
 
     expect(runRetentionMaintenance(db, { clock, policy }).windowSamplesDeleted).toBe(0);
     clock.advanceMs(1);
+    expect(runRetentionMaintenance(db, { clock, policy }).windowSamplesDeleted).toBe(0);
+    repositories.usageAggregation.advanceCheckpoint(
+      repositories.usageAggregation.maxSampleId(),
+      NOW + 1,
+    );
     expect(runRetentionMaintenance(db, { clock, policy }).windowSamplesDeleted).toBe(1);
+  });
+
+  it('keeps expired samples until the usage aggregation cursor passes them', () => {
+    const { db, repositories } = openTestDatabase();
+    repositories.windowSamples.insert(sample(NOW - 91 * DAY_MS));
+    const clock = new FakeClock(new Date(NOW));
+    expect(runRetentionMaintenance(db, { clock }).windowSamplesDeleted).toBe(0);
+    expect(repositories.windowSamples.list('fake')).toHaveLength(1);
+    repositories.usageAggregation.advanceCheckpoint(
+      repositories.usageAggregation.maxSampleId(),
+      NOW,
+    );
+    expect(runRetentionMaintenance(db, { clock }).windowSamplesDeleted).toBe(1);
+  });
+
+  it('retains derived daily usage beyond raw-sample retention for a full year view', () => {
+    const { db, repositories } = openTestDatabase();
+    const oldTo = NOW - 401 * DAY_MS;
+    const recentTo = NOW - 399 * DAY_MS;
+    const intervals: Array<[number, number]> = [
+      [1, oldTo],
+      [2, recentTo],
+    ];
+    for (const [sourceSampleId, toMs] of intervals) {
+      repositories.usageAggregation.insertInterval({
+        sourceSampleId,
+        providerId: 'fake',
+        windowKind: 'weekly',
+        fromMs: toMs - 60_000,
+        toMs,
+        usageDeltaRatio: 0.01,
+        quality: 'observed',
+        reasonCode: null,
+      });
+    }
+
+    const result = runRetentionMaintenance(db, { clock: new FakeClock(new Date(NOW)) });
+    expect(result.usageIntervalsDeleted).toBe(1);
+    expect(result.totalDeleted).toBe(1);
+    expect(
+      db.prepare('SELECT source_sample_id FROM usage_intervals').all() as Array<{
+        source_sample_id: number;
+      }>,
+    ).toEqual([{ source_sample_id: 2 }]);
   });
 
   it('rejects invalid retention configuration before changing rows', () => {

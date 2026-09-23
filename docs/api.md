@@ -10,11 +10,13 @@ GET  /metrics
 GET  /
 GET  /schedule
 GET  /history
+GET  /usage
 GET  /settings
 
 GET  /api/v1/providers
 GET  /api/v1/providers/:id
 GET  /api/v1/history?provider=&type=&from=&to=&limit=
+GET  /api/v1/usage?provider=&window=&day=&chartRange=
 GET  /api/v1/settings
 GET  /api/v1/scheduling
 POST /api/v1/providers/:id/trigger
@@ -32,6 +34,13 @@ persisted scheduler decision. `/api/v1/scheduling` exposes the persisted
 timezone, activation policy, current window, upcoming occurrences and planner
 decision without provider I/O. Trigger requests create a durable intent and
 return `202`, while inspect requests append a reconcile hint and return `202`.
+
+`/usage` and `/api/v1/usage` read the persisted weekly-usage projection. The
+JSON response is bounded to 365 local calendar days and selected chart windows;
+it includes the saved timezone, aggregation-pending state, selected
+provider/window, daily values with quality/coverage, and downsampled chart
+series. It never inspects a provider. A hidden FakeProvider follows the same
+visibility filtering as the other provider read routes.
 
 Notes:
 

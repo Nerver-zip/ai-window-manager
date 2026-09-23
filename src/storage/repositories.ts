@@ -8,6 +8,7 @@ import type {
   WindowSnapshot,
 } from '../domain/types.js';
 import { parseProviderObservation, WindowSnapshotSchema } from '../domain/schemas.js';
+import type { UsageInterval, UsageSampleInput, UsageSeriesState } from '../usage/aggregation.js';
 import type { SqliteDatabase } from './database.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
@@ -101,12 +102,17 @@ export interface ListOptions {
   /** Inclusive lower bound for UTC epoch milliseconds. */
   afterMs?: number;
   beforeMs?: number;
+  /** Exclude one provider while retaining system events with a null provider ID. */
+  excludeProviderId?: string;
+  /** Omit routine event types from bounded read views such as the activity timeline. */
+  excludeTypes?: readonly string[];
 }
 
 export interface StorageRepositories {
   providers: ProviderRepository;
   providerState: ProviderStateRepository;
   windowSamples: WindowSampleRepository;
+  usageAggregation: UsageAggregationRepository;
   events: EventRepository;
   settings: SettingsRepository;
   schedulePolicies: SchedulePolicyRepository;
@@ -118,6 +124,7 @@ export function createRepositories(db: SqliteDatabase): StorageRepositories {
     providers: new ProviderRepository(db),
     providerState: new ProviderStateRepository(db),
     windowSamples: new WindowSampleRepository(db),
+    usageAggregation: new UsageAggregationRepository(db),
     events: new EventRepository(db),
     settings: new SettingsRepository(db),
     schedulePolicies: new SchedulePolicyRepository(db),
@@ -278,6 +285,328 @@ export class WindowSampleRepository {
       .get(providerId, windowKind) as WindowSampleRow | undefined;
     return row ? windowSnapshotFromRow(row) : undefined;
   }
+
+  listForUsageAggregation(afterId: number, limit: number): UsageSampleInput[] {
+    return this.db
+      .prepare(
+        `SELECT id, provider_id, window_kind, observed_at_ms, duration_seconds,
+                duration_confidence, reset_at_ms, reset_confidence, usage_ratio,
+                usage_confidence, usage_observed_at_ms
+         FROM window_samples WHERE id > ? ORDER BY id ASC LIMIT ?`,
+      )
+      .all(afterId, boundedLimit(limit))
+      .map((value) => {
+        const row = value as {
+          id: number;
+          provider_id: string;
+          window_kind: string;
+          observed_at_ms: number;
+          duration_seconds: number | null;
+          duration_confidence: string | null;
+          reset_at_ms: number | null;
+          reset_confidence: string | null;
+          usage_ratio: number | null;
+          usage_confidence: string | null;
+          usage_observed_at_ms: number | null;
+        };
+        return {
+          id: row.id,
+          providerId: row.provider_id,
+          windowKind: row.window_kind,
+          observedAtMs: row.observed_at_ms,
+          durationSeconds: row.duration_seconds,
+          durationConfidence: row.duration_confidence,
+          resetAtMs: row.reset_at_ms,
+          resetConfidence: row.reset_confidence,
+          usageRatio: row.usage_ratio,
+          usageConfidence: row.usage_confidence,
+          usageObservedAtMs: row.usage_observed_at_ms,
+        };
+      });
+  }
+
+  chartPoints(
+    providerId: string,
+    windowKind: string,
+    fromMs: number,
+    toMs: number,
+    buckets: number,
+    maxGapMs = 600_000,
+  ): Array<{
+    id: number;
+    observedAtMs: number;
+    usageRatio: number | null;
+    remainingRatio: number | null;
+    gapBefore: boolean;
+  }> {
+    if (!Number.isSafeInteger(buckets) || buckets < 1 || buckets > 384) {
+      throw new RangeError('chart buckets must be between 1 and 384');
+    }
+    if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || toMs <= fromMs) {
+      throw new RangeError('chart range must be a positive UTC interval');
+    }
+    if (!Number.isSafeInteger(maxGapMs) || maxGapMs < 1) {
+      throw new RangeError('chart gap threshold must be a positive safe integer');
+    }
+    const rows = this.db
+      .prepare(
+        `WITH sequenced AS (
+           SELECT id, observed_at_ms, usage_ratio, remaining_ratio,
+                  LAG(observed_at_ms) OVER (ORDER BY observed_at_ms, id) AS previous_at
+           FROM window_samples
+           WHERE provider_id = @providerId AND window_kind = @windowKind
+             AND observed_at_ms >= @scanFromMs AND observed_at_ms < @toMs
+         ), filtered AS (
+           SELECT id, observed_at_ms, usage_ratio, remaining_ratio,
+                  CAST(MIN(@buckets - 1, ((observed_at_ms - @fromMs) * @buckets) / (@toMs - @fromMs)) AS INTEGER) AS bucket,
+                  CASE WHEN previous_at IS NOT NULL AND observed_at_ms - previous_at > @maxGapMs THEN 1 ELSE 0 END AS gap_start
+           FROM sequenced
+           WHERE observed_at_ms >= @fromMs
+         ), annotated AS (
+           SELECT *,
+             SUM(gap_start) OVER (PARTITION BY bucket) AS bucket_gap_count,
+             MIN(CASE WHEN gap_start = 1 THEN observed_at_ms END) OVER (PARTITION BY bucket) AS first_gap_at,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY CASE WHEN gap_start = 1 THEN 0 ELSE 1 END, observed_at_ms, id) AS gap_rank
+           FROM filtered
+         ), ranked AS (
+           SELECT *,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY observed_at_ms ASC, id ASC) AS first_rank,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY observed_at_ms DESC, id DESC) AS last_rank,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY CASE WHEN usage_ratio IS NULL THEN 1 ELSE 0 END, usage_ratio ASC, observed_at_ms ASC, id ASC) AS low_rank,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY CASE WHEN usage_ratio IS NULL THEN 1 ELSE 0 END, usage_ratio DESC, observed_at_ms ASC, id ASC) AS high_rank
+           FROM annotated
+         )
+         SELECT DISTINCT id, observed_at_ms, usage_ratio, remaining_ratio,
+                CASE
+                  WHEN gap_start = 1 AND gap_rank = 1 THEN 1
+                  WHEN bucket_gap_count > 1 AND observed_at_ms >= first_gap_at
+                    AND (first_rank = 1 OR last_rank = 1 OR low_rank = 1 OR high_rank = 1) THEN 1
+                  ELSE 0
+                END AS gap_before
+         FROM ranked
+         WHERE first_rank = 1 OR last_rank = 1
+            OR (usage_ratio IS NOT NULL AND (low_rank = 1 OR high_rank = 1))
+            OR (gap_start = 1 AND gap_rank = 1)
+         ORDER BY observed_at_ms ASC, id ASC`,
+      )
+      .all({
+        providerId,
+        windowKind,
+        fromMs,
+        toMs,
+        buckets,
+        maxGapMs,
+        scanFromMs: fromMs - maxGapMs,
+      }) as Array<{
+      id: number;
+      observed_at_ms: number;
+      usage_ratio: number | null;
+      remaining_ratio: number | null;
+      gap_before: number;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      observedAtMs: row.observed_at_ms,
+      usageRatio: row.usage_ratio,
+      remainingRatio: row.remaining_ratio,
+      gapBefore: row.gap_before === 1,
+    }));
+  }
+
+  listWindowKinds(providerId: string, fromMs: number, toMs: number): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT DISTINCT window_kind FROM window_samples
+           WHERE provider_id = ? AND observed_at_ms >= ? AND observed_at_ms < ?
+           ORDER BY window_kind`,
+        )
+        .all(providerId, fromMs, toMs) as Array<{ window_kind: string }>
+    ).map((row) => row.window_kind);
+  }
+}
+
+export interface UsageAggregationCheckpoint {
+  lastSampleId: number;
+  updatedAtMs: number;
+}
+
+export type StoredUsageInterval = UsageInterval;
+
+export class UsageAggregationRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  checkpoint(): UsageAggregationCheckpoint {
+    const row = this.db
+      .prepare(
+        'SELECT last_sample_id, updated_at_ms FROM usage_aggregation_checkpoint WHERE id = 1',
+      )
+      .get() as { last_sample_id: number; updated_at_ms: number };
+    return { lastSampleId: row.last_sample_id, updatedAtMs: row.updated_at_ms };
+  }
+
+  maxSampleId(): number {
+    const row = this.db
+      .prepare('SELECT COALESCE(MAX(id), 0) AS max_id FROM window_samples')
+      .get() as {
+      max_id: number;
+    };
+    return row.max_id;
+  }
+
+  seriesState(providerId: string, windowKind: string): UsageSeriesState | null {
+    const row = this.db
+      .prepare(
+        'SELECT state_json FROM usage_series_state WHERE provider_id = ? AND window_kind = ?',
+      )
+      .get(providerId, windowKind) as { state_json: string } | undefined;
+    return row ? parseJson<UsageSeriesState>(row.state_json) : null;
+  }
+
+  saveSeriesState(
+    providerId: string,
+    windowKind: string,
+    state: UsageSeriesState | null,
+    updatedAtMs: number,
+  ): void {
+    if (!state) {
+      this.db
+        .prepare('DELETE FROM usage_series_state WHERE provider_id = ? AND window_kind = ?')
+        .run(providerId, windowKind);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO usage_series_state(provider_id, window_kind, state_json, updated_at_ms)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(provider_id, window_kind) DO UPDATE SET
+           state_json = excluded.state_json, updated_at_ms = excluded.updated_at_ms`,
+      )
+      .run(providerId, windowKind, stringifyJson(state), updatedAtMs);
+  }
+
+  insertInterval(value: UsageInterval): void {
+    const previous = this.db
+      .prepare(
+        `SELECT source_sample_id, from_ms, usage_delta_ratio, quality, reason_code
+         FROM usage_intervals
+         WHERE provider_id = ? AND window_kind = ? AND to_ms = ?
+         ORDER BY source_sample_id DESC LIMIT 1`,
+      )
+      .get(value.providerId, value.windowKind, value.fromMs) as
+      | {
+          source_sample_id: number;
+          from_ms: number;
+          usage_delta_ratio: number | null;
+          quality: UsageInterval['quality'];
+          reason_code: string | null;
+        }
+      | undefined;
+    if (
+      previous &&
+      previous.usage_delta_ratio === value.usageDeltaRatio &&
+      previous.quality === value.quality &&
+      previous.reason_code === value.reasonCode
+    ) {
+      this.db
+        .prepare(
+          `UPDATE usage_intervals
+           SET source_sample_id = ?, to_ms = ?
+           WHERE source_sample_id = ?`,
+        )
+        .run(value.sourceSampleId, value.toMs, previous.source_sample_id);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO usage_intervals(
+           source_sample_id, provider_id, window_kind, from_ms, to_ms,
+           usage_delta_ratio, quality, reason_code
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        value.sourceSampleId,
+        value.providerId,
+        value.windowKind,
+        value.fromMs,
+        value.toMs,
+        value.usageDeltaRatio,
+        value.quality,
+        value.reasonCode,
+      );
+  }
+
+  advanceCheckpoint(lastSampleId: number, updatedAtMs: number): void {
+    this.db
+      .prepare(
+        'UPDATE usage_aggregation_checkpoint SET last_sample_id = ?, updated_at_ms = ? WHERE id = 1',
+      )
+      .run(lastSampleId, updatedAtMs);
+  }
+
+  listIntervals(
+    providerId: string,
+    windowKind: string,
+    fromMs: number,
+    toMs: number,
+  ): StoredUsageInterval[] {
+    const rows = this.db
+      .prepare(
+        `SELECT source_sample_id, provider_id, window_kind, from_ms, to_ms,
+                usage_delta_ratio, quality, reason_code
+         FROM usage_intervals
+         WHERE provider_id = @providerId AND window_kind = @windowKind
+           AND ((to_ms > @fromMs AND from_ms < @toMs)
+             OR (from_ms = to_ms AND from_ms >= @fromMs AND from_ms < @toMs))
+         ORDER BY from_ms, source_sample_id`,
+      )
+      .all({ providerId, windowKind, fromMs, toMs }) as Array<{
+      source_sample_id: number;
+      provider_id: string;
+      window_kind: string;
+      from_ms: number;
+      to_ms: number;
+      usage_delta_ratio: number | null;
+      quality: UsageInterval['quality'];
+      reason_code: string | null;
+    }>;
+    return rows.map((row) => ({
+      sourceSampleId: row.source_sample_id,
+      providerId: row.provider_id,
+      windowKind: row.window_kind,
+      fromMs: row.from_ms,
+      toMs: row.to_ms,
+      usageDeltaRatio: row.usage_delta_ratio,
+      quality: row.quality,
+      reasonCode: row.reason_code,
+    }));
+  }
+
+  listBuckets(providerId?: string): Array<{ providerId: string; windowKind: string }> {
+    const rows = providerId
+      ? this.db
+          .prepare(
+            `SELECT provider_id, window_kind FROM usage_intervals WHERE provider_id = ?
+             UNION
+             SELECT provider_id, window_kind FROM usage_series_state
+             WHERE provider_id = ? AND json_extract(state_json, '$.durationSeconds') = 604800
+             ORDER BY provider_id, window_kind`,
+          )
+          .all(providerId, providerId)
+      : this.db
+          .prepare(
+            `SELECT provider_id, window_kind FROM usage_intervals
+             UNION
+             SELECT provider_id, window_kind FROM usage_series_state
+             WHERE json_extract(state_json, '$.durationSeconds') = 604800
+             ORDER BY provider_id, window_kind`,
+          )
+          .all();
+    return (rows as Array<{ provider_id: string; window_kind: string }>).map((row) => ({
+      providerId: row.provider_id,
+      windowKind: row.window_kind,
+    }));
+  }
 }
 
 export class EventRepository {
@@ -310,6 +639,21 @@ export class EventRepository {
     if (options.beforeMs !== undefined) {
       clauses.push('occurred_at_ms < @beforeMs');
       params.beforeMs = options.beforeMs;
+    }
+    if (options.excludeProviderId !== undefined) {
+      clauses.push('(provider_id IS NULL OR provider_id <> @excludeProviderId)');
+      params.excludeProviderId = options.excludeProviderId;
+    }
+    const excludedTypes = (options.excludeTypes ?? [])
+      .filter((type) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(type))
+      .slice(0, 32);
+    if (excludedTypes.length > 0) {
+      const placeholders = excludedTypes.map((type, index) => {
+        const key = `excludeType${index}`;
+        params[key] = type;
+        return `@${key}`;
+      });
+      clauses.push(`type NOT IN (${placeholders.join(', ')})`);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = this.db

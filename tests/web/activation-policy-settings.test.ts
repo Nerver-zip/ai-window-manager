@@ -93,6 +93,17 @@ function reload(context: TestContext): void {
 }
 
 describe('activation policy settings persistence', () => {
+  it('rejects activation policies for a provider hidden by environment configuration', () => {
+    const context = setup();
+    const result = updateActivationPolicy(
+      { ...settingsInput(context), fakeProviderEnabled: false },
+      { kind: 'manual', providerId: 'fake', enabled: true },
+    );
+
+    expect(result).toMatchObject({ ok: false, statusCode: 404, code: 'NOT_FOUND' });
+    expect(context.repositories.schedulePolicies.get('activation-fake')).toBeUndefined();
+  });
+
   it('reads, persists, and locks the timezone after a manual choice', () => {
     const context = setup();
     const input = settingsInput(context);

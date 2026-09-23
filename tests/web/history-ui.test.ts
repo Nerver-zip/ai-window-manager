@@ -5,8 +5,10 @@ import {
   MAX_USAGE_POINTS,
   buildBoundedHistoryView,
   buildUsageSeries,
+  chartRangeKey,
   filterHistoryEvents,
   getHistoryRange,
+  normalizeChartRanges,
   renderHistoryPage,
   renderTimeline,
   renderUsageSeries,
@@ -22,9 +24,9 @@ function event(overrides: Partial<HistoryTimelineEvent> = {}): HistoryTimelineEv
     id: 1,
     occurredAt: '2026-09-19T11:00:00.000Z',
     providerId: 'fake',
-    type: 'scheduler_noop',
+    type: 'action_succeeded',
     severity: 'info',
-    reasonCode: 'TARGET_NOT_DUE',
+    reasonCode: null,
     ...overrides,
   };
 }
@@ -42,7 +44,20 @@ function sample(overrides: Partial<HistoryUsageSample> = {}): HistoryUsageSample
 
 describe('history UI helpers', () => {
   it('exposes bounded range labels and filters events by range and provider', () => {
-    expect(HISTORY_RANGES.map((range) => range.label)).toEqual(['24h', '7d', '30d']);
+    expect(HISTORY_RANGES.map((range) => range.label)).toEqual([
+      '1h',
+      '3h',
+      '6h',
+      '12h',
+      '24h',
+      '7d',
+      '30d',
+    ]);
+    expect(getHistoryRange('1h').durationMs).toBe(60 * 60 * 1000);
+    expect(getHistoryRange('3h').durationMs).toBe(3 * 60 * 60 * 1000);
+    expect(getHistoryRange('6h').durationMs).toBe(6 * 60 * 60 * 1000);
+    expect(getHistoryRange('12h').durationMs).toBe(12 * 60 * 60 * 1000);
+    expect(getHistoryRange('24h').durationMs).toBe(24 * 60 * 60 * 1000);
     expect(getHistoryRange('invalid' as HistoryRange).value).toBe('24h');
 
     const events = filterHistoryEvents(
@@ -60,6 +75,112 @@ describe('history UI helpers', () => {
     expect(events[0]?.id).toBe(1);
   });
 
+  it('keeps routine inspection and scheduler heartbeats out of the activity timeline', () => {
+    const events = [
+      event({ id: 1, type: 'provider_inspected' }),
+      event({ id: 2, type: 'scheduler_noop' }),
+      event({ id: 3, type: 'action_succeeded' }),
+    ];
+    const visible = filterHistoryEvents(events, NOW, { range: '24h' });
+    expect(visible.map((item) => item.type)).toEqual(['action_succeeded']);
+    const html = renderTimeline(events);
+    expect(html).not.toContain('Provider checked');
+    expect(html).not.toContain('Scheduling update');
+    expect(html).toContain('Automatic action completed');
+  });
+
+  it('explains known provider failures instead of showing an empty technical fallback', () => {
+    const html = renderTimeline([
+      event({ type: 'provider_inspection_failed', reasonCode: null, severity: 'warn' }),
+    ]);
+
+    expect(html).toContain('Provider check failed');
+    expect(html).toContain('The last saved reading is kept');
+    expect(html).not.toContain('No additional explanation');
+    expect(html).not.toContain('provider_inspection_failed');
+  });
+
+  it('filters each usage series using its own selected period', () => {
+    const series = buildUsageSeries(
+      [
+        sample({ observedAt: '2026-09-19T11:30:00.000Z', usageRatio: 0.2 }),
+        sample({ observedAt: '2026-09-19T10:00:00.000Z', usageRatio: 0.3 }),
+        sample({
+          providerId: 'codex',
+          windowKind: 'weekly',
+          observedAt: '2026-09-18T12:00:00.000Z',
+        }),
+      ],
+      NOW,
+      {
+        range: '24h',
+        chartRanges: normalizeChartRanges(['fake|five_hour|1h', 'codex|weekly|7d']),
+      },
+    );
+
+    expect(series).toMatchObject([
+      {
+        providerId: 'codex',
+        windowKind: 'weekly',
+        range: '7d',
+        points: [{ observedAt: '2026-09-18T12:00:00.000Z' }],
+      },
+      {
+        providerId: 'fake',
+        windowKind: 'five_hour',
+        range: '1h',
+        points: [{ observedAt: '2026-09-19T11:30:00.000Z' }],
+      },
+    ]);
+    expect(normalizeChartRanges('fake|five_hour|6h')).toEqual({
+      [chartRangeKey('fake', 'five_hour')]: '6h',
+    });
+  });
+
+  it('targets a period change at the chart being edited, not the heatmap window', () => {
+    const html = renderUsageSeries(
+      [
+        {
+          providerId: 'codex',
+          windowKind: 'weekly',
+          range: '7d',
+          points: [],
+        },
+        {
+          providerId: 'codex',
+          windowKind: 'five_hour',
+          range: '3h',
+          points: [],
+        },
+      ],
+      {
+        timelineRange: '24h',
+        providerId: 'codex',
+        selectedWindowKind: 'weekly',
+        chartRanges: normalizeChartRanges(['codex|weekly|7d', 'codex|five_hour|3h']),
+      },
+    );
+
+    expect(html).toContain('name="window" value="weekly"');
+    expect(html).toContain('name="window" value="five_hour"');
+    expect(html).toContain('<select name="chartRange"');
+    expect(html).toContain('<option value="codex|five_hour|3h" selected>3h</option>');
+    expect(html).toContain('<option value="codex|weekly|7d" selected>7d</option>');
+    expect(html).not.toContain('name="chartRangeChoice"');
+  });
+
+  it('keeps a chart visible with an explicit empty state when its period has no samples', () => {
+    const series = buildUsageSeries([sample({ observedAt: '2026-09-19T08:00:00.000Z' })], NOW, {
+      range: '24h',
+      chartRanges: normalizeChartRanges('fake|five_hour|1h'),
+    });
+
+    expect(series).toMatchObject([
+      { providerId: 'fake', windowKind: 'five_hour', range: '1h', points: [] },
+    ]);
+    expect(renderUsageSeries(series, '24h')).toContain('Waiting for a valid observation');
+  });
+
   it('orders and bounds usage series without loading unbounded data into markup', () => {
     const samples = Array.from({ length: MAX_USAGE_POINTS + 4 }, (_, index) =>
       sample({
@@ -74,7 +195,9 @@ describe('history UI helpers', () => {
     const fakeSeries = series.find((item) => item.providerId === 'fake');
     expect(fakeSeries?.points).toHaveLength(MAX_USAGE_POINTS);
     expect(fakeSeries?.points[0]?.observedAt).toBe('2026-09-19T00:04:00.000Z');
-    expect(fakeSeries?.points.at(-1)?.usageRatio).toBeCloseTo(99 / (MAX_USAGE_POINTS + 4));
+    expect(fakeSeries?.points.at(-1)?.usageRatio).toBeCloseTo(
+      (MAX_USAGE_POINTS + 3) / (MAX_USAGE_POINTS + 4),
+    );
   });
 
   it('keeps missing usage explicit instead of turning it into zero', () => {
@@ -87,7 +210,10 @@ describe('history UI helpers', () => {
     ]);
 
     expect(html).toContain('<span>Latest used</span><strong>Not available yet</strong>');
-    expect(html).toContain('Missing values remain unknown');
+    expect(html).toContain('Usage trend');
+    expect(html).not.toContain('Missing values remain unknown');
+    expect(html).not.toContain('observations');
+    expect(html).not.toContain('5 nearby readings');
     expect(html).not.toContain('<span>Latest used</span><strong>0%');
   });
 
@@ -105,7 +231,7 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('<h3 id="chart-unknown-usage-window-title">Unknown');
     expect(html).toContain('<span>Remaining</span><strong>Not available yet</strong>');
-    expect(html).toContain('1 missing');
+    expect(html).not.toContain('1 missing');
     expect(html).not.toContain('<provider>');
     expect(html).toContain('class="chart-line chart-series-1"');
   });
@@ -121,7 +247,7 @@ describe('history UI helpers', () => {
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).not.toContain('<img');
     expect(html).toContain('Activity update');
-    expect(html).toContain('Not available');
+    expect(html).toContain('More details are not available for this update.');
   });
 
   it('renders provider logos in timeline items when available', () => {
@@ -142,7 +268,7 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('Activity update');
     expect(html).toContain('>Info<');
-    expect(html).toContain('>Not available<');
+    expect(html).toContain('More details are not available for this update.');
   });
 
   it('renders already projected items with an unknown timestamp without throwing', () => {
@@ -181,12 +307,11 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('value="30d" selected');
     expect(html).toContain('value="fake" selected');
-    expect(html).toContain('viewBox="0 0 640 230"');
     expect(html).toContain('viewport');
     expect(html).toContain('history-toolbar');
-    expect(html).toContain('class="card chart-card"');
     expect(html).toContain('class="timeline"');
-    expect(html).toContain('class="chart-line chart-series-1"');
+    expect(html).not.toContain('data-chart-root');
+    expect(html).not.toContain('class="card chart-card"');
     expect(html).toContain('2 events');
     expect(html).toContain('Timeline');
     expect(html).toContain('Usage');
@@ -196,7 +321,23 @@ describe('history UI helpers', () => {
     expect(html).not.toContain('accountId');
   });
 
-  it('renders explicit chart time bounds and accessible history pagination', () => {
+  it('shows event times in the saved timezone without milliseconds or ISO jargon', () => {
+    const html = renderHistoryPage({
+      now: NOW,
+      timeZone: 'America/Sao_Paulo',
+      providers: [{ id: 'codex' }],
+      events: [event({ providerId: 'codex' })],
+      samples: [],
+    });
+
+    expect(html).toContain('Times shown in São Paulo.');
+    expect(html).toContain('>Sep 19, 2026, 8:00 AM GMT-3</time>');
+    expect(html).not.toContain('2026-09-19 11:00:00.000Z');
+    expect(html).not.toContain('aria-label="History pages"');
+    expect(html).not.toContain('event · page 1');
+  });
+
+  it('renders activity chronology and accessible history pagination only', () => {
     const html = renderHistoryPage({
       now: NOW,
       providers: [{ id: 'fake' }],
@@ -214,9 +355,7 @@ describe('history UI helpers', () => {
       },
     });
 
-    expect(html).toContain('08:00 UTC');
-    expect(html).toContain('11:00 UTC');
-    expect(html).toContain('>Used<');
+    expect(html).not.toContain('data-chart-root');
     expect(html).toContain('aria-label="History pages"');
     expect(html).toContain('rel="prev"');
     expect(html).toContain('rel="next"');
@@ -238,7 +377,7 @@ describe('history UI helpers', () => {
     expect(view.series).toEqual([]);
     const html = renderHistoryPage({ now: NOW, providers: [], events: [], samples: [] });
     expect(html).toContain('empty-state');
-    expect(html).toContain('Saved observations will appear here');
+    expect(html).not.toContain('data-chart-root');
     expect(html).not.toContain('<style');
   });
 

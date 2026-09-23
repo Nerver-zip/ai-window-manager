@@ -12,9 +12,11 @@ import type {
   WindowSnapshot,
 } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
+import { filterVisibleProviders, isProviderVisible } from '../providers/visibility.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type {
+  ActionIntentState,
   ActionIntentRecord,
   EventRecord,
   ProviderRecord,
@@ -33,6 +35,8 @@ import {
 } from './settings-api.js';
 import { readScheduling } from './scheduling-api.js';
 import { deriveCurrentWindow } from '../scheduler/current-window.js';
+import { readUsagePageData, USAGE_CHART_BUCKETS } from '../usage/service.js';
+import { renderUsagePage } from './usage-ui.js';
 import {
   renderActivationSchedulePage,
   renderSettingsPage as renderSettingsUiPage,
@@ -42,8 +46,12 @@ import {
   getHistoryRange,
   HISTORY_PAGE_SIZE,
   MAX_USAGE_POINTS,
+  buildUsageSeries,
+  chartRangeKey,
+  normalizeChartRanges,
   normalizeHistoryRange,
   renderHistoryPage,
+  serializeChartRangeSelection,
   type HistoryTimelineEvent,
   type HistoryUsageSample,
 } from './history-ui.js';
@@ -55,16 +63,13 @@ import {
   validateMutationOrigin,
 } from './security.js';
 import {
-  durationLabel,
-  effectiveModeLabel,
   errorLabel,
-  factQualifier,
   healthLabel,
   isEstimatedSource,
-  phaseLabel,
   providerDisplayName,
   providerLogoUrl,
   reasonLabel,
+  timeZoneDisplayName,
   windowDisplayName,
 } from './ui/presentation.js';
 
@@ -169,6 +174,7 @@ export function buildServer(input: BuildServerInput) {
     repositories: input.repositories,
     clock: input.clock,
     adapters: input.adapters,
+    fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
   });
   app.get('/assets/app.css', async (_request, reply) =>
     reply.type('text/css; charset=utf-8').send(APP_CSS),
@@ -204,11 +210,13 @@ export function buildServer(input: BuildServerInput) {
     adapters: input.adapters,
     clock: input.clock,
     requestReconcile: input.requestReconcile,
+    fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
   });
   const settingsInput = {
     repositories: input.repositories,
     adapters: input.adapters,
     clock: input.clock,
+    fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
   };
 
   app.addContentTypeParser(
@@ -281,12 +289,37 @@ export function buildServer(input: BuildServerInput) {
     return reply.code(result.statusCode).send(result.body);
   });
 
+  app.get('/api/v1/usage', async (request, reply) => {
+    const query = asRecord(request.query);
+    const requestedProvider = stringValue(query.provider) ?? undefined;
+    const usage = resolveUsageView(input, query);
+    if (usage.error) return reply.code(usage.error.statusCode).send({ error: usage.error.code });
+    if (requestedProvider && usage.data.selectedProviderId !== requestedProvider) {
+      return reply.code(404).send({ error: 'PROVIDER_NOT_FOUND' });
+    }
+    return {
+      timezone: usage.data.timezone,
+      today: usage.data.today,
+      fromDate: usage.data.fromDate,
+      generatedAt: new Date(usage.data.generatedAtMs).toISOString(),
+      aggregationPending: usage.data.aggregationPending,
+      providers: usage.data.providers,
+      selectedProviderId: usage.data.selectedProviderId,
+      windows: usage.data.windows,
+      selectedWindowKind: usage.data.selectedWindowKind,
+      selectedDay: usage.data.selectedDay,
+      days: usage.data.days,
+      charts: usage.series,
+    };
+  });
+
   app.get('/api/v1/settings', () => readApi.getSettings().body);
   app.get('/api/v1/scheduling', () =>
     readScheduling({
       repositories: input.repositories,
       adapters: input.adapters,
       clock: input.clock,
+      fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
     }),
   );
 
@@ -311,12 +344,19 @@ export function buildServer(input: BuildServerInput) {
   app.get('/history', async (request, reply) => {
     const query = asRecord(request.query);
     const providerId = stringValue(query.provider) ?? undefined;
+    if (providerId && !isProviderVisible(providerId, input.config.AWM_FAKE_PROVIDER_ENABLED)) {
+      return reply.code(404).type('text/plain; charset=utf-8').send('Provider not found');
+    }
     const range = normalizeHistoryRange(query.range);
+    const chartRangeQuery = queryStringValues(query.chartRange);
     const page = positivePage(query.page);
     const now = input.clock.now();
     const nowMs = now.getTime();
     const offset = (page - 1) * HISTORY_PAGE_SIZE;
-    const providers = input.repositories.providers.list();
+    const providers = filterVisibleProviders(
+      input.repositories.providers.list(),
+      input.config.AWM_FAKE_PROVIDER_ENABLED,
+    );
     const selectedProviders = providerId
       ? providers.filter((provider) => provider.id === providerId)
       : providers;
@@ -325,8 +365,15 @@ export function buildServer(input: BuildServerInput) {
       offset,
       afterMs: nowMs - getHistoryRange(range).durationMs,
       beforeMs: nowMs + 1,
+      excludeTypes: ['provider_inspected', 'scheduler_noop'],
+      ...(input.config.AWM_FAKE_PROVIDER_ENABLED ? {} : { excludeProviderId: 'fake' }),
     });
     const hasNext = events.length > HISTORY_PAGE_SIZE;
+    const usageChartsHref = historyUsageHref(
+      chartRangeQuery,
+      providerId,
+      providers.map((provider) => provider.id),
+    );
     const samples = selectedProviders.flatMap((provider) =>
       input.repositories.windowSamples.list(provider.id, { limit: MAX_USAGE_POINTS * 8 }),
     );
@@ -334,17 +381,51 @@ export function buildServer(input: BuildServerInput) {
     reply.type('text/html; charset=utf-8');
     return renderHistoryPage({
       now,
-      filter: { range, ...(providerId ? { providerId } : {}) },
-      providers: providers.map((provider) => ({ id: provider.id, label: provider.id })),
+      timeZone: readTimezoneSetting(settingsInput)?.timezone ?? input.config.AWM_TIMEZONE,
+      filter: {
+        range,
+        ...(providerId ? { providerId } : {}),
+        chartRanges: chartRangeQuery,
+      },
+      providers: providers.map((provider) => ({
+        id: provider.id,
+        label: providerDisplayName(provider.id),
+      })),
       events: events.slice(0, HISTORY_PAGE_SIZE).map(historyTimelineEvent),
       samples: samples.map(historyUsageSample),
+      ...(usageChartsHref ? { usageChartsHref } : {}),
       pagination: {
         page,
         pageSize: HISTORY_PAGE_SIZE,
         hasNext,
-        ...(page > 1 ? { previousHref: historyPageHref(range, providerId, page - 1) } : {}),
-        ...(hasNext ? { nextHref: historyPageHref(range, providerId, page + 1) } : {}),
+        ...(page > 1
+          ? { previousHref: historyPageHref(range, providerId, page - 1, chartRangeQuery) }
+          : {}),
+        ...(hasNext
+          ? { nextHref: historyPageHref(range, providerId, page + 1, chartRangeQuery) }
+          : {}),
       },
+    });
+  });
+
+  app.get('/usage', async (request, reply) => {
+    const query = asRecord(request.query);
+    const usage = resolveUsageView(input, query);
+    if (usage.error) {
+      return reply
+        .code(usage.error.statusCode)
+        .type('text/plain; charset=utf-8')
+        .send(
+          usage.error.code === 'PROVIDER_NOT_FOUND'
+            ? 'Provider not found'
+            : 'Usage view unavailable',
+        );
+    }
+    reply.type('text/html; charset=utf-8');
+    return renderUsagePage({
+      data: usage.data,
+      series: usage.series,
+      chartRanges: usage.chartRanges,
     });
   });
 
@@ -375,6 +456,7 @@ export function buildServer(input: BuildServerInput) {
       repositories: input.repositories,
       adapters: input.adapters,
       clock: input.clock,
+      fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
     });
     const selected =
       scheduling.providers.find(
@@ -447,7 +529,10 @@ export function buildServer(input: BuildServerInput) {
       secure: _request.protocol === 'https',
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
-    return renderOverview(providers, input.clock.now());
+    const timezone =
+      readTimezoneSetting({ repositories: input.repositories })?.timezone ??
+      input.config.AWM_TIMEZONE;
+    return renderOverview(providers, input.clock.now(), timezone);
   });
 
   return app;
@@ -492,18 +577,52 @@ function positivePage(value: unknown): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, 50_000) : 1;
 }
 
-function historyPageHref(range: string, providerId: string | undefined, page: number): string {
+function historyPageHref(
+  range: string,
+  providerId: string | undefined,
+  page: number,
+  chartRanges: readonly string[] = [],
+): string {
   const params = new URLSearchParams({ range, page: String(page) });
   if (providerId) params.set('provider', providerId);
+  for (const chartRange of chartRanges) params.append('chartRange', chartRange);
   return `/history?${params.toString()}`;
+}
+
+function historyUsageHref(
+  chartRangeQuery: readonly string[],
+  providerId: string | undefined,
+  visibleProviderIds: readonly string[],
+): string | null {
+  const ranges = normalizeChartRanges(chartRangeQuery);
+  const visible = new Set(visibleProviderIds);
+  const params = new URLSearchParams();
+  if (providerId) params.set('provider', providerId);
+  for (const [key, range] of Object.entries(ranges)) {
+    const separator = key.indexOf('\u0000');
+    if (separator < 1) continue;
+    const selectedProvider = key.slice(0, separator);
+    const windowKind = key.slice(separator + 1);
+    if (!visible.has(selectedProvider) || (providerId && providerId !== selectedProvider)) continue;
+    params.append('chartRange', serializeChartRangeSelection(selectedProvider, windowKind, range));
+  }
+  const query = params.toString();
+  return query ? `/usage?${query}` : null;
 }
 
 function normalizeProviderSettingsBody(body: unknown): unknown {
   const record = asRecord(body);
+  const preset = stringValue(record.refreshIntervalPreset);
+  const pollIntervalSeconds =
+    preset === 'custom'
+      ? Number(record.customPollIntervalSeconds)
+      : preset !== null && ['60', '300', '900'].includes(preset)
+        ? Number(preset)
+        : Number(record.pollIntervalSeconds);
   return {
     enabled: formBoolean(record.enabled),
     mode: record.mode,
-    pollIntervalSeconds: Number(record.pollIntervalSeconds),
+    pollIntervalSeconds,
   };
 }
 
@@ -562,7 +681,12 @@ function normalizeActivationScheduleBody(body: unknown): unknown {
 function normalizeTimezoneSettingsBody(body: unknown): unknown {
   const record = asRecord(body);
   return {
-    timezone: record.timezone,
+    timezone:
+      record.timezoneChoice === 'custom'
+        ? record.customTimezone
+        : typeof record.timezoneChoice === 'string'
+          ? record.timezoneChoice
+          : record.timezone,
     source: record.source === 'detected' ? 'detected' : 'manual',
   };
 }
@@ -593,7 +717,10 @@ function queryMessage(query: unknown): string | null {
 }
 
 function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] {
-  return input.repositories.providers.list().map((provider) => {
+  return filterVisibleProviders(
+    input.repositories.providers.list(),
+    input.config.AWM_FAKE_PROVIDER_ENABLED,
+  ).map((provider) => {
     const adapter = input.adapters.get(provider.id);
     const capabilities = adapter ? safeCapabilities(adapter) : undefined;
     return {
@@ -610,7 +737,10 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
 
 function readProviders(input: BuildServerInput): ProviderRead[] {
   const nowMs = input.clock.now().getTime();
-  return input.repositories.providers.list().map((provider) => {
+  return filterVisibleProviders(
+    input.repositories.providers.list(),
+    input.config.AWM_FAKE_PROVIDER_ENABLED,
+  ).map((provider) => {
     const state = input.repositories.providerState.get(provider.id);
     const observation = state?.observation ?? null;
     const decision = readDecision(input, provider.id);
@@ -705,6 +835,87 @@ function actionIntentRead(intent: ActionIntentRecord): NonNullable<DecisionRead[
   };
 }
 
+function resolveUsageView(input: BuildServerInput, query: Record<string, unknown>) {
+  const providers = filterVisibleProviders(
+    input.repositories.providers.list(),
+    input.config.AWM_FAKE_PROVIDER_ENABLED,
+  );
+  const requestedProvider = stringValue(query.provider) ?? undefined;
+  if (requestedProvider && !providers.some((provider) => provider.id === requestedProvider)) {
+    return { error: { statusCode: 404 as const, code: 'PROVIDER_NOT_FOUND' } };
+  }
+  const chartRanges = { ...normalizeChartRanges(queryStringValues(query.chartRange)) };
+  const requestedWindow = stringValue(query.window);
+  // Older links used a range-only query parameter. Current chart controls send
+  // the complete provider/window/range tuple in `chartRange`, so each graph's
+  // selection survives empty intervals and unrelated filter submissions.
+  const selectedRange = stringValue(query.chartRangeChoice);
+  if (requestedProvider && requestedWindow && selectedRange) {
+    chartRanges[chartRangeKey(requestedProvider, requestedWindow)] =
+      normalizeHistoryRange(selectedRange);
+  }
+  const timezone =
+    readTimezoneSetting({ repositories: input.repositories })?.timezone ??
+    input.config.AWM_TIMEZONE;
+  const now = input.clock.now();
+  const data = readUsagePageData({
+    repositories: input.repositories,
+    now,
+    timezone,
+    ...(requestedProvider ? { providerId: requestedProvider } : {}),
+    ...(requestedWindow && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(requestedWindow)
+      ? { windowKind: requestedWindow }
+      : {}),
+    ...(typeof query.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(query.day)
+      ? { localDay: query.day }
+      : {}),
+    visibleProviderIds: new Set(providers.map((provider) => provider.id)),
+    providers: providers.map((provider) => ({
+      id: provider.id,
+      label: providerDisplayName(provider.id),
+    })),
+  });
+
+  const series: HistoryUsageSample[] = [];
+  const providerId = data.selectedProviderId;
+  if (providerId) {
+    const rangeStartMs = now.getTime() - getHistoryRange('30d').durationMs;
+    const provider = providers.find((item) => item.id === providerId);
+    const maxGapMs = (provider?.pollIntervalSeconds ?? 300) * 2_000;
+    for (const windowKind of input.repositories.windowSamples
+      .listWindowKinds(providerId, rangeStartMs, now.getTime() + 1)
+      .slice(0, 16)) {
+      const range =
+        chartRanges[chartRangeKey(providerId, windowKind)] ?? normalizeHistoryRange(undefined);
+      const fromMs = now.getTime() - getHistoryRange(range).durationMs;
+      const points = input.repositories.windowSamples.chartPoints(
+        providerId,
+        windowKind,
+        fromMs,
+        now.getTime() + 1,
+        USAGE_CHART_BUCKETS,
+        maxGapMs,
+      );
+      for (const point of points) {
+        series.push({
+          providerId,
+          windowKind,
+          observedAt: new Date(point.observedAtMs).toISOString(),
+          usageRatio: point.usageRatio,
+          remainingRatio: point.remainingRatio,
+          ...(point.gapBefore ? { gapBefore: true } : {}),
+        });
+      }
+    }
+  }
+  const chartSeries = buildUsageSeries(series, now, {
+    range: normalizeHistoryRange(undefined),
+    ...(providerId ? { providerId } : {}),
+    chartRanges,
+  });
+  return { data, series: chartSeries, chartRanges };
+}
+
 function extractExplanation(value: unknown): Record<string, unknown> {
   const candidate = asRecord(value);
   const nested = asRecord(candidate.explanation);
@@ -731,19 +942,27 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+function queryStringValues(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
-function renderOverview(providers: ProviderRead[], now: Date): string {
-  const cards = providers.map((provider) => renderProviderCard(provider, now)).join('');
+function renderOverview(providers: ProviderRead[], now: Date, timezone: string): string {
+  const cards = providers.map((provider) => renderProviderCard(provider, now, timezone)).join('');
   return renderAppShell({
     page: 'overview',
     title: 'Overview',
-    description: 'See what is connected, how much remains, and what happens next.',
-    content: `<section class="summary-grid" aria-label="Workspace summary"><div class="summary-stat"><strong>${providers.length}</strong><span>Providers monitored</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.health === 'UP').length}</strong><span>Connected providers</span></div><div class="summary-stat"><strong>${providers.filter((p) => p.mode === 'automation').length}</strong><span>Automatic actions</span></div></section>${cards || '<section class="empty-state"><h2>No providers are being monitored</h2><p>Add a provider in the service configuration to start seeing usage windows here.</p></section>'}`,
+    description: 'Your usage windows, remaining allowance, and next step.',
+    content:
+      cards ||
+      '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>',
   });
 }
 
@@ -768,70 +987,88 @@ function historyUsageSample(snapshot: WindowSnapshot): HistoryUsageSample {
   };
 }
 
-function renderProviderCard(provider: ProviderRead, now: Date): string {
+function renderProviderCard(provider: ProviderRead, now: Date, timezone: string): string {
   const staleClass = provider.freshness.stale ? ' stale' : '';
-  const staleLabel = provider.freshness.stale
-    ? provider.freshness.observedAt
-      ? 'STALE'
-      : 'STALE · never observed'
-    : 'FRESH';
   const freshnessLabel =
     provider.freshness.ageSeconds === null
-      ? staleLabel
-      : `${provider.freshness.ageSeconds}s ago · ${staleLabel}`;
+      ? provider.enabled
+        ? 'Waiting for the first update'
+        : 'Monitoring is paused'
+      : `Last checked ${formatAge(provider.freshness.ageSeconds)} ago`;
   const windows =
     provider.windows.length > 0
-      ? `<div class="window-grid">${provider.windows.map((window) => renderWindow(provider.id, window, now)).join('')}</div>`
-      : '<div class="empty-state"><h3>Waiting for the first update</h3><p>Usage windows will appear after the provider is checked.</p></div>';
-  const decision = provider.nextDecision
-    ? `<section class="decision-panel"><p class="eyebrow">NEXT STEP</p><h3>${provider.nextDecision.decision === 'create_intent' ? 'Automatic action planned' : 'No automatic action planned'}</h3><p>${escapeHtml(decisionDescription(provider.nextDecision.reasonCode))}</p></section>`
-    : '<section class="decision-panel"><p class="eyebrow">NEXT STEP</p><h3>Waiting for a schedule</h3><p>Set a reset time on the <a href="/schedule">Schedule</a> page to see what happens next.</p></section>';
+      ? `<div class="window-grid">${provider.windows.map((window) => renderWindow(provider.id, window, now, timezone)).join('')}</div>`
+      : '<div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div>';
 
   const displayName = providerDisplayName(provider.id, provider.kind);
-  const monitoringState = provider.enabled ? 'Monitoring enabled' : 'Monitoring paused';
+  const connectionState = !provider.enabled
+    ? 'Monitoring paused'
+    : provider.health === 'AUTH_REQUIRED'
+      ? 'Sign-in required'
+      : healthLabel(provider.health);
+  const scheduleReason = provider.nextDecision?.reasonCode;
+  const automationState = !provider.enabled
+    ? 'Automatic starts paused'
+    : scheduleReason === 'MANUAL_POLICY'
+      ? 'Manual starts only'
+      : scheduleReason === 'POLICY_DISABLED'
+        ? 'Schedule paused'
+        : scheduleReason === 'AUTOMATION_DISABLED'
+          ? 'Automatic starts off'
+          : !provider.nextDecision && provider.mode === 'automation'
+            ? 'No schedule set'
+            : provider.mode === 'automation'
+              ? provider.capabilities?.windowTrigger.supported === true
+                ? 'Automatic starts enabled'
+                : 'Automatic starts unavailable'
+              : 'Monitoring only';
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
   const logoHtml = logoUrl
     ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
     : '';
-  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(monitoringState)}</p></div></div><div class="badges"><span class="badge ${provider.health === 'UP' ? 'badge-success' : 'badge-warning'}">${escapeHtml(healthLabel(provider.health))}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header><p class="provider-meta">Last updated ${escapeHtml(freshnessLabel)}</p>${provider.freshness.stale ? '<p class="stale-notice">This information is out of date. Automatic planning is paused until a fresh update arrives.</p>' : ''}${provider.health === 'AUTH_REQUIRED' ? '<p class="notice">Sign-in is required in the official provider client.</p>' : ''}<section class="current-window-read" aria-labelledby="current-window-${escapeHtml(provider.id)}"><div><p class="eyebrow">OBSERVED STATE</p><h3 id="current-window-${escapeHtml(provider.id)}">Current window</h3><strong class="current-window-status">${escapeHtml(currentWindowLabel(provider.currentWindow.status))}</strong><p class="provider-meta">${escapeHtml(currentWindowDetail(provider, displayName))}</p></div>${provider.currentWindow.expectedEndAt ? `<p class="provider-meta"><span>Expected end</span><br><time datetime="${escapeHtml(provider.currentWindow.expectedEndAt.value)}">${escapeHtml(formatUtc(provider.currentWindow.expectedEndAt.value))}</time></p>` : ''}</section>${provider.currentWindow.reason ? `<p class="stale-notice">${escapeHtml(currentWindowReason(provider.currentWindow.reason))}</p>` : ''}<details><summary>Connection details</summary><dl><dt>Status</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>${windows}${decision}</article>`;
+  const staleMessage =
+    provider.freshness.stale && provider.freshness.observedAt
+      ? '<p class="stale-notice">This information may be out of date. Automatic starts wait for a fresh update.</p>'
+      : '';
+  const signInMessage =
+    provider.health === 'AUTH_REQUIRED'
+      ? '<p class="notice">Sign in with the official provider app, then return here to check again.</p>'
+      : '';
+  const decision = renderNextStep(provider, timezone);
+  const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${provider.health === 'UP' && provider.enabled ? 'badge-success' : 'badge-warning'}">${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${windows}${decision}${details}</article>`;
 }
 
-function currentWindowLabel(status: CurrentWindowState['status']): string {
-  switch (status) {
-    case 'ACTIVE':
-      return 'Active';
-    case 'INACTIVE':
-      return 'Inactive';
-    case 'UNKNOWN':
-      return 'Not available yet';
-    case 'UNAVAILABLE':
-      return 'Monitoring unavailable';
+function renderNextStep(provider: ProviderRead, timezone: string): string {
+  if (!provider.nextDecision) {
+    return '<section class="decision-panel"><p class="eyebrow">What happens next</p><h3>No schedule yet</h3><p>Choose when a new window should start on the <a href="/schedule">Schedule</a> page.</p></section>';
   }
+  const intent = provider.nextDecision.actionIntent;
+  const title = intent
+    ? actionIntentTitle(intent.state)
+    : provider.nextDecision.decision === 'create_intent'
+      ? 'A new window is ready to start'
+      : 'No start planned right now';
+  const scheduled =
+    intent?.state === 'planned'
+      ? `<p class="provider-meta">Planned for ${escapeHtml(formatLocalInstant(intent.scheduledFor, timezone))}</p>`
+      : '';
+  return `<section class="decision-panel"><p class="eyebrow">What happens next</p><h3>${escapeHtml(title)}</h3>${scheduled}<p>${escapeHtml(decisionDescription(provider.nextDecision.reasonCode))}</p></section>`;
 }
 
-function currentWindowDetail(provider: ProviderRead, displayName: string): string {
-  const current = provider.currentWindow;
-  if (!current.windowKind) return `${displayName} has not reported a window yet.`;
-  const window = provider.windows.find((candidate) => candidate.windowKind === current.windowKind);
-  return (
-    windowDisplayName(provider.id, current.windowKind, window?.durationSeconds?.value) +
-    ` · ${current.confidence === 'exact' ? 'high confidence' : current.confidence === 'high' ? 'good confidence' : 'limited confidence'}`
-  );
-}
-
-function currentWindowReason(reason: string): string {
-  switch (reason) {
-    case 'AUTH_REQUIRED':
-      return 'Sign-in is required before a current window can be confirmed.';
-    case 'MONITORING_UNAVAILABLE':
-      return 'The last saved window remains available, but it is not safe to use for automatic planning.';
-    case 'WINDOW_STATE_UNCERTAIN':
-      return 'The provider reported information that is not reliable enough to classify the current window.';
-    case 'NO_WINDOW_REPORTED':
-      return 'The provider has not reported a usage window yet.';
-    default:
-      return 'The current window could not be confirmed.';
-  }
+function actionIntentTitle(state: ActionIntentState): string {
+  const labels: Record<ActionIntentState, string> = {
+    planned: 'A new window is planned',
+    executing: 'Starting a new window',
+    succeeded: 'Start sent; checking the result',
+    confirmed: 'New window confirmed',
+    uncertain: 'Start result needs review',
+    skipped: 'No start was needed',
+    canceled: 'Start canceled',
+    failed_retryable: 'Start will be retried',
+    failed_terminal: 'Start failed',
+  };
+  return labels[state];
 }
 
 function formatUtc(value: string): string {
@@ -848,33 +1085,71 @@ function formatUtc(value: string): string {
   }
 }
 
+function formatLocalInstant(value: string, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en', {
+      timeZone: timezone || 'UTC',
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(value));
+  } catch {
+    return formatUtc(value);
+  }
+}
+
+function formatAge(ageSeconds: number): string {
+  if (ageSeconds < 60) return 'less than a minute';
+  if (ageSeconds < 3_600) return `${Math.floor(ageSeconds / 60)} min`;
+  if (ageSeconds < 86_400) return `${Math.floor(ageSeconds / 3_600)} hr`;
+  return `${Math.floor(ageSeconds / 86_400)} days`;
+}
+
 function decisionDescription(reason: string | null): string {
   return reasonLabel(reason);
 }
 
-function renderWindow(providerId: string, window: WindowSnapshot, now: Date): string {
-  const reset = factInstantText(window.resetAt);
-  const approximateReset = approximateResetText(window.resetAt, now);
+function renderWindow(
+  providerId: string,
+  window: WindowSnapshot,
+  now: Date,
+  timezone: string,
+): string {
   const usage = window.usageRatio;
   const label = windowDisplayName(providerId, window.windowKind, window.durationSeconds?.value);
-  return `<section class="window-card"><div class="window-header"><h3>${escapeHtml(label)}</h3><span class="badge">${escapeHtml(phaseLabel(window.phase.value))}</span></div><p class="window-id">Usage limits</p><div class="usage-value">${usage ? `${Math.round(usage.value * 100)}% <small>used</small>` : unknownText()}</div>${usage ? `<progress class="quota-progress" max="100" value="${usage.value * 100}" aria-label="Usage for ${escapeHtml(label)}">${Math.round(usage.value * 100)}%</progress>` : '<p class="muted">Usage has not been reported yet.</p>'}<p class="provider-meta">Remaining ${factRatioText(window.remainingRatio)}</p><dl><dt>Reset</dt><dd>${reset}${approximateReset}</dd><dt>Phase</dt><dd>${factText(phaseLabel(window.phase.value), window.phase.source, window.phase.confidence)}</dd><dt>Duration</dt><dd>${factNumberText(window.durationSeconds)}</dd></dl></section>`;
+  const percentUsed = usage ? Math.round(usage.value * 100) : null;
+  const remaining = window.remainingRatio?.value ?? (usage ? 1 - usage.value : null);
+  const remainingIsEstimated =
+    !window.remainingRatio || isEstimatedSource(window.remainingRatio.source);
+  const usageMarkup =
+    usage && percentUsed !== null
+      ? `<div class="quota-values"><strong>${percentUsed}%</strong><span>used</span><strong>${remaining === null ? '—' : `${remainingIsEstimated ? 'About ' : ''}${Math.round(remaining * 100)}%`}</strong><span>left</span></div><progress class="quota-progress" max="100" value="${percentUsed}" aria-label="${percentUsed}% of ${escapeHtml(label)} used">${percentUsed}%</progress>`
+      : '<p class="muted">Usage has not been reported yet.</p>';
+  const phase = windowPhaseLabel(window);
+  const reset = window.resetAt
+    ? `<div class="window-reset"><span class="field-label">Resets</span><strong>${isEstimatedSource(window.resetAt.source) ? 'About ' : ''}${escapeHtml(formatLocalInstant(window.resetAt.value, timezone))}</strong><span class="reset-relative">${escapeHtml(approximateResetText(window.resetAt, now))}</span><small>${escapeHtml(timeZoneDisplayName(timezone))} · local</small><small>${escapeHtml(formatUtc(window.resetAt.value))}</small></div>`
+    : `<div class="window-reset"><span class="field-label">Reset time</span><strong class="unknown">Not available yet</strong></div>`;
+  return `<section class="window-card"><div class="window-header"><h3>${escapeHtml(label)}</h3><span class="badge">${escapeHtml(phase)}</span></div>${usageMarkup}${reset}</section>`;
 }
 
-function factRatioText(fact: WindowSnapshot['usageRatio']): string {
-  return fact
-    ? factText(`${Math.round(fact.value * 100)}%`, fact.source, fact.confidence)
-    : unknownText();
+function windowPhaseLabel(window: WindowSnapshot): string {
+  const labels: Record<WindowSnapshot['phase']['value'], string> = {
+    ACTIVE: 'In use',
+    INACTIVE: 'Available',
+    EXHAUSTED: 'Limit reached',
+    RESET_DUE: 'Ready to reset',
+    UNKNOWN: 'Status not available',
+  };
+  const label = labels[window.phase.value];
+  return window.phase.value !== 'UNKNOWN' &&
+    (window.phase.source === 'inferred' ||
+      ['medium', 'low', 'unknown'].includes(window.phase.confidence))
+    ? `Likely ${label.toLowerCase()}`
+    : label;
 }
 
-function factInstantText(fact: WindowSnapshot['resetAt']): string {
-  return fact
-    ? `<time datetime="${escapeHtml(fact.value)}" title="${escapeHtml(fact.value)}">${new Intl.DateTimeFormat('en', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(fact.value))} UTC</time><details><summary>Why this time is shown</summary><span class="muted">${escapeHtml(factQualifier(fact.source, fact.confidence))}</span></details>`
-    : unknownText();
-}
-
-function approximateResetText(fact: WindowSnapshot['resetAt'], now: Date): string {
-  if (!fact) return '';
+function approximateResetText(fact: NonNullable<WindowSnapshot['resetAt']>, now: Date): string {
   const resetAtMs = Date.parse(fact.value);
+  if (!Number.isFinite(resetAtMs)) return 'Reset time unavailable';
 
   const deltaSeconds = Math.round((resetAtMs - now.getTime()) / 1000);
   const absoluteSeconds = Math.abs(deltaSeconds);
@@ -888,29 +1163,7 @@ function approximateResetText(fact: WindowSnapshot['resetAt'], now: Date): strin
           : [1, 'second'];
   const value = Math.round(deltaSeconds / unitSeconds);
   const relative = new Intl.RelativeTimeFormat('en', { numeric: 'always' }).format(value, unit);
-  const text = relative.startsWith('in ')
-    ? `Reset in approximately ${relative.slice(3)}`
-    : `Reset approximately ${relative}`;
-  return `<br><span class="muted">${escapeHtml(text)}</span>`;
-}
-
-function factNumberText(fact: WindowSnapshot['durationSeconds'], suffix = ''): string {
-  return fact
-    ? factText(
-        suffix ? `${fact.value}${suffix}` : durationLabel(fact.value),
-        fact.source,
-        fact.confidence,
-      )
-    : unknownText();
-}
-
-function factText(value: string, source: string, confidence: string): string {
-  const prefix = isEstimatedSource(source) ? 'Approximately ' : '';
-  return `${escapeHtml(`${prefix}${value}`)} <span class="muted">(${escapeHtml(factQualifier(source, confidence))})</span>`;
-}
-
-function unknownText(): string {
-  return '<span class="unknown">Not available yet</span>';
+  return relative.startsWith('in ') ? `In about ${relative.slice(3)}` : `About ${relative}`;
 }
 
 function escapeHtml(value: string): string {

@@ -268,9 +268,20 @@ describe('storage repositories', () => {
       data: { retryable: true },
     };
     const eventId = repositories.events.append(event);
-    repositories.events.append({ ...event, providerId: null, occurredAtMs: observedAtMs + 1 });
+    const systemEventId = repositories.events.append({
+      ...event,
+      providerId: null,
+      type: 'timezone_updated',
+      occurredAtMs: observedAtMs + 1,
+    });
     expect(repositories.events.list('fake')).toMatchObject([
       { id: eventId, data: { retryable: true } },
+    ]);
+    expect(repositories.events.list(undefined, { excludeProviderId: 'fake' })).toMatchObject([
+      { id: systemEventId, providerId: null },
+    ]);
+    expect(repositories.events.list(undefined, { excludeTypes: ['inspection_failed'] })).toEqual([
+      expect.objectContaining({ id: systemEventId }),
     ]);
     expect(repositories.events.list(undefined, { beforeMs: observedAtMs + 1 })).toHaveLength(1);
     expect(repositories.events.list('fake', { limit: 0 })).toHaveLength(1);

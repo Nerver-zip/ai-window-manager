@@ -41,6 +41,31 @@ function setup() {
 }
 
 describe('settings API', () => {
+  it('rejects edits to the hidden FakeProvider without changing its saved row', () => {
+    const context = setup();
+    const result = updateProviderSettings({ ...context, fakeProviderEnabled: false }, 'fake', {
+      enabled: false,
+      mode: 'monitor_only',
+      pollIntervalSeconds: 60,
+    });
+
+    expect(result).toMatchObject({ statusCode: 404, code: 'NOT_FOUND' });
+    expect(context.repositories.providers.get('fake')).toMatchObject({ enabled: true });
+    expect(
+      updateScheduleSettings(
+        { ...context, fakeProviderEnabled: false },
+        {
+          enabled: true,
+          providerId: 'fake',
+          windowKind: 'five_hour',
+          targetResetLocalTime: '13:00',
+          timezone: 'UTC',
+          toleranceSeconds: 0,
+        },
+      ),
+    ).toMatchObject({ ok: false, statusCode: 404, code: 'NOT_FOUND' });
+  });
+
   it('persists only validated provider runtime settings', () => {
     const context = setup();
     expect(

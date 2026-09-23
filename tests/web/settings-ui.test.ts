@@ -58,8 +58,31 @@ describe('settings UI helpers', () => {
     });
     expect(html).toContain('value="false" selected');
     expect(html).toContain('value="automation" selected');
-    expect(html).toContain('What this provider supports');
+    expect(html).toContain('What this provider can do');
     expect(html).toContain('/assets/images/providers/codex.png');
+  });
+
+  it('shows concise provider capabilities and distinguishes allowed starts from active starts', () => {
+    const html = renderSettingsPage({
+      csrfToken,
+      providers: [
+        { ...provider, mode: 'automation', capabilities: supportedCapabilities },
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          mode: 'monitor_only',
+          capabilities: supportedCapabilities,
+        },
+      ],
+    });
+
+    expect(html).toContain('Automatic starts allowed');
+    expect(html).toContain('Automatic starts off');
+    expect(html).toContain('May use provider quota when a window starts.');
+    expect(html).not.toContain('Reported by provider');
+    expect(html).not.toContain('official_supported');
+    expect(html).not.toContain('consumesQuota');
   });
 
   it('renders human activation controls with hidden policy fields disabled', () => {
@@ -88,22 +111,32 @@ describe('settings UI helpers', () => {
     });
 
     expect(html).toContain('Current window');
-    expect(html).toContain('Anchor time');
+    expect(html).toContain('Usage right now');
+    expect(html).toContain('Available');
+    expect(html).not.toContain('Inactive');
+    expect(html).toContain('Cycle start time');
     expect(html).toContain('data-policy-fields="custom_schedule" hidden');
     expect(html).toContain('data-policy-fields="custom_schedule" hidden aria-hidden="true"');
     expect(html).toMatch(/<input disabled[^>]*name="times"/);
     expect(html).not.toContain('reasonCode');
     expect(html).not.toContain('exact confidence');
-    expect(html).toContain('High confidence');
-    expect(html).toContain('What happens next');
+    expect(html).not.toContain('confidence');
+    expect(html).toContain('Next scheduled start');
+    expect(html).toContain('name="toleranceSeconds" value="900"');
+    expect(html).not.toContain('Tolerance</label>');
   });
 
   it('ships progressive policy and one-time timezone detection behavior', () => {
     expect(APP_JS).toContain('[data-policy-form]');
     expect(APP_JS).toContain('control.disabled = !active');
     expect(APP_JS).toContain('Intl.DateTimeFormat().resolvedOptions().timeZone');
-    expect(APP_JS).toContain("input.dataset.timezoneAutoDetect !== 'true'");
+    expect(APP_JS).toContain("select.dataset.timezoneAutoDetect !== 'true'");
+    expect(APP_JS).toContain("select.value === 'custom'");
+    expect(APP_JS).toContain('customInput.required = useCustom');
     expect(APP_JS).toContain("source.value = 'detected'");
+    expect(APP_JS).toContain('[data-chart-range-select]');
+    expect(APP_JS).toContain('form.requestSubmit()');
+    expect(APP_JS).toContain('[data-refresh-preset]');
 
     const manualSettings = renderSettingsPage({
       csrfToken,
@@ -111,6 +144,29 @@ describe('settings UI helpers', () => {
       timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
     });
     expect(manualSettings).toContain('data-timezone-auto-detect="false"');
+  });
+
+  it('offers human-readable timezone choices and an advanced custom location field', () => {
+    const preset = renderSettingsPage({
+      csrfToken,
+      providers: [],
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+    });
+    expect(preset).toContain(
+      '<option value="America/Sao_Paulo" selected>São Paulo / Brasília</option>',
+    );
+    expect(preset).toContain('name="timezoneChoice"');
+    expect(preset).toContain('Another location…');
+    expect(preset).toContain('placeholder="e.g. Europe/Madrid"');
+    expect(preset).not.toContain('value="America/Sao_Paulo">America/Sao_Paulo</option>');
+
+    const custom = renderSettingsPage({
+      csrfToken,
+      providers: [],
+      timezone: { timezone: 'Europe/Madrid', source: 'manual' },
+    });
+    expect(custom).toContain('<details data-timezone-custom open>');
+    expect(custom).toContain('value="Europe/Madrid" placeholder="e.g. Europe/Madrid"');
   });
 
   it('groups the provider settings heading for readable narrow layouts', () => {
@@ -176,7 +232,9 @@ describe('settings UI helpers', () => {
     expect(html).toContain('name="csrfToken"');
     expect(html).toContain('action="/settings/providers/fake%3C%26"');
     expect(html).toContain('&lt;script&gt;bad&lt;/script&gt;');
-    expect(html).toContain('name="pollIntervalSeconds"');
+    expect(html).toContain('name="refreshIntervalPreset"');
+    expect(html).toContain('Every 5 minutes');
+    expect(html).toContain('name="customPollIntervalSeconds"');
     expect(html).not.toContain('account/rateLimits/read');
     expect(html).not.toContain('AWM_CODEX_TRIGGER_ENABLED');
     expect(html).not.toContain('apiKey');
@@ -200,12 +258,10 @@ describe('settings UI helpers', () => {
       providers: [{ ...provider, capabilities: unsupported }],
     });
     expect(html).toContain('value="automation" disabled');
-    expect(html).toContain(
-      'Automatic actions are unavailable because this provider does not support them.',
-    );
+    expect(html).toContain('This provider cannot start a new window automatically.');
 
     const unknown = renderSettingsPage({ csrfToken, providers: [provider] });
-    expect(unknown).toContain('We could not verify this provider yet');
+    expect(unknown).toContain('We could not check this provider yet');
     expect(unknown).toContain('value="automation" disabled');
   });
 

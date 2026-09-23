@@ -14,6 +14,7 @@ import type {
   SchedulePolicyRecord,
   StorageRepositories,
 } from '../storage/repositories.js';
+import { isProviderVisible } from '../providers/visibility.js';
 
 const ID = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 
@@ -95,6 +96,7 @@ export interface SettingsApiInput {
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
   clock: Clock;
+  fakeProviderEnabled?: boolean;
 }
 
 export type SettingsApiResult<T> =
@@ -158,6 +160,8 @@ export function updateActivationPolicy(
 ): SettingsApiResult<ActivationPolicySettingsValue> {
   const parsed = ActivationPolicySettingsSchema.safeParse(body);
   if (!parsed.success) return failure(400, 'BAD_REQUEST', 'activation policy settings are invalid');
+  if (!isProviderVisible(parsed.data.providerId, input.fakeProviderEnabled ?? true))
+    return failure(404, 'NOT_FOUND', 'provider not found');
   const provider = input.repositories.providers.get(parsed.data.providerId);
   if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
   const existingTimezone = readTimezoneSetting(input);
@@ -274,6 +278,8 @@ export function updateProviderSettings(
   if (typeof providerId !== 'string' || !ID.safeParse(providerId).success) {
     return failure(400, 'BAD_REQUEST', 'provider id is invalid');
   }
+  if (!isProviderVisible(providerId, input.fakeProviderEnabled ?? true))
+    return failure(404, 'NOT_FOUND', 'provider not found');
   const provider = input.repositories.providers.get(providerId);
   if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
 
@@ -321,6 +327,8 @@ export function updateScheduleSettings(
 ): SettingsApiResult<{ policy: SchedulePolicyRecord; preview: SchedulePreview }> {
   const parsed = ScheduleSettingsSchema.safeParse(body);
   if (!parsed.success) return failure(400, 'BAD_REQUEST', 'schedule settings are invalid');
+  if (!isProviderVisible(parsed.data.providerId, input.fakeProviderEnabled ?? true))
+    return failure(404, 'NOT_FOUND', 'provider not found');
   const provider = input.repositories.providers.get(parsed.data.providerId);
   if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
 

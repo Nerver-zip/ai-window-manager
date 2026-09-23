@@ -173,10 +173,16 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## STATS-001 — Deterministic usage aggregates/recommendation
 
-**Scope**: per-day/window/hour aggregates and simple work-window recommendation.  
-**Acceptance**: explanation shows inputs; no ML/LLM.  
-**Dependencies**: enough history schema + TIME-001.  
-**MVP priority**: low; basic aggregates can ship, recommendation may be v1.x.
+**Status: partial — reset-safe weekly-allowance daily projection and Usage
+heatmap delivered; recommendation analytics remain open.**
+
+**Delivered**: persisted UTC contribution intervals, local-day projection,
+quality/coverage indicators, independent history charts and 365-day Usage UI.
+**Remaining scope**: per-hour aggregates and simple work-window
+recommendations with explanations. No ML/LLM.
+**Dependencies**: enough history schema + TIME-001 (satisfied for remaining
+work).
+**MVP priority**: low; recommendations may be v1.x.
 
 ## SEC-001 — HTTP hardening and CSRF
 

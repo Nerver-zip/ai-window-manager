@@ -7,13 +7,11 @@ import type { TimezoneSetting } from '../scheduler/policy.js';
 import type { ProviderMode } from '../storage/repositories.js';
 import { renderAppShell } from './ui/layout.js';
 import {
-  capabilityDescription,
-  capabilityContractLabel,
   capabilityLabel,
   durationLabel,
-  effectiveModeLabel,
   providerDisplayName,
   providerLogoUrl,
+  timeZoneDisplayName,
   windowDisplayName,
 } from './ui/presentation.js';
 
@@ -23,6 +21,24 @@ const MAX_POLL_INTERVAL_SECONDS = 86_400;
 const MIN_TOLERANCE_SECONDS = 0;
 const MAX_TOLERANCE_SECONDS = 3_600;
 const KNOWN_DURATION_CONFIDENCES = new Set<Confidence>(['exact', 'high']);
+const TIME_ZONE_CHOICES = [
+  ['UTC', 'UTC'],
+  ['America/Sao_Paulo', 'São Paulo / Brasília'],
+  ['America/Buenos_Aires', 'Buenos Aires'],
+  ['America/Mexico_City', 'Mexico City'],
+  ['America/New_York', 'New York'],
+  ['America/Chicago', 'Chicago'],
+  ['America/Denver', 'Denver'],
+  ['America/Los_Angeles', 'Los Angeles'],
+  ['Europe/London', 'London'],
+  ['Europe/Paris', 'Paris'],
+  ['Europe/Berlin', 'Berlin'],
+  ['Asia/Kolkata', 'Kolkata'],
+  ['Asia/Singapore', 'Singapore'],
+  ['Asia/Tokyo', 'Tokyo'],
+  ['Australia/Sydney', 'Sydney'],
+  ['Pacific/Auckland', 'Auckland'],
+] as const;
 
 export interface SettingsProviderView {
   id: string;
@@ -90,21 +106,13 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const policyOptions = [
     [
       'auto',
-      'Whenever possible',
-      'Keep a window active whenever the provider and safety checks allow it.',
+      'When a new window is available',
+      'Start when the provider is ready and safety checks pass.',
     ],
-    [
-      'fixed',
-      'On a regular cycle',
-      'Use one local anchor and repeat it using the observed window duration.',
-    ],
-    ['custom_schedule', 'At specific times', 'Start only near the local times you choose.'],
-    [
-      'active_hours',
-      'During certain hours',
-      'Keep the provider available during selected periods.',
-    ],
-    ['manual', 'Never automatically', 'Monitor the provider, but leave starting windows to you.'],
+    ['fixed', 'On a regular cycle', 'Repeat a start at the same local time each cycle.'],
+    ['custom_schedule', 'At chosen times', 'Start only near the local times you choose.'],
+    ['active_hours', 'During selected hours', 'Start only during the hours you choose.'],
+    ['manual', 'Manual only', 'Keep monitoring, but leave starting windows to you.'],
   ] as const;
   const policyOptionsHtml = policyOptions
     .map(
@@ -121,16 +129,16 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
       ? policy.periods.map((period) => `${period.start}-${period.end}`)
       : ['08:00-12:00', '18:00-00:00'];
   const timezoneText = timezone
-    ? `${timezone} · ${input.timezone?.source === 'detected' ? 'Detected automatically' : input.timezone ? 'Saved setting' : 'Initial default'}`
+    ? timeZoneDisplayName(timezone)
     : 'Choose a time zone in Settings before enabling a time-based policy.';
 
   return renderAppShell({
     page: 'schedule',
-    title: 'Activation policy',
-    description: 'Choose when AI Window Manager should start a new usage window.',
+    title: 'Schedule',
+    description: 'Choose when a new usage window should start.',
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
       <section class="card current-window-summary" aria-labelledby="current-window-title">
-        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Observed state</p><h2 id="current-window-title">Current window</h2><p class="muted">This is what the provider reports now. It is monitored independently from your activation policy.</p></div></div>
+        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Usage right now</p><h2 id="current-window-title">Current window</h2><p class="muted">This is the latest saved usage information from your provider.</p></div></div>
         ${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}
       </section>
       <section class="card" aria-labelledby="activation-policy-title">
@@ -138,20 +146,21 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         <form method="post" action="/schedule" data-policy-form>
           ${csrfInput(csrfToken)}
           <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
+          <input type="hidden" name="toleranceSeconds" value="${tolerance}">
           <div class="form-grid">
             ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose the provider this policy controls.', 'activation-policy-provider-help')}
             ${renderField('activation-policy-kind', 'How should new windows start?', `<select id="activation-policy-kind" name="policyKind" data-policy-kind required>${policyOptionsHtml}</select>`, 'Choose a simple schedule preference. You can change it without changing the current window.', 'activation-policy-kind-help')}
           </div>
-          <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change in Settings</a></p>
+          <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change</a></p>
           ${renderPolicyFields('auto', kind === 'auto', renderPolicyWindowField(windowControl, 'auto-window'))}
-          ${renderPolicyFields('fixed', kind === 'fixed', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Anchor time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60">`, 'The local time used as the reference point for the repeating cycle.', 'fixed-anchor-help')}${renderField('fixed-tolerance', 'Tolerance', `<input id="fixed-tolerance" name="toleranceSeconds" type="number" min="0" max="3600" value="${tolerance}" step="60">`, 'How late the application may be and still use this anchor. It never starts early.', 'fixed-tolerance-help')}</div>`)}
-          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderPolicyListField('custom-times', 'Scheduled times', 'times', customTimes, 'time', 'Use local times. Add or remove entries as needed.', 'custom-times-help')}${renderField('custom-tolerance', 'Tolerance', `<input id="custom-tolerance" name="toleranceSeconds" type="number" min="0" max="3600" value="${tolerance}" step="60">`, 'How late the application may be and still use a selected time.', 'custom-tolerance-help')}</div>`)}
+          ${renderPolicyFields('fixed', kind === 'fixed', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60">`, 'Local time to start each cycle.', 'fixed-anchor-help')}</div>`)}
+          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Choose one or more local times.', 'custom-times-help')}</div>`)}
           ${renderPolicyFields('active_hours', kind === 'active_hours', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderPolicyListField('active-hours-periods', 'Active hours', 'periods', activePeriods, 'period', 'Use local ranges such as 08:00-12:00. Add or remove periods as needed.', 'active-hours-periods-help')}</div><p class="field-help">The application avoids starting a full window when too little useful coverage remains.</p>`)}
-          ${renderPolicyFields('manual', kind === 'manual', '<p class="notice">No automatic starts. Monitoring continues, but new windows are started only by you.</p>')}
-          <div class="form-actions"><button type="submit">Save activation policy</button></div>
+          ${renderPolicyFields('manual', kind === 'manual', '<p class="notice">Monitoring continues. New windows start only when you choose.</p>')}
+          <div class="form-actions"><button type="submit">Save schedule</button></div>
         </form>
       </section>
-      <section class="card" aria-labelledby="upcoming-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">What happens next</p><h2 id="upcoming-title">Upcoming</h2><p class="muted">Based on your saved preference and the latest provider update.</p></div></div>${renderPlannerPreview(upcoming, decision, timezone)}</section>
+      <section class="card" aria-labelledby="upcoming-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next step</p><h2 id="upcoming-title">Next scheduled start</h2><p class="muted">Based on your saved schedule and the latest provider update.</p></div></div>${renderPlannerPreview(upcoming, decision, timezone)}</section>
     </div>`,
   });
 }
@@ -164,17 +173,20 @@ function renderCurrentWindowSummary(
   if (!currentWindow)
     return '<p class="empty-state">Select a provider to see the current observed window.</p>';
   const label = provider ? providerDisplayName(provider.id, provider.kind) : 'Provider';
-  const status =
-    currentWindow.status === 'UNAVAILABLE'
-      ? 'Monitoring unavailable'
-      : currentWindow.status[0] + currentWindow.status.slice(1).toLowerCase();
+  const statusLabels: Record<CurrentWindowState['status'], string> = {
+    ACTIVE: 'In use',
+    INACTIVE: 'Available',
+    UNKNOWN: 'Not available',
+    UNAVAILABLE: 'Monitoring unavailable',
+  };
+  const status = statusLabels[currentWindow.status];
   const details = currentWindow.expectedEndAt
     ? `<p class="muted"><span>Expected reset</span><br><time datetime="${escapeAttribute(currentWindow.expectedEndAt.value)}">${escapeHtml(formatReadableInstant(currentWindow.expectedEndAt.value, timeZone))}</time></p>`
     : '<p class="muted">Expected reset is not available yet.</p>';
   const windowLabel = currentWindow.windowKind
     ? windowDisplayName(provider?.id ?? '', currentWindow.windowKind)
     : 'No window selected';
-  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(windowLabel)} · ${escapeHtml(confidenceDisplay(currentWindow.confidence))}</p></div>${details}</div>`;
+  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(windowLabel)}</p></div>${details}</div>`;
 }
 
 function renderPlannerPreview(
@@ -182,13 +194,25 @@ function renderPlannerPreview(
   decision: PlannerDecision | null | undefined,
   timezone: string,
 ): string {
-  const decisionText = decision
-    ? `<div class="notice"><strong>${escapeHtml(decisionLabel(decision.kind))}</strong><span class="muted">${escapeHtml(plannerReasonLabel(decision.reasonCode))}</span></div>`
-    : '<div class="notice"><strong>Waiting for an observation</strong><span class="muted">The planner will show a decision after the provider is checked.</span></div>';
-  const items = upcoming.length
-    ? `<ol class="upcoming-list">${upcoming.map((item) => `<li><time datetime="${escapeAttribute(item.at)}">${escapeHtml(formatUpcomingTime(item.at, timezone))}</time><span>${escapeHtml(item.label)}</span></li>`).join('')}</ol>`
-    : '<p class="empty-state">No automatic starts are scheduled for this policy.</p>';
-  return `${decisionText}${items}`;
+  const next = upcoming[0]?.at ?? decision?.anchorAt ?? decision?.nextAnchorAt ?? null;
+  const nextLabel = upcoming[0]?.kind === 'wait' ? 'Next available time' : 'Next planned start';
+  const nextMarkup = next
+    ? `<div class="next-start-preview"><span class="eyebrow">${nextLabel}</span><strong><time datetime="${escapeAttribute(next)}">${escapeHtml(formatUpcomingTime(next, timezone))}</time></strong><span class="muted">${escapeHtml(timezone || 'Local time')}</span></div>`
+    : '<p class="empty-state">No start time is scheduled yet.</p>';
+  const status = decision
+    ? `<p class="schedule-explanation"><strong>${escapeHtml(decisionLabel(decision.kind))}.</strong> ${escapeHtml(plannerReasonLabel(decision.reasonCode))}</p>`
+    : '<p class="schedule-explanation">Waiting for the provider’s first update.</p>';
+  const laterItems =
+    upcoming.length > 1
+      ? `<details><summary>More scheduled times</summary><ol class="upcoming-list">${upcoming
+          .slice(1)
+          .map(
+            (item) =>
+              `<li><time datetime="${escapeAttribute(item.at)}">${escapeHtml(formatUpcomingTime(item.at, timezone))}</time><span>${escapeHtml(item.label === 'Start window' ? 'Start a new window' : item.label)}</span></li>`,
+          )
+          .join('')}</ol></details>`
+      : '';
+  return `<div class="schedule-preview-body">${nextMarkup}${status}${laterItems}</div>`;
 }
 
 function renderPolicyFields(kind: string, active: boolean, content: string): string {
@@ -266,21 +290,6 @@ function plannerReasonLabel(reasonCode: string): string {
   return labels[reasonCode] ?? 'No additional explanation is available.';
 }
 
-function confidenceDisplay(confidence: CurrentWindowState['confidence']): string {
-  switch (confidence) {
-    case 'exact':
-      return 'High confidence';
-    case 'high':
-      return 'Good confidence';
-    case 'medium':
-      return 'Limited confidence';
-    case 'low':
-      return 'Low confidence';
-    default:
-      return 'Not available';
-  }
-}
-
 function formatReadableInstant(value: string, timeZone: string): string {
   try {
     return new Intl.DateTimeFormat('en', {
@@ -352,6 +361,13 @@ export function previewTargetReset(input: {
 
 export function renderSettingsPage(input: SettingsPageInput): string {
   const csrfToken = escapeHtml(input.csrfToken);
+  const timezoneValue = input.timezone?.timezone ?? '';
+  const timezoneIsPreset = TIME_ZONE_CHOICES.some(([zone]) => zone === timezoneValue);
+  const timezoneOptions = TIME_ZONE_CHOICES.map(
+    ([zone, label]) =>
+      `<option value="${escapeAttribute(zone)}"${zone === timezoneValue ? ' selected' : ''}>${escapeHtml(label)}</option>`,
+  ).join('');
+  const timezoneField = `<select id="account-timezone" name="timezoneChoice" data-timezone-select data-timezone-auto-detect="${input.timezone ? 'false' : 'true'}" required><option value=""${timezoneValue ? '' : ' selected'} disabled>Choose a time zone</option>${timezoneOptions}<option value="custom"${timezoneValue && !timezoneIsPreset ? ' selected' : ''}>Another location…</option></select><details data-timezone-custom${!timezoneIsPreset && timezoneValue ? ' open' : ''}><summary>Use another time zone</summary><label for="custom-timezone">Time zone for another location</label><input id="custom-timezone" name="customTimezone" data-timezone-custom-input value="${escapeAttribute(timezoneIsPreset ? '' : timezoneValue)}" placeholder="e.g. Europe/Madrid" maxlength="128"><p class="field-help">Enter the time zone used by your location.</p></details>`;
   const providerSections = input.providers.length
     ? input.providers.map((provider) => renderProviderCard(provider, csrfToken)).join('\n')
     : renderEmptyState(
@@ -362,9 +378,9 @@ export function renderSettingsPage(input: SettingsPageInput): string {
   return renderAppShell({
     page: 'settings',
     title: 'Settings',
-    description: 'Control what is monitored and how often it refreshes.',
+    description: 'Choose what to monitor, when to check, and your local time zone.',
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
-      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Account setting</p><h2 id="timezone-settings-title">Time zone</h2><p class="muted">Schedules use this IANA time zone. It is saved once and does not silently follow another device later.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Time zone', `<input id="account-timezone" name="timezone" value="${escapeAttribute(input.timezone?.timezone ?? '')}" placeholder="America/Sao_Paulo" maxlength="128" data-timezone-input data-timezone-auto-detect="${input.timezone ? 'false' : 'true'}" required>`, input.timezone ? `${input.timezone.source === 'detected' ? 'Detected automatically.' : 'Saved manually.'} You can override it here.` : 'Detecting the browser time zone when available; choose one manually if detection is unavailable.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
+      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time zone</h2><p class="muted">Used for schedule times and dates shown in the app. It stays saved until you change it.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a nearby city, or use another time zone if yours is not listed.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
       <section aria-labelledby="provider-settings-title">
         <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Provider connection</p><h2 id="provider-settings-title">Connection and monitoring</h2></div><p class="muted">Only non-secret settings are editable here. Sign-in stays with the official provider client.</p></div>
         <div class="settings-stack">${providerSections}</div>
@@ -450,37 +466,65 @@ function renderProviderCard(provider: SettingsProviderView, csrfToken: string): 
   const id = safeId(provider.id);
   const canAutomate = provider.capabilities?.windowTrigger.supported === true;
   const automationOption = canAutomate
-    ? `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''}>Automatic actions</option>`
-    : `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''} disabled>Automatic actions unavailable</option>`;
+    ? `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''}>Allow automatic starts</option>`
+    : `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''} disabled>Automatic starts unavailable</option>`;
   const automationHelp = canAutomate
-    ? 'The app may start a new usage window when the schedule and safety checks allow it. This can use provider quota.'
+    ? 'The app may start a new window when your schedule and safety checks allow it. This uses provider quota.'
     : provider.capabilities
-      ? 'Automatic actions are unavailable because this provider does not support them.'
-      : 'Automatic actions remain unavailable until this provider can be verified.';
+      ? 'This provider cannot start a new window automatically.'
+      : 'Automatic starts are unavailable until this provider is verified.';
   const displayName = providerDisplayName(provider.id, provider.kind);
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
   const logoHtml = logoUrl
     ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
     : '';
+  const pollPreset = [60, 300, 900].includes(provider.pollIntervalSeconds)
+    ? String(provider.pollIntervalSeconds)
+    : 'custom';
+  const customIntervalDisabled = pollPreset !== 'custom' ? ' disabled' : '';
+  const automaticStartsLabel = !provider.enabled
+    ? 'Automatic starts paused'
+    : provider.mode === 'automation'
+      ? canAutomate
+        ? 'Automatic starts allowed'
+        : 'Automatic starts unavailable'
+      : canAutomate
+        ? 'Automatic starts off'
+        : 'Monitoring only';
 
   return `<article class="card provider-settings" aria-labelledby="provider-${id}-title">
-    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3><p class="provider-meta">${provider.enabled ? 'Monitoring enabled' : 'Monitoring paused'}</p></div></div><div class="badges" aria-label="${escapeHtml(displayName)} status"><span class="badge ${provider.enabled ? 'badge-success' : ''}">${provider.enabled ? 'Monitoring enabled' : 'Monitoring paused'}</span><span class="badge">${escapeHtml(effectiveModeLabel(provider.mode, provider.capabilities?.windowTrigger.supported))}</span></div></header>
+    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><div class="badges" aria-label="${escapeHtml(displayName)} status"><span class="badge ${provider.enabled ? 'badge-success' : 'badge-warning'}">${provider.enabled ? 'Monitoring on' : 'Monitoring paused'}</span><span class="badge">${automaticStartsLabel}</span></div></header>
     <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}">
       ${csrfInput(csrfToken)}
       <fieldset><legend>Provider controls</legend><div class="form-grid">
-        ${renderField(`provider-${id}-enabled`, 'Monitoring', `<select id="provider-${id}-enabled" name="enabled" aria-describedby="provider-${id}-enabled-help">${booleanOptions(provider.enabled, 'On', 'Paused')}</select>`, 'Paused providers keep their saved history but are not checked for new usage.', `provider-${id}-enabled-help`)}
-        ${renderField(`provider-${id}-mode`, 'Automatic actions', `<select id="provider-${id}-mode" name="mode" aria-describedby="provider-${id}-mode-help"><option value="monitor_only"${provider.mode === 'monitor_only' ? ' selected' : ''}>Monitoring only</option>${automationOption}</select>`, automationHelp, `provider-${id}-mode-help`)}
-        ${renderField(`provider-${id}-poll`, 'Refresh interval', `<input id="provider-${id}-poll" name="pollIntervalSeconds" type="number" min="${MIN_POLL_INTERVAL_SECONDS}" max="${MAX_POLL_INTERVAL_SECONDS}" value="${escapeAttribute(String(provider.pollIntervalSeconds))}" aria-describedby="provider-${id}-poll-help" required>`, `How often the app checks this provider, from ${MIN_POLL_INTERVAL_SECONDS} to ${MAX_POLL_INTERVAL_SECONDS} seconds.`, `provider-${id}-poll-help`)}
+        ${renderField(`provider-${id}-enabled`, 'Check this provider', `<select id="provider-${id}-enabled" name="enabled" aria-describedby="provider-${id}-enabled-help">${booleanOptions(provider.enabled, 'On', 'Paused')}</select>`, 'Paused providers keep their saved history but are not checked for new usage.', `provider-${id}-enabled-help`)}
+        ${renderField(`provider-${id}-mode`, 'Start windows automatically', `<select id="provider-${id}-mode" name="mode" aria-describedby="provider-${id}-mode-help"><option value="monitor_only"${provider.mode === 'monitor_only' ? ' selected' : ''}>No, only monitor</option>${automationOption}</select>`, automationHelp, `provider-${id}-mode-help`)}
+        ${renderPollIntervalField(provider, id, pollPreset, customIntervalDisabled)}
       </div></fieldset>
-      <div class="form-actions"><button type="submit">Save provider settings</button></div>
+      <div class="form-actions"><button type="submit">Save settings</button></div>
     </form>
-    <section aria-labelledby="provider-${id}-capabilities-title"><h4 id="provider-${id}-capabilities-title">What this provider supports</h4>${renderCapabilitySummary(provider.capabilities)}</section>
+    <details class="capability-details"><summary>What this provider can do</summary>${renderCapabilitySummary(provider.capabilities)}</details>
   </article>`;
+}
+
+function renderPollIntervalField(
+  provider: SettingsProviderView,
+  id: string,
+  preset: string,
+  customDisabled: string,
+): string {
+  const options = [
+    ['60', 'Every minute'],
+    ['300', 'Every 5 minutes'],
+    ['900', 'Every 15 minutes'],
+    ['custom', 'Custom interval'],
+  ] as const;
+  return `<div class="field refresh-interval-field"><label for="provider-${id}-poll-preset">Check for updates</label><select id="provider-${id}-poll-preset" name="refreshIntervalPreset" data-refresh-preset aria-describedby="provider-${id}-poll-help">${options.map(([value, label]) => `<option value="${value}"${preset === value ? ' selected' : ''}>${label}</option>`).join('')}</select><p class="field-help" id="provider-${id}-poll-help">How often to look for new usage information.</p><details data-refresh-custom${preset === 'custom' ? ' open' : ''}><summary>Custom interval</summary><label for="provider-${id}-poll-custom">Seconds</label><input id="provider-${id}-poll-custom" name="customPollIntervalSeconds" type="number" min="${MIN_POLL_INTERVAL_SECONDS}" max="${MAX_POLL_INTERVAL_SECONDS}" value="${escapeAttribute(String(provider.pollIntervalSeconds))}"${customDisabled} required><p class="field-help">Choose from ${MIN_POLL_INTERVAL_SECONDS} seconds to 24 hours.</p></details></div>`;
 }
 
 function renderCapabilitySummary(capabilities: ProviderCapabilities | undefined): string {
   if (!capabilities)
-    return '<p class="unknown"><span class="badge">Not available</span> We could not verify this provider yet, so it remains monitoring-only.</p>';
+    return '<p class="unknown"><span class="badge">Not verified</span> We could not check this provider yet.</p>';
   return `<dl>${renderCapabilityRow('usageRead', capabilities.usageRead)}${renderCapabilityRow('resetRead', capabilities.resetRead)}${renderCapabilityRow('windowTrigger', capabilities.windowTrigger, capabilities.windowTrigger.consumesQuota)}</dl>`;
 }
 
@@ -489,24 +533,33 @@ function renderCapabilityRow(
   capability: ProviderCapabilities['usageRead'] | ProviderCapabilities['windowTrigger'],
   consumesQuota?: boolean | 'unknown',
 ): string {
-  const status = capability.supported ? 'Available' : 'Unavailable';
+  const status = capability.supported ? 'Available' : 'Not available';
   const quota =
     consumesQuota === true
-      ? ' · May use provider quota'
+      ? 'May use provider quota when a window starts.'
       : consumesQuota === false
-        ? ' · Does not use provider quota'
+        ? 'Starting a window does not use provider quota.'
         : consumesQuota === 'unknown'
-          ? ' · Quota impact not available'
+          ? 'Quota use has not been confirmed.'
           : '';
-  return `<div><dt>${escapeHtml(capabilityLabel(capabilityName))}</dt><dd><span class="badge ${capability.supported ? 'badge-success' : 'badge-warning'}">${status}</span> <span class="muted">· ${escapeHtml(capabilityContractLabel(capability.contract))}${escapeHtml(quota)}</span><br><small>${escapeHtml(capabilityDescription(capabilityName, capability.supported))}</small></dd></div>`;
+  const description =
+    capabilityName === 'usageRead'
+      ? capability.supported
+        ? 'Usage readings are available.'
+        : 'Usage readings are not available.'
+      : capabilityName === 'resetRead'
+        ? capability.supported
+          ? 'Reset time is shown when the provider reports it.'
+          : 'Reset time is not available from this provider.'
+        : capability.supported
+          ? 'New windows can start automatically when your schedule allows it.'
+          : 'This provider cannot start new windows automatically.';
+  const extra = [description, quota].filter(Boolean).join(' ');
+  return `<div><dt>${escapeHtml(capabilityLabel(capabilityName))}</dt><dd><span class="badge ${capability.supported ? 'badge-success' : 'badge-warning'}">${status}</span><br><small>${escapeHtml(extra)}</small></dd></div>`;
 }
 
 function renderProviderOption(provider: SettingsProviderView, selectedProviderId: string): string {
-  const state =
-    provider.mode === 'automation' && provider.capabilities?.windowTrigger.supported === true
-      ? 'Automatic actions available'
-      : 'Monitoring only';
-  return `<option value="${escapeAttribute(provider.id)}"${provider.id === selectedProviderId ? ' selected' : ''}>${escapeHtml(providerDisplayName(provider.id, provider.kind))} · ${state}</option>`;
+  return `<option value="${escapeAttribute(provider.id)}"${provider.id === selectedProviderId ? ' selected' : ''}>${escapeHtml(providerDisplayName(provider.id, provider.kind))}</option>`;
 }
 
 function renderScheduleSafety(provider: SettingsProviderView | undefined): string {

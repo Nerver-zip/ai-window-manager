@@ -11,11 +11,13 @@ import { planWindowAction, upcomingSchedule, type PlannerDecision } from '../sch
 import { activationPolicyFromRecord, type TimezoneSetting } from '../scheduler/policy.js';
 import { readTimezoneSetting } from './settings-api.js';
 import type { StorageRepositories } from '../storage/repositories.js';
+import { filterVisibleProviders } from '../providers/visibility.js';
 
 export interface SchedulingApiInput {
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
   clock: Clock;
+  fakeProviderEnabled?: boolean;
 }
 
 export interface SchedulingProviderRead {
@@ -36,7 +38,10 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
   const now = input.clock.now();
   return {
     timezone: timezone ?? null,
-    providers: input.repositories.providers.list().map((provider) => {
+    providers: filterVisibleProviders(
+      input.repositories.providers.list(),
+      input.fakeProviderEnabled ?? true,
+    ).map((provider) => {
       const state = input.repositories.providerState.get(provider.id);
       const policyRecord = input.repositories.schedulePolicies
         .list(provider.id)

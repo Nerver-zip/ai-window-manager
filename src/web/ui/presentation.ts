@@ -54,13 +54,25 @@ const PHASE_LABELS: Readonly<Record<string, string>> = {
 const EVENT_LABELS: Readonly<Record<string, string>> = {
   action_claimed: 'Automatic action started',
   action_confirmed: 'Automatic action confirmed',
+  action_dispatch_started: 'Automatic action started',
+  action_failed_retryable: 'Automatic action will retry',
+  action_failed_terminal: 'Automatic action failed',
   action_intent_planned: 'Automatic action planned',
+  action_intent_claimed: 'Automatic action started',
+  action_recovery_confirmed: 'Automatic action confirmed',
+  action_recovery_started: 'Checking a previous automatic action',
+  action_skipped: 'Automatic action skipped',
   action_succeeded: 'Automatic action completed',
   action_uncertain: 'Automatic action needs review',
+  inspect_requested: 'Usage check requested',
+  manual_trigger_rejected: 'Manual start not sent',
+  manual_trigger_requested: 'Manual start requested',
+  provider_settings_updated: 'Provider settings updated',
   provider_inspected: 'Provider checked',
   provider_inspection_failed: 'Provider check failed',
   provider_auth_required: 'Sign-in required',
   schedule_missed: 'Scheduled time missed',
+  schedule_policy_updated: 'Schedule updated',
   scheduler_noop: 'Scheduling update',
   settings_changed: 'Settings updated',
   schedule_changed: 'Schedule updated',
@@ -68,6 +80,37 @@ const EVENT_LABELS: Readonly<Record<string, string>> = {
   external_window_started: 'Window started outside the app',
   timezone_updated: 'Time zone updated',
   schedule_policy_invalid: 'Schedule needs attention',
+};
+
+const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
+  action_claimed: 'The scheduled start was sent to the provider.',
+  action_confirmed: 'A fresh provider update confirmed the new window.',
+  action_dispatch_started: 'The provider is processing the scheduled start.',
+  action_failed_retryable: 'The start did not complete. A safe retry may be attempted.',
+  action_failed_terminal: 'The start could not be completed. Review the provider status.',
+  action_intent_claimed: 'The schedule reserved this start before contacting the provider.',
+  action_intent_planned: 'A new window is planned according to your schedule.',
+  action_recovery_confirmed: 'A fresh check confirmed the new window after restart.',
+  action_recovery_started: 'The app is checking whether an earlier start completed.',
+  action_skipped: 'This start was skipped because it was no longer safe to run.',
+  action_succeeded: 'The provider accepted the request; a fresh update will confirm the result.',
+  action_uncertain:
+    'The result could not be confirmed. The app will not send the request again automatically.',
+  external_window_started: 'A new usage window started outside this app.',
+  inspect_requested: 'The app was asked to check for updated usage information.',
+  manual_trigger_rejected: 'A manual start was not sent because its safety checks did not pass.',
+  manual_trigger_requested: 'A manual request to start a new window was received.',
+  provider_auth_required: 'Sign in with the provider’s official app to resume updates.',
+  provider_inspection_failed:
+    'The latest usage check failed. The last saved reading is kept until a fresh check succeeds.',
+  provider_settings_updated: 'Your provider settings were saved.',
+  schedule_changed: 'Your schedule was updated.',
+  schedule_missed: 'The planned time passed. No late start was sent.',
+  schedule_policy_updated: 'Your schedule settings were saved.',
+  schedule_policy_invalid: 'Review your schedule to resume automatic starts.',
+  settings_changed: 'Your settings were updated.',
+  unexpected_reset_detected: 'The provider reported a changed reset time.',
+  timezone_updated: 'Your time zone was updated.',
 };
 
 const REASON_LABELS: Readonly<Record<string, string>> = {
@@ -117,6 +160,14 @@ export function providerLogoUrl(id: string, kind?: string): string | undefined {
   if (normalized === 'agy' || normalized === 'antigravity')
     return '/assets/images/providers/agy.png';
   return undefined;
+}
+
+export function timeZoneDisplayName(timeZone: string): string {
+  if (!timeZone) return 'Local time';
+  if (timeZone === 'UTC' || timeZone.endsWith('/UTC')) return 'UTC';
+  const city = timeZone.split('/').filter(Boolean).at(-1)?.replaceAll('_', ' ');
+  if (!city) return 'Local time';
+  return city.replace(/\b\w/g, (character) => character.toUpperCase()).replace(/^Sao /, 'São ');
 }
 
 export function windowDisplayName(
@@ -178,6 +229,11 @@ export function reasonLabel(reason: string | null): string {
   return reason
     ? (REASON_LABELS[reason] ?? 'No additional explanation is available.')
     : 'Not available';
+}
+
+export function eventReasonLabel(type: string, reasonCode: string | null): string {
+  if (reasonCode && Object.hasOwn(REASON_LABELS, reasonCode)) return REASON_LABELS[reasonCode]!;
+  return EVENT_REASON_LABELS[type] ?? 'More details are not available for this update.';
 }
 
 export function errorLabel(error: string | null): string {

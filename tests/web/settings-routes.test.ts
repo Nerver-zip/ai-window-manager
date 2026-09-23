@@ -42,7 +42,11 @@ function setup() {
   };
   repositories.providers.upsert(provider);
   const app = buildServer({
-    config: loadConfig({ AWM_DB_PATH: path.join(dir, 'awm.db'), AWM_LOG_LEVEL: 'silent' }),
+    config: loadConfig({
+      AWM_DB_PATH: path.join(dir, 'awm.db'),
+      AWM_LOG_LEVEL: 'silent',
+      AWM_FAKE_PROVIDER_ENABLED: 'true',
+    }),
     db,
     repositories,
     adapters: new Map([['fake', fake]]),
@@ -66,7 +70,7 @@ describe('settings and schedule pages', () => {
       headers: { host: 'localhost:8787' },
     });
     expect(page.statusCode).toBe(200);
-    expect(page.body).toContain('Refresh interval');
+    expect(page.body).toContain('Check for updates');
     const cookie = headerValue(page.headers['set-cookie']);
     const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
     if (!token) throw new Error('csrf token missing');
@@ -80,10 +84,24 @@ describe('settings and schedule pages', () => {
         cookie,
         'content-type': 'application/x-www-form-urlencoded',
       },
-      payload: `csrfToken=${token}&enabled=on&mode=monitor_only&pollIntervalSeconds=60`,
+      payload: `csrfToken=${token}&enabled=on&mode=monitor_only&refreshIntervalPreset=300`,
     });
     expect(update.statusCode).toBe(303);
-    expect(context.repositories.providers.get('fake')).toMatchObject({ pollIntervalSeconds: 60 });
+    expect(context.repositories.providers.get('fake')).toMatchObject({ pollIntervalSeconds: 300 });
+
+    const customInterval = await context.app.inject({
+      method: 'POST',
+      url: '/settings/providers/fake',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}&enabled=on&mode=monitor_only&refreshIntervalPreset=custom&customPollIntervalSeconds=450`,
+    });
+    expect(customInterval.statusCode).toBe(303);
+    expect(context.repositories.providers.get('fake')).toMatchObject({ pollIntervalSeconds: 450 });
 
     const schedule = await context.app.inject({
       method: 'POST',
@@ -144,5 +162,50 @@ describe('settings and schedule pages', () => {
     });
     expect(response.statusCode).toBe(403);
     expect(response.json()).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
+  });
+
+  it('saves a friendly timezone choice and a custom IANA timezone through the same protected form', async () => {
+    const context = setup();
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/settings',
+      headers: { host: 'localhost:8787' },
+    });
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const headers = {
+      host: 'localhost:8787',
+      origin: 'http://localhost:8787',
+      cookie,
+      'content-type': 'application/x-www-form-urlencoded',
+    };
+    const preset = await context.app.inject({
+      method: 'POST',
+      url: '/settings/timezone',
+      headers,
+      payload: `csrfToken=${token}&timezoneChoice=America%2FNew_York&customTimezone=&source=manual`,
+    });
+    expect(preset.statusCode).toBe(303);
+    expect(context.repositories.settings.get('timezone')?.value).toBe('America/New_York');
+
+    const custom = await context.app.inject({
+      method: 'POST',
+      url: '/settings/timezone',
+      headers,
+      payload: `csrfToken=${token}&timezoneChoice=custom&customTimezone=Europe%2FMadrid&source=manual`,
+    });
+    expect(custom.statusCode).toBe(303);
+    expect(context.repositories.settings.get('timezone')?.value).toBe('Europe/Madrid');
+
+    const invalidCustom = await context.app.inject({
+      method: 'POST',
+      url: '/settings/timezone',
+      headers,
+      payload: `csrfToken=${token}&timezoneChoice=custom&customTimezone=Not%2FAZone&source=manual`,
+    });
+    expect(invalidCustom.statusCode).toBe(400);
+    expect(context.repositories.settings.get('timezone')?.value).toBe('Europe/Madrid');
   });
 });

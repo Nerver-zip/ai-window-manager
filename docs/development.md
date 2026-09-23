@@ -60,6 +60,13 @@ The FakeProvider supports deterministic scenario fixtures:
 
 The FakeProvider is opt-in for manual UI development (`AWM_FAKE_PROVIDER_ENABLED=true`). Keep it disabled in a normal workspace; tests should use FakeClock and advance instantly.
 
+Usage aggregation tests use synthetic weekly snapshots and a temporary SQLite
+database. They verify positive cumulative deltas across proven weekly resets,
+UTC interval persistence, saved-timezone day projection, partial-data labeling,
+idempotent batch/reopen behavior, and retention beyond raw-sample expiry. The
+heatmap must never derive weekly consumption from a five-hour window, call a
+provider, or consume quota.
+
 ## Provider fixtures
 
 Sanitize real official-client output before committing. Remove account IDs, user IDs, token/profile data, request IDs that could identify an account, workspace names and paths. Parser tests should be fully offline.

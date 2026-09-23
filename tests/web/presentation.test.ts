@@ -7,6 +7,7 @@ import {
   durationLabel,
   effectiveModeLabel,
   errorLabel,
+  eventReasonLabel,
   eventLabel,
   evidenceLabel,
   factQualifier,
@@ -19,6 +20,7 @@ import {
   providerLogoUrl,
   reasonLabel,
   severityLabel,
+  timeZoneDisplayName,
   windowDisplayName,
 } from '../../src/web/ui/presentation.js';
 
@@ -45,6 +47,16 @@ describe('human-facing presentation labels', () => {
     ['unknown', undefined, undefined],
   ])('resolves logo URL for %s/%s as %s', (id, kind, expected) => {
     expect(providerLogoUrl(id, kind)).toBe(expected);
+  });
+
+  it.each([
+    ['America/Sao_Paulo', 'São Paulo'],
+    ['America/New_York', 'New York'],
+    ['Australia/Sydney', 'Sydney'],
+    ['Etc/UTC', 'UTC'],
+    ['', 'Local time'],
+  ])('shows a readable time-zone name for %s', (zone, expected) => {
+    expect(timeZoneDisplayName(zone)).toBe(expected);
   });
 
   it.each([
@@ -137,12 +149,31 @@ describe('human-facing presentation labels', () => {
     ['provider_inspected', 'Provider checked'],
     ['provider_inspection_failed', 'Provider check failed'],
     ['provider_auth_required', 'Sign-in required'],
+    ['action_failed_retryable', 'Automatic action will retry'],
+    ['action_recovery_started', 'Checking a previous automatic action'],
+    ['schedule_policy_updated', 'Schedule updated'],
     ['action_intent_planned', 'Automatic action planned'],
     ['schedule_missed', 'Scheduled time missed'],
     ['scheduler_noop', 'Scheduling update'],
     ['future', 'Activity update'],
   ])('labels event %s', (event, expected) => {
     expect(eventLabel(event)).toBe(expected);
+  });
+
+  it.each([
+    [
+      'provider_inspection_failed',
+      null,
+      'The latest usage check failed. The last saved reading is kept until a fresh check succeeds.',
+    ],
+    [
+      'action_uncertain',
+      'TARGET_MISSED',
+      'The planned time has passed, so nothing was started unexpectedly.',
+    ],
+    ['unknown_event', 'UNKNOWN_REASON_CODE', 'More details are not available for this update.'],
+  ])('explains event %s without showing internal codes', (type, reason, expected) => {
+    expect(eventReasonLabel(type, reason)).toBe(expected);
   });
 
   it('keeps scheduler explanations understandable', () => {

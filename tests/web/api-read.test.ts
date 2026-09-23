@@ -37,6 +37,7 @@ afterEach(() => {
 function createApi(
   seed: (repositories: StorageRepositories, clock: FakeClock) => void = () => undefined,
   adapter: ProviderAdapter | undefined = inspectionSpy('fake'),
+  fakeProviderEnabled = true,
 ): { api: ReadApiHandlers; repositories: StorageRepositories; clock: FakeClock } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-api-read-'));
   const db = openDatabase(path.join(dir, 'awm.db'));
@@ -49,6 +50,7 @@ function createApi(
       repositories,
       clock,
       adapters: adapter ? new Map([[adapter.id, adapter]]) : new Map(),
+      fakeProviderEnabled,
     }),
     repositories,
     clock,
@@ -186,6 +188,45 @@ function intent(overrides: Partial<ActionIntentRecord> = {}): ActionIntentRecord
 }
 
 describe('read API handlers', () => {
+  it('omits persisted fake provider state and events when disabled by configuration', () => {
+    const { api } = createApi(
+      (repositories) => {
+        seedObservedProvider(repositories, 'fake');
+        seedObservedProvider(repositories, 'codex', NOW);
+        for (const [providerId, type] of [
+          ['fake', 'fake_activity'],
+          ['codex', 'codex_activity'],
+          [null, 'system_activity'],
+        ] as const) {
+          repositories.events.append({
+            occurredAtMs: Date.parse(NOW),
+            providerId,
+            type,
+            severity: 'info',
+            reasonCode: null,
+            data: {},
+          });
+        }
+      },
+      inspectionSpy('fake'),
+      false,
+    );
+
+    expect(api.getProviders().body.providers.map((provider) => provider.id)).toEqual(['codex']);
+    expect(api.getProvider('fake').statusCode).toBe(404);
+    const history = api.getHistory({ limit: '10' });
+    expect(history.statusCode).toBe(200);
+    if (history.statusCode === 200) {
+      expect(history.body.events.map((event) => event.type)).toEqual([
+        'system_activity',
+        'codex_activity',
+      ]);
+    }
+    const fakeHistory = api.getHistory({ provider: 'fake' });
+    expect(fakeHistory.statusCode).toBe(200);
+    if (fakeHistory.statusCode === 200) expect(fakeHistory.body.events).toEqual([]);
+  });
+
   it('projects provider list and detail from persisted state without inspection', () => {
     const inspected = { count: 0 };
     const { api, repositories } = createApi(
