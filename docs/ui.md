@@ -5,13 +5,13 @@ The deterministic FakeProvider is shown only when
 fake state is omitted from the overview, provider settings, schedule, history,
 JSON read/command routes, Usage, and metrics; SQLite history is preserved.
 
-Goal: within seconds answer:
+The overview should answer at a glance:
 
-1. which usage window is active?
+1. which usage windows are available?
 2. how much has been used and how much remains?
-3. when does it reset in my local time and in UTC?
-4. what is the next planned/recommended action?
-5. why?
+3. when does each window reset in my local time and in UTC?
+4. which start policy is selected, and is it enabled?
+5. is the provider information current?
 
 ## Overview
 
@@ -24,8 +24,9 @@ Resets Sep 23, 7:00 PM · in about 5 hours
 UTC Sep 23, 10:00 PM
 Weekly window  56% used · 44% left
 
-Next: automatic action planned for 08:00 tomorrow
-Why: the window can start before the target reset
+Selected start policy: Whenever possible
+5-hour window · starts after a fresh check confirms availability
+Active · each start still requires a fresh provider check
 ```
 
 The user-facing vocabulary deliberately hides provider and scheduler identifiers.
@@ -39,14 +40,22 @@ If data is estimated, render `About 7:00 PM` and the corresponding UTC time.
 If stale, say `Last checked 12 min ago`, make that information visibly out of
 date, and explain that automatic starts wait for a fresh update.
 
-The overview is backed by persisted `provider_state`, recent scheduler/events,
-and action-intent records. Opening `/` or `/api/v1/providers` does not call a
-provider adapter. A provider with no persisted observation renders health,
-freshness and window facts as `unknown` rather than fabricated zeroes.
+The overview is backed by persisted `provider_state`, saved activation policies,
+and provider capability declarations. Opening `/` or `/api/v1/providers` does
+not call a provider adapter. A provider with no persisted observation renders
+health, freshness and window facts as `unknown` rather than fabricated zeroes.
 
 Each provider card shows connection and monitoring status, human-readable window
-names, used/remaining amounts, local and UTC reset times, and a plain-language
-next step. Technical window keys never appear as normal labels.
+names, used/remaining amounts, local and UTC reset times, and the currently saved
+start policy with its window/time settings in plain language and a direct link to
+change it. Paused,
+monitoring-only, unsupported, missing, or invalid policies are called out rather
+than being presented as active. Technical window keys never appear as normal
+labels.
+
+The Overview does not duplicate the scheduler's next-decision explanation. The
+Schedule page owns the persisted decision and live preview, and still never
+inspects a provider while rendering either page.
 
 ## Schedule
 

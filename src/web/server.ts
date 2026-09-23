@@ -6,6 +6,7 @@ import { APP_CSS } from './ui/styles.js';
 import { APP_JS } from './ui/chart-interactions.js';
 import type { AppConfig } from '../config.js';
 import type {
+  ActivationPolicy,
   CurrentWindowState,
   ProviderCapabilities,
   ProviderObservation,
@@ -14,11 +15,9 @@ import type {
 import type { ProviderAdapter } from '../providers/provider.js';
 import { filterVisibleProviders, isProviderVisible } from '../providers/visibility.js';
 import type { Clock } from '../scheduler/clock.js';
-import { parseActivationPolicy } from '../scheduler/policy.js';
+import { activationPolicyFromRecord, parseActivationPolicy } from '../scheduler/policy.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type {
-  ActionIntentState,
-  ActionIntentRecord,
   EventRecord,
   ProviderRecord,
   ProviderStateRecord,
@@ -71,7 +70,6 @@ import {
   isEstimatedSource,
   providerDisplayName,
   providerLogoUrl,
-  reasonLabel,
   timeZoneDisplayName,
   windowDisplayName,
 } from './ui/presentation.js';
@@ -86,39 +84,6 @@ const STATIC_MIME_TYPES: Readonly<Record<string, string>> = {
 };
 
 const ASSETS_DIR = path.resolve(process.cwd(), 'assets');
-
-const DECISION_EVENT_TYPES = new Set([
-  'action_intent_planned',
-  'scheduler_noop',
-  'schedule_missed',
-]);
-
-const EXPLANATION_KEYS = new Set([
-  'decision',
-  'reasonCode',
-  'providerId',
-  'policyId',
-  'policyKind',
-  'windowKind',
-  'currentWindow',
-  'currentWindowConfidence',
-  'anchorAt',
-  'nextAnchorAt',
-  'validFrom',
-  'validUntil',
-  'targetResetAt',
-  'targetTriggerAt',
-  'windowDurationSeconds',
-  'durationConfidence',
-  'phase',
-  'phaseConfidence',
-  'observationAgeSeconds',
-  'toleranceSeconds',
-  'coverageSeconds',
-  'desiredResetLocal',
-  'timezone',
-  'dstAdjustment',
-]);
 
 export interface BuildServerInput {
   config: AppConfig;
@@ -138,20 +103,6 @@ interface FreshnessRead {
   stale: boolean;
 }
 
-interface DecisionRead {
-  decision: 'create_intent' | 'noop';
-  reasonCode: string | null;
-  explanation: Record<string, unknown>;
-  eventType: string;
-  occurredAt: string;
-  actionIntent?: {
-    id: string;
-    state: ActionIntentRecord['state'];
-    scheduledFor: string;
-    dedupeKey: string;
-  };
-}
-
 interface ProviderRead {
   id: string;
   kind: string;
@@ -163,8 +114,9 @@ interface ProviderRead {
   currentWindow: CurrentWindowState;
   windows: WindowSnapshot[];
   freshness: FreshnessRead;
+  activationPolicy: ActivationPolicy | null;
+  activationPolicyNeedsAttention: boolean;
   capabilities?: ProviderCapabilities;
-  nextDecision: DecisionRead | null;
 }
 
 export function buildServer(input: BuildServerInput) {
@@ -462,10 +414,15 @@ export function buildServer(input: BuildServerInput) {
       clock: input.clock,
       fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
     });
+    const requestedProviderId = stringValue(asRecord(request.query).providerId);
     const selected =
+      (requestedProviderId
+        ? scheduling.providers.find((provider) => provider.providerId === requestedProviderId)
+        : undefined) ??
       scheduling.providers.find(
         (provider) => provider.policy?.providerId === provider.providerId,
-      ) ?? scheduling.providers[0];
+      ) ??
+      scheduling.providers[0];
     return renderActivationSchedulePage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
@@ -566,7 +523,9 @@ export function buildServer(input: BuildServerInput) {
       return reply.code(result.statusCode).type('text/plain; charset=utf-8').send(result.message);
     }
     input.requestReconcile?.();
-    return reply.code(303).redirect('/schedule?updated=schedule');
+    const providerId = stringValue(asRecord(normalized).providerId);
+    const providerQuery = providerId ? `&providerId=${encodeURIComponent(providerId)}` : '';
+    return reply.code(303).redirect(`/schedule?updated=schedule${providerQuery}`);
   });
 
   app.post('/api/v1/providers/:id/inspect', async (request, reply) => {
@@ -808,15 +767,30 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
 
 function readProviders(input: BuildServerInput): ProviderRead[] {
   const nowMs = input.clock.now().getTime();
+  const timezone =
+    readTimezoneSetting({ repositories: input.repositories })?.timezone ??
+    input.config.AWM_TIMEZONE;
   return filterVisibleProviders(
     input.repositories.providers.list(),
     input.config.AWM_FAKE_PROVIDER_ENABLED,
   ).map((provider) => {
     const state = input.repositories.providerState.get(provider.id);
     const observation = state?.observation ?? null;
-    const decision = readDecision(input, provider.id);
     const adapter = input.adapters.get(provider.id);
     const capabilities = adapter ? safeCapabilities(adapter) : undefined;
+    const policyRecord = input.repositories.schedulePolicies
+      .list(provider.id)
+      .find((candidate) => candidate.id === `activation-${provider.id}`);
+    let activationPolicy: ActivationPolicy | null = null;
+    let activationPolicyNeedsAttention = false;
+    if (policyRecord) {
+      try {
+        activationPolicy = activationPolicyFromRecord(policyRecord, timezone) ?? null;
+        activationPolicyNeedsAttention = activationPolicy === null;
+      } catch {
+        activationPolicyNeedsAttention = true;
+      }
+    }
 
     return {
       id: provider.id,
@@ -829,8 +803,9 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
       currentWindow: deriveCurrentWindow(provider.id, observation, state?.health),
       windows: observation?.windows ?? [],
       freshness: freshness(state, nowMs),
+      activationPolicy,
+      activationPolicyNeedsAttention,
       ...(capabilities ? { capabilities } : {}),
-      nextDecision: decision,
     };
   });
 }
@@ -859,50 +834,6 @@ function freshness(state: ProviderStateRecord | undefined, nowMs: number): Fresh
     ageSeconds,
     staleAfterSeconds: Math.floor(state.staleAfterMs / 1000),
     stale: nowMs - state.observedAtMs > state.staleAfterMs,
-  };
-}
-
-function readDecision(input: BuildServerInput, providerId: string): DecisionRead | null {
-  const events = input.repositories.events.list(providerId, { limit: 100 });
-  const event = events.find((candidate) => DECISION_EVENT_TYPES.has(candidate.type));
-  const openIntents = input.repositories.actionIntents.listOpen(providerId);
-  const intent = openIntents.find((candidate) => candidate.state === 'uncertain') ?? openIntents[0];
-
-  if (event) {
-    const explanation = extractExplanation(event.data);
-    const decision = event.type === 'action_intent_planned' ? 'create_intent' : 'noop';
-    const result: DecisionRead = {
-      decision,
-      reasonCode: event.reasonCode ?? stringValue(explanation.reasonCode),
-      explanation,
-      eventType: event.type,
-      occurredAt: new Date(event.occurredAtMs).toISOString(),
-    };
-    if (intent) result.actionIntent = actionIntentRead(intent);
-    return result;
-  }
-
-  if (intent) {
-    const explanation = extractExplanation(intent.explanation);
-    return {
-      decision: 'create_intent',
-      reasonCode: intent.reasonCode,
-      explanation,
-      eventType: 'action_intent',
-      occurredAt: new Date(intent.createdAtMs).toISOString(),
-      actionIntent: actionIntentRead(intent),
-    };
-  }
-
-  return null;
-}
-
-function actionIntentRead(intent: ActionIntentRecord): NonNullable<DecisionRead['actionIntent']> {
-  return {
-    id: intent.id,
-    state: intent.state,
-    scheduledFor: new Date(intent.scheduledForMs).toISOString(),
-    dedupeKey: intent.dedupeKey,
   };
 }
 
@@ -987,28 +918,6 @@ function resolveUsageView(input: BuildServerInput, query: Record<string, unknown
   return { data, series: chartSeries, chartRanges };
 }
 
-function extractExplanation(value: unknown): Record<string, unknown> {
-  const candidate = asRecord(value);
-  const nested = asRecord(candidate.explanation);
-  const source = Object.keys(nested).length > 0 ? nested : candidate;
-  const explanation: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(source)) {
-    if (EXPLANATION_KEYS.has(key) && isSafeExplanationValue(item)) {
-      explanation[key] = item;
-    }
-  }
-  return explanation;
-}
-
-function isSafeExplanationValue(value: unknown): value is string | number | boolean | null {
-  return (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  );
-}
-
 function stringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -1030,7 +939,7 @@ function renderOverview(providers: ProviderRead[], now: Date, timezone: string):
   return renderAppShell({
     page: 'overview',
     title: 'Overview',
-    description: 'Your usage windows, remaining allowance, and next step.',
+    description: 'Your usage windows, remaining allowance, and selected start policies.',
     content:
       cards ||
       '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>',
@@ -1077,22 +986,21 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
     : provider.health === 'AUTH_REQUIRED'
       ? 'Sign-in required'
       : healthLabel(provider.health);
-  const scheduleReason = provider.nextDecision?.reasonCode;
   const automationState = !provider.enabled
     ? 'Automatic starts paused'
-    : scheduleReason === 'MANUAL_POLICY'
-      ? 'Manual starts only'
-      : scheduleReason === 'POLICY_DISABLED'
-        ? 'Schedule paused'
-        : scheduleReason === 'AUTOMATION_DISABLED'
-          ? 'Automatic starts off'
-          : !provider.nextDecision && provider.mode === 'automation'
-            ? 'No schedule set'
-            : provider.mode === 'automation'
-              ? provider.capabilities?.windowTrigger.supported === true
+    : provider.activationPolicyNeedsAttention
+      ? 'Schedule needs attention'
+      : !provider.activationPolicy
+        ? 'No start policy set'
+        : !provider.activationPolicy.enabled
+          ? 'Schedule paused'
+          : provider.activationPolicy.kind === 'manual'
+            ? 'Manual starts only'
+            : provider.mode !== 'automation'
+              ? 'Automatic starts off'
+              : provider.capabilities?.windowTrigger.supported === true
                 ? 'Automatic starts enabled'
-                : 'Automatic starts unavailable'
-              : 'Monitoring only';
+                : 'Automatic starts unavailable';
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
   const logoHtml = logoUrl
     ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
@@ -1105,41 +1013,84 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
     provider.health === 'AUTH_REQUIRED'
       ? '<p class="notice">Sign in with the official provider app, then return here to check again.</p>'
       : '';
-  const decision = renderNextStep(provider, timezone);
+  const selectedPolicy = renderSelectedPolicy(provider);
   const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
-  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${provider.health === 'UP' && provider.enabled ? 'badge-success' : 'badge-warning'}">${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${windows}${decision}${details}</article>`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${provider.health === 'UP' && provider.enabled ? 'badge-success' : 'badge-warning'}">${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${selectedPolicy}${windows}${details}</article>`;
 }
 
-function renderNextStep(provider: ProviderRead, timezone: string): string {
-  if (!provider.nextDecision) {
-    return '<section class="decision-panel"><p class="eyebrow">What happens next</p><h3>No schedule yet</h3><p>Choose when a new window should start on the <a href="/schedule">Schedule</a> page.</p></section>';
+function renderSelectedPolicy(provider: ProviderRead): string {
+  const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}`;
+  if (provider.activationPolicyNeedsAttention) {
+    return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>Saved policy needs attention</strong><p class="provider-meta">Review the schedule before relying on automatic starts.</p></div><a href="${escapeHtml(scheduleHref)}">Review schedule</a></section>`;
   }
-  const intent = provider.nextDecision.actionIntent;
-  const title = intent
-    ? actionIntentTitle(intent.state)
-    : provider.nextDecision.decision === 'create_intent'
-      ? 'A new window is ready to start'
-      : 'No start planned right now';
-  const scheduled =
-    intent?.state === 'planned'
-      ? `<p class="provider-meta">Planned for ${escapeHtml(formatLocalInstant(intent.scheduledFor, timezone))}</p>`
-      : '';
-  return `<section class="decision-panel"><p class="eyebrow">What happens next</p><h3>${escapeHtml(title)}</h3>${scheduled}<p>${escapeHtml(decisionDescription(provider.nextDecision.reasonCode))}</p></section>`;
+
+  const policy = provider.activationPolicy;
+  if (!policy) {
+    return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>No start policy selected</strong><p class="provider-meta">Choose how and when a new window should start.</p></div><a href="${escapeHtml(scheduleHref)}">Choose policy</a></section>`;
+  }
+
+  const labels: Record<ActivationPolicy['kind'], string> = {
+    manual: 'Only when I ask',
+    auto: 'Whenever possible',
+    fixed: 'On a repeating cycle',
+    custom_schedule: 'At specific times',
+    active_hours: 'Within active hours',
+  };
+  const description = selectedPolicyDescription(provider.id, policy);
+  const status = selectedPolicyStatus(provider, policy);
+  return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p><p class="provider-policy-status">${escapeHtml(status)}</p></div><a href="${escapeHtml(scheduleHref)}">Change</a></section>`;
 }
 
-function actionIntentTitle(state: ActionIntentState): string {
-  const labels: Record<ActionIntentState, string> = {
-    planned: 'A new window is planned',
-    executing: 'Starting a new window',
-    succeeded: 'Start sent; checking the result',
-    confirmed: 'New window confirmed',
-    uncertain: 'Start result needs review',
-    skipped: 'No start was needed',
-    canceled: 'Start canceled',
-    failed_retryable: 'Start will be retried',
-    failed_terminal: 'Start failed',
-  };
-  return labels[state];
+function selectedPolicyDescription(providerId: string, policy: ActivationPolicy): string {
+  if (policy.kind === 'manual') return 'New windows start only when you ask.';
+  const window = policy.windowKind
+    ? windowDisplayName(providerId, policy.windowKind)
+    : 'Any available usage window';
+  if (policy.kind === 'auto') {
+    return `${window} · Starts after a fresh check confirms availability.`;
+  }
+  const timezone =
+    policy.timezone === 'UTC' ? 'UTC' : `${timeZoneDisplayName(policy.timezone)} local time`;
+  if (policy.kind === 'fixed') {
+    return `${window} · Cycle start at ${formatPolicyTime(policy.anchorLocalTime)} · ${timezone}.`;
+  }
+  if (policy.kind === 'custom_schedule') {
+    const times = summarizePolicyItems(policy.times.map(formatPolicyTime));
+    return `${window} · Daily at ${times} · ${timezone}.`;
+  }
+  const periods = summarizePolicyItems(
+    policy.periods.map(({ start, end }) => `${formatPolicyTime(start)}–${formatPolicyTime(end)}`),
+  );
+  return `${window} · Daily during ${periods} · ${timezone}.`;
+}
+
+function selectedPolicyStatus(provider: ProviderRead, policy: ActivationPolicy): string {
+  if (!policy.enabled) return 'Paused · this policy will not plan new starts.';
+  if (!provider.enabled) return 'Monitoring is paused for this provider.';
+  if (policy.kind === 'manual') return 'Automatic starts are off; you start windows yourself.';
+  if (provider.mode !== 'automation')
+    return 'Saved, but automatic starts are off in provider settings.';
+  if (provider.capabilities?.windowTrigger.supported !== true) {
+    return 'Unavailable because this provider does not support automatic starts.';
+  }
+  return 'Active · each start still requires a fresh provider check.';
+}
+
+function formatPolicyTime(value: string): string {
+  const [hours = 0, minutes = 0] = value.split(':').map(Number);
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(Date.UTC(2020, 0, 1, hours, minutes)));
+}
+
+function summarizePolicyItems(items: readonly string[]): string {
+  const visible = items.slice(0, 3);
+  const summary = visible.join(', ');
+  return items.length > visible.length
+    ? `${summary} and ${items.length - visible.length} more`
+    : summary;
 }
 
 function formatUtc(value: string): string {
@@ -1175,10 +1126,6 @@ function formatAge(ageSeconds: number): string {
   return `${Math.floor(ageSeconds / 86_400)} days`;
 }
 
-function decisionDescription(reason: string | null): string {
-  return reasonLabel(reason);
-}
-
 function renderWindow(
   providerId: string,
   window: WindowSnapshot,
@@ -1199,10 +1146,18 @@ function renderWindow(
   const reset = window.resetAt
     ? `<div class="window-reset"><span class="field-label">Resets</span><strong>${isEstimatedSource(window.resetAt.source) ? 'About ' : ''}${escapeHtml(formatLocalInstant(window.resetAt.value, timezone))}</strong><span class="reset-relative">${escapeHtml(approximateResetText(window.resetAt, now))}</span><small>${escapeHtml(timeZoneDisplayName(timezone))} · local</small><small>${escapeHtml(formatUtc(window.resetAt.value))}</small></div>`
     : `<div class="window-reset"><span class="field-label">Reset time</span><strong class="unknown">Not available yet</strong></div>`;
-  return `<section class="window-card"><div class="window-header"><h3>${escapeHtml(label)}</h3><span class="badge">${escapeHtml(phase)}</span></div>${usageMarkup}${reset}</section>`;
+  return `<section class="window-card"><div class="window-header"><h3>${escapeHtml(label)}</h3>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}</section>`;
 }
 
-function windowPhaseLabel(window: WindowSnapshot): string {
+function windowPhaseLabel(window: WindowSnapshot): string | null {
+  if (
+    window.phase.value !== 'UNKNOWN' &&
+    (window.phase.source === 'inferred' ||
+      ['medium', 'low', 'unknown'].includes(window.phase.confidence))
+  ) {
+    return null;
+  }
+
   const labels: Record<WindowSnapshot['phase']['value'], string> = {
     ACTIVE: 'In use',
     INACTIVE: 'Available',
@@ -1210,12 +1165,7 @@ function windowPhaseLabel(window: WindowSnapshot): string {
     RESET_DUE: 'Ready to reset',
     UNKNOWN: 'Status not available',
   };
-  const label = labels[window.phase.value];
-  return window.phase.value !== 'UNKNOWN' &&
-    (window.phase.source === 'inferred' ||
-      ['medium', 'low', 'unknown'].includes(window.phase.confidence))
-    ? `Likely ${label.toLowerCase()}`
-    : label;
+  return labels[window.phase.value];
 }
 
 function approximateResetText(fact: NonNullable<WindowSnapshot['resetAt']>, now: Date): string {

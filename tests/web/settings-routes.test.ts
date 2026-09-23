@@ -160,6 +160,7 @@ describe('settings and schedule pages', () => {
     });
 
     expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe('/schedule?updated=schedule&providerId=fake');
     expect(context.repositories.schedulePolicies.list('fake')[0]?.config).toMatchObject({
       periods: [{ start: '08:00', end: '18:00' }],
     });

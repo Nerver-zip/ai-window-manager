@@ -14,6 +14,7 @@ import { openDatabase, type SqliteDatabase } from '../../src/storage/database.js
 import {
   createRepositories,
   type ProviderRecord,
+  type SchedulePolicyRecord,
   type StorageRepositories,
 } from '../../src/storage/repositories.js';
 import { buildServer } from '../../src/web/server.js';
@@ -162,13 +163,43 @@ function seedObservedProvider(
   });
 }
 
+function seedActivationPolicy(
+  repositories: StorageRepositories,
+  kind: SchedulePolicyRecord['kind'],
+  config: unknown = {},
+  enabled = true,
+  providerId = 'fake',
+): void {
+  repositories.schedulePolicies.upsert({
+    id: `activation-${providerId}`,
+    providerId,
+    kind,
+    enabled,
+    timezone: 'America/Sao_Paulo',
+    config,
+    createdAtMs: Date.parse(NOW),
+    updatedAtMs: Date.parse(NOW),
+  });
+}
+
+function automationInspectionSpy(id: string): ProviderAdapter {
+  return {
+    ...inspectionSpy(id),
+    capabilities: () => ({
+      ...capabilities,
+      windowTrigger: { supported: true, contract: 'official_supported', consumesQuota: true },
+    }),
+  };
+}
+
 describe('web server persisted overview', () => {
   it('renders an empty workspace with useful navigation', async () => {
     const { app } = createApp(() => {});
     const response = await app.inject('/');
     expect(response.body).toContain('No providers are set up');
     expect(response.body).toContain('aria-current="page"');
-    expect(response.body).toContain('Private usage dashboard');
+    expect(response.body).not.toContain('Private usage dashboard');
+    expect(response.body).not.toContain('PRIVATE WORKSPACE');
   });
 
   it.each(['/settings', '/schedule', '/history'])(
@@ -230,6 +261,153 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Codex');
   });
 
+  it.each([
+    {
+      name: 'manual',
+      kind: 'manual' as const,
+      config: {},
+      title: 'Only when I ask',
+      detail: 'New windows start only when you ask.',
+    },
+    {
+      name: 'automatic',
+      kind: 'auto' as const,
+      config: { windowKind: 'five_hour' },
+      title: 'Whenever possible',
+      detail: '5-hour window · Starts after a fresh check confirms availability.',
+    },
+    {
+      name: 'repeating-cycle',
+      kind: 'fixed' as const,
+      config: { windowKind: 'five_hour', anchorLocalTime: '18:00', toleranceSeconds: 900 },
+      title: 'On a repeating cycle',
+      detail: '5-hour window · Cycle start at 6:00 PM · São Paulo local time.',
+    },
+    {
+      name: 'chosen-times',
+      kind: 'custom_schedule' as const,
+      config: {
+        windowKind: 'weekly',
+        times: ['09:00', '14:30', '20:00', '22:00'],
+        toleranceSeconds: 900,
+      },
+      title: 'At specific times',
+      detail:
+        'Weekly window · Daily at 9:00 AM, 2:30 PM, 8:00 PM and 1 more · São Paulo local time.',
+    },
+    {
+      name: 'active-hours',
+      kind: 'active_hours' as const,
+      config: { windowKind: 'five_hour', periods: [{ start: '08:00', end: '18:00' }] },
+      title: 'Within active hours',
+      detail: '5-hour window · Daily during 8:00 AM–6:00 PM · São Paulo local time.',
+    },
+  ])('shows the saved $name policy in plain language', async ({ kind, config, title, detail }) => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedActivationPolicy(repositories, kind, config);
+    });
+
+    const page = await app.inject('/');
+    expect(page.body).toContain('aria-label="Selected start policy"');
+    expect(page.body).toContain(`<strong>${title}</strong>`);
+    expect(page.body).toContain(detail);
+    expect(page.body).toContain('href="/schedule?providerId=fake">Change</a>');
+    expect(page.body).not.toContain('activation-fake');
+    expect(page.body).not.toContain('five_hour');
+  });
+
+  it('shows when the selected policy is paused or cannot currently run', async () => {
+    const paused = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedActivationPolicy(
+        repositories,
+        'fixed',
+        { windowKind: 'five_hour', anchorLocalTime: '18:00', toleranceSeconds: 900 },
+        false,
+      );
+    });
+    const pausedPage = await paused.app.inject('/');
+    expect(pausedPage.body).toContain('Paused · this policy will not plan new starts.');
+
+    const settingsDisabled = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedActivationPolicy(repositories, 'auto', { windowKind: 'five_hour' });
+    });
+    const settingsPage = await settingsDisabled.app.inject('/');
+    expect(settingsPage.body).toContain(
+      'Saved, but automatic starts are off in provider settings.',
+    );
+
+    const unsupported = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.providers.upsert(providerRecord({ mode: 'automation' }));
+      seedActivationPolicy(repositories, 'auto', { windowKind: 'five_hour' });
+    }, inspectionSpy('fake'));
+    const unsupportedPage = await unsupported.app.inject('/');
+    expect(unsupportedPage.body).toContain(
+      'Unavailable because this provider does not support automatic starts.',
+    );
+
+    const active = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.providers.upsert(providerRecord({ mode: 'automation' }));
+      seedActivationPolicy(repositories, 'auto', { windowKind: 'five_hour' });
+    }, automationInspectionSpy('fake'));
+    const activePage = await active.app.inject('/');
+    expect(activePage.body).toContain('Active · each start still requires a fresh provider check.');
+  });
+
+  it('asks the user to review an invalid saved policy instead of showing an internal value', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedActivationPolicy(repositories, 'custom_schedule', {
+        windowKind: 'five_hour',
+        times: [],
+        toleranceSeconds: 900,
+      });
+    });
+
+    const page = await app.inject('/');
+    expect(page.body).toContain('Saved policy needs attention');
+    expect(page.body).toContain('href="/schedule?providerId=fake">Review schedule</a>');
+    expect(page.body).not.toContain('activation-fake');
+  });
+
+  it('states when provider monitoring is paused while retaining the saved policy', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.providers.upsert(providerRecord({ enabled: false, mode: 'automation' }));
+      seedActivationPolicy(repositories, 'auto', { windowKind: 'five_hour' });
+    });
+
+    const page = await app.inject('/');
+    expect(page.body).toContain('Whenever possible');
+    expect(page.body).toContain('Monitoring is paused for this provider.');
+  });
+
+  it('opens Schedule for the provider whose overview card was used', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedActivationPolicy(repositories, 'manual');
+      seedObservedProvider(repositories, 'codex', NOW, 'codex');
+      seedActivationPolicy(
+        repositories,
+        'fixed',
+        { windowKind: 'weekly', anchorLocalTime: '17:00', toleranceSeconds: 900 },
+        true,
+        'codex',
+      );
+    });
+
+    const overview = await app.inject('/');
+    expect(overview.body).toContain('href="/schedule?providerId=codex">Change</a>');
+    const schedule = await app.inject('/schedule?providerId=codex');
+    expect(schedule.statusCode).toBe(200);
+    expect(schedule.body).toContain('<option value="codex" selected>Codex</option>');
+    expect(schedule.body).toContain('value="17:00"');
+  });
+
   it('does not imply automatic starts are active when the saved schedule is manual', async () => {
     const automationAdapter: ProviderAdapter = {
       ...inspectionSpy('fake'),
@@ -241,6 +419,7 @@ describe('web server persisted overview', () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories);
       repositories.providers.upsert(providerRecord({ mode: 'automation' }));
+      seedActivationPolicy(repositories, 'manual');
       repositories.events.append({
         providerId: 'fake',
         occurredAtMs: Date.parse(NOW),
@@ -254,7 +433,30 @@ describe('web server persisted overview', () => {
     const page = await app.inject('/');
     expect(page.body).toContain('Manual starts only');
     expect(page.body).not.toContain('Automatic starts enabled');
-    expect(page.body).toContain('New windows are started only by you.');
+    expect(page.body).toContain('Automatic starts are off; you start windows yourself.');
+  });
+
+  it('keeps the overview focused on usage and policy, with decisions on Schedule', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      repositories.providers.upsert(providerRecord({ mode: 'automation' }));
+      seedActivationPolicy(repositories, 'auto', { windowKind: 'five_hour' });
+    }, automationInspectionSpy('fake'));
+
+    const overview = await app.inject('/');
+    expect(overview.statusCode).toBe(200);
+    expect(overview.body).toContain('Selected start policy');
+    expect(overview.body).toContain('Whenever possible');
+    expect(overview.body).toContain('5-hour window');
+    expect(overview.body).toContain('Resets');
+    expect(overview.body).not.toContain('What happens next');
+    expect(overview.body).not.toContain('Next opportunity:');
+    expect(overview.body).not.toContain('No start planned right now');
+    expect(overview.body).not.toContain('decision-panel');
+
+    const schedule = await app.inject('/schedule?providerId=fake');
+    expect(schedule.statusCode).toBe(200);
+    expect(schedule.body).toContain('What happens next');
   });
 
   it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
@@ -279,7 +481,7 @@ describe('web server persisted overview', () => {
     },
   );
 
-  it('presents planned intents with human explanations and disclosure details', async () => {
+  it('keeps planned-intent details in the API, not the overview', async () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories);
       repositories.providers.upsert(providerRecord({ mode: 'automation' }));
@@ -292,9 +494,24 @@ describe('web server persisted overview', () => {
         data: { explanation: { targetTriggerAt: NOW } },
       });
     });
+
+    const api = await app.inject('/api/v1/providers');
+    expect(api.json()).toMatchObject({
+      providers: [
+        {
+          nextDecision: {
+            decision: 'create_intent',
+            reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+            explanation: { targetTriggerAt: NOW },
+          },
+        },
+      ],
+    });
+
     const page = await app.inject('/');
-    expect(page.body).toContain('A new window is ready to start');
-    expect(page.body).toContain('The window can start before the target reset.');
+    expect(page.body).not.toContain('A new window is ready to start');
+    expect(page.body).not.toContain('The window can start before the target reset.');
+    expect(page.body).not.toContain('What happens next');
     expect(page.body).not.toContain('<summary>Technical details</summary>');
   });
 
@@ -333,6 +550,8 @@ describe('web server persisted overview', () => {
     expect(page.body).not.toMatch(/<style|style=|<script>/);
     expect(page.body).toContain('value="25"');
     expect(page.body).toContain('<progress');
+    expect(page.body).toContain('No start policy selected');
+    expect(page.body).toContain('href="/schedule?providerId=fake">Choose policy</a>');
     const css = await app.inject('/assets/app.css');
     expect(css.statusCode).toBe(200);
     expect(css.headers['content-type']).toContain('text/css');
@@ -352,6 +571,28 @@ describe('web server persisted overview', () => {
     expect(page.body).not.toContain('five_hour');
     expect(page.body).not.toContain('<script>persisted text</script>');
     expect(inspected.count).toBe(0);
+  });
+
+  it('omits inferred window phase labels from the overview', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      const state = repositories.providerState.get('fake');
+      if (!state?.observation) throw new Error('missing observation');
+      const window = state.observation.windows[0];
+      if (!window) throw new Error('missing window');
+      window.phase = {
+        value: 'ACTIVE',
+        source: 'inferred',
+        confidence: 'high',
+        observedAt: NOW,
+      };
+      repositories.providerState.upsert(state);
+    });
+
+    const page = await app.inject('/');
+    expect(page.body).not.toContain('Likely in use');
+    expect(page.body).toContain('5-hour window');
+    expect(page.body).toContain('value="25"');
   });
 
   it('renders approximate reset timing for future, past, short and long windows', async () => {
@@ -397,7 +638,7 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Reset time</span><strong class="unknown">Not available yet');
   });
 
-  it('renders the persisted scheduler explanation and escapes its text', async () => {
+  it('keeps scheduler explanations in JSON, not the overview', async () => {
     const { app } = createApp((repository) => {
       seedObservedProvider(repository);
       repository.events.append({
@@ -438,7 +679,8 @@ describe('web server persisted overview', () => {
     const page = await app.inject('/');
     expect(page.body).not.toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(page.body).not.toContain('<script>alert(1)</script>');
-    expect(page.body).toContain('The window duration is not reliable enough yet.');
+    expect(page.body).not.toContain('The window duration is not reliable enough yet.');
+    expect(page.body).not.toContain('What happens next');
   });
 
   it('shows explicit stale and unknown values for missing or old state', async () => {
