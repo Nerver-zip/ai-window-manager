@@ -1,9 +1,19 @@
 import type { Confidence, ProviderCapabilities, WindowSnapshot } from '../domain/types.js';
 import type { ActivationPolicy } from '../domain/types.js';
-import { resolveLocalOccurrence, type LocalOccurrence } from '../scheduler/time.js';
+import {
+  localDateAt,
+  resolveLocalOccurrence,
+  resolveLocalOccurrenceOnDate,
+  shiftLocalDate,
+  type LocalOccurrence,
+} from '../scheduler/time.js';
 import type { CurrentWindowState } from '../domain/types.js';
-import type { PlannerDecision, UpcomingScheduleItem } from '../scheduler/planner.js';
-import type { TimezoneSetting } from '../scheduler/policy.js';
+import {
+  upcomingSchedule,
+  type PlannerDecision,
+  type UpcomingScheduleItem,
+} from '../scheduler/planner.js';
+import { localTimeMinutes, type TimezoneSetting } from '../scheduler/policy.js';
 import type { ProviderMode } from '../storage/repositories.js';
 import { renderAppShell } from './ui/layout.js';
 import {
@@ -21,24 +31,59 @@ const MAX_POLL_INTERVAL_SECONDS = 86_400;
 const MIN_TOLERANCE_SECONDS = 0;
 const MAX_TOLERANCE_SECONDS = 3_600;
 const KNOWN_DURATION_CONFIDENCES = new Set<Confidence>(['exact', 'high']);
-const TIME_ZONE_CHOICES = [
-  ['UTC', 'UTC'],
-  ['America/Sao_Paulo', 'São Paulo / Brasília'],
-  ['America/Buenos_Aires', 'Buenos Aires'],
-  ['America/Mexico_City', 'Mexico City'],
-  ['America/New_York', 'New York'],
-  ['America/Chicago', 'Chicago'],
-  ['America/Denver', 'Denver'],
-  ['America/Los_Angeles', 'Los Angeles'],
-  ['Europe/London', 'London'],
-  ['Europe/Paris', 'Paris'],
-  ['Europe/Berlin', 'Berlin'],
-  ['Asia/Kolkata', 'Kolkata'],
-  ['Asia/Singapore', 'Singapore'],
-  ['Asia/Tokyo', 'Tokyo'],
-  ['Australia/Sydney', 'Sydney'],
-  ['Pacific/Auckland', 'Auckland'],
+const TIME_ZONE_GROUPS = [
+  [
+    'Americas',
+    [
+      ['America/Sao_Paulo', 'São Paulo'],
+      ['America/Buenos_Aires', 'Buenos Aires'],
+      ['America/Mexico_City', 'Mexico City'],
+      ['America/New_York', 'New York'],
+      ['America/Chicago', 'Chicago'],
+      ['America/Denver', 'Denver'],
+      ['America/Los_Angeles', 'Los Angeles'],
+      ['America/Anchorage', 'Anchorage'],
+    ],
+  ],
+  [
+    'Europe',
+    [
+      ['Europe/London', 'London'],
+      ['Europe/Paris', 'Paris'],
+      ['Europe/Berlin', 'Berlin'],
+      ['Europe/Madrid', 'Madrid'],
+      ['Europe/Helsinki', 'Helsinki'],
+    ],
+  ],
+  [
+    'Asia',
+    [
+      ['Asia/Kolkata', 'Kolkata'],
+      ['Asia/Dubai', 'Dubai'],
+      ['Asia/Singapore', 'Singapore'],
+      ['Asia/Tokyo', 'Tokyo'],
+      ['Asia/Seoul', 'Seoul'],
+    ],
+  ],
+  [
+    'Pacific',
+    [
+      ['Australia/Sydney', 'Sydney'],
+      ['Pacific/Auckland', 'Auckland'],
+      ['Pacific/Honolulu', 'Honolulu'],
+    ],
+  ],
+  [
+    'Africa',
+    [
+      ['Africa/Cairo', 'Cairo'],
+      ['Africa/Johannesburg', 'Johannesburg'],
+      ['Africa/Nairobi', 'Nairobi'],
+    ],
+  ],
+  ['UTC', [['UTC', 'UTC']]],
 ] as const;
+const DEFAULT_REFERENCE_INSTANT = new Date('2026-01-01T12:00:00.000Z');
 
 export interface SettingsProviderView {
   id: string;
@@ -48,12 +93,14 @@ export interface SettingsProviderView {
   pollIntervalSeconds: number;
   capabilities?: ProviderCapabilities | undefined;
   windows?: readonly WindowSnapshot[] | undefined;
+  staleAfterSeconds?: number | undefined;
 }
 
 export interface SettingsPageInput {
   csrfToken: string;
   providers: readonly SettingsProviderView[];
   timezone?: TimezoneSetting;
+  referenceInstant?: Date;
   notice?: string;
 }
 
@@ -73,6 +120,7 @@ export interface ActivationSchedulePageInput {
   currentWindow?: CurrentWindowState;
   decision?: PlannerDecision | null;
   upcoming?: readonly UpcomingScheduleItem[];
+  referenceInstant?: Date;
   notice?: string;
 }
 
@@ -99,35 +147,22 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const kind = policy?.kind ?? 'manual';
   const currentWindow = input.currentWindow;
   const decision = input.decision;
-  const upcoming = input.upcoming ?? [];
   const providerOptions = input.providers.length
     ? input.providers.map((provider) => renderProviderOption(provider, providerId)).join('')
     : '<option value="">No providers configured</option>';
   const policyOptions = [
-    [
-      'auto',
-      'When a new window is available',
-      'Start when the provider is ready and safety checks pass.',
-    ],
-    ['fixed', 'On a regular cycle', 'Repeat a start at the same local time each cycle.'],
-    ['custom_schedule', 'At chosen times', 'Start only near the local times you choose.'],
-    ['active_hours', 'During selected hours', 'Start only during the hours you choose.'],
-    ['manual', 'Manual only', 'Keep monitoring, but leave starting windows to you.'],
+    ['auto', 'Whenever possible', 'Start when a new window is safely available.', 'bolt'],
+    ['custom_schedule', 'At specific times', 'Choose one or more times of day.', 'calendar'],
+    ['fixed', 'On a repeating cycle', 'Use the same local start time each cycle.', 'repeat'],
+    ['active_hours', 'Within active hours', 'Only start during the hours you choose.', 'clock'],
+    ['manual', 'Only when I ask', 'Keep monitoring; never start automatically.', 'hand'],
   ] as const;
-  const policyOptionsHtml = policyOptions
-    .map(
-      ([value, label]) =>
-        `<option value="${value}"${kind === value ? ' selected' : ''}>${label}</option>`,
-    )
-    .join('');
   const windowControl = renderWindowControl(selectedProvider, selectedWindowKind ?? 'five_hour');
   const tolerance = policy && 'toleranceSeconds' in policy ? policy.toleranceSeconds : 15 * 60;
   const anchor = policy?.kind === 'fixed' ? policy.anchorLocalTime : '18:00';
   const customTimes = policy?.kind === 'custom_schedule' ? policy.times : ['08:00', '18:00'];
   const activePeriods =
-    policy?.kind === 'active_hours'
-      ? policy.periods.map((period) => `${period.start}-${period.end}`)
-      : ['08:00-12:00', '18:00-00:00'];
+    policy?.kind === 'active_hours' ? policy.periods : [{ start: '08:00', end: '18:00' }];
   const timezoneText = timezone
     ? timeZoneDisplayName(timezone)
     : 'Choose a time zone in Settings before enabling a time-based policy.';
@@ -142,25 +177,26 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         ${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}
       </section>
       <section class="card" aria-labelledby="activation-policy-title">
-        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">Automatic window activation</h2><p class="muted">Choose when a new window may start. Safety checks still apply before anything happens.</p></div></div>
-        <form method="post" action="/schedule" data-policy-form>
+        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">Choose a pattern. We only start when fresh usage information and provider safety checks allow it.</p></div></div>
+        <form method="post" action="/schedule" data-policy-form data-schedule-preview-form>
           ${csrfInput(csrfToken)}
           <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
           <input type="hidden" name="toleranceSeconds" value="${tolerance}">
-          <div class="form-grid">
-            ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose the provider this policy controls.', 'activation-policy-provider-help')}
-            ${renderField('activation-policy-kind', 'How should new windows start?', `<select id="activation-policy-kind" name="policyKind" data-policy-kind required>${policyOptionsHtml}</select>`, 'Choose a simple schedule preference. You can change it without changing the current window.', 'activation-policy-kind-help')}
+          <div class="form-grid schedule-primary-fields">
+            ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose the provider this schedule controls.', 'activation-policy-provider-help')}
           </div>
+          <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><p class="field-help">Choose a pattern. You can change it later without affecting the current window.</p><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value)).join('')}</div></fieldset>
           <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change</a></p>
-          ${renderPolicyFields('auto', kind === 'auto', renderPolicyWindowField(windowControl, 'auto-window'))}
-          ${renderPolicyFields('fixed', kind === 'fixed', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60">`, 'Local time to start each cycle.', 'fixed-anchor-help')}</div>`)}
-          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Choose one or more local times.', 'custom-times-help')}</div>`)}
-          ${renderPolicyFields('active_hours', kind === 'active_hours', `<div class="form-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderPolicyListField('active-hours-periods', 'Active hours', 'periods', activePeriods, 'period', 'Use local ranges such as 08:00-12:00. Add or remove periods as needed.', 'active-hours-periods-help')}</div><p class="field-help">The application avoids starting a full window when too little useful coverage remains.</p>`)}
-          ${renderPolicyFields('manual', kind === 'manual', '<p class="notice">Monitoring continues. New windows start only when you choose.</p>')}
+          ${renderPolicyFields('auto', kind === 'auto', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'auto-window')}</div><p class="policy-guidance">The service checks for a newly available window and starts it only when fresh provider data and safety checks agree.</p>`)}
+          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Times use your saved local time zone.', 'custom-times-help', true)}</div><p class="policy-guidance">A scheduled time is an opportunity, not a guarantee. The service checks periodically and still requires fresh, safe provider data.</p>`)}
+          ${renderPolicyFields('fixed', kind === 'fixed', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
+          ${renderPolicyFields('active_hours', kind === 'active_hours', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
+          ${renderPolicyFields('manual', kind === 'manual', '<p class="policy-guidance">Monitoring continues. The service will not start a window automatically.</p>')}
           <div class="form-actions"><button type="submit">Save schedule</button></div>
         </form>
       </section>
-      <section class="card" aria-labelledby="upcoming-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next step</p><h2 id="upcoming-title">Next scheduled start</h2><p class="muted">Based on your saved schedule and the latest provider update.</p></div></div>${renderPlannerPreview(upcoming, decision, timezone)}</section>
+      <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
+      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${renderPlannerPreview(decision)}</section>
     </div>`,
   });
 }
@@ -189,35 +225,191 @@ function renderCurrentWindowSummary(
   return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(windowLabel)}</p></div>${details}</div>`;
 }
 
-function renderPlannerPreview(
-  upcoming: readonly UpcomingScheduleItem[],
-  decision: PlannerDecision | null | undefined,
-  timezone: string,
-): string {
-  const next = upcoming[0]?.at ?? decision?.anchorAt ?? decision?.nextAnchorAt ?? null;
-  const nextLabel = upcoming[0]?.kind === 'wait' ? 'Next available time' : 'Next planned start';
-  const nextMarkup = next
-    ? `<div class="next-start-preview"><span class="eyebrow">${nextLabel}</span><strong><time datetime="${escapeAttribute(next)}">${escapeHtml(formatUpcomingTime(next, timezone))}</time></strong><span class="muted">${escapeHtml(timezone || 'Local time')}</span></div>`
-    : '<p class="empty-state">No start time is scheduled yet.</p>';
-  const status = decision
+function renderPlannerPreview(decision: PlannerDecision | null | undefined): string {
+  return decision
     ? `<p class="schedule-explanation"><strong>${escapeHtml(decisionLabel(decision.kind))}.</strong> ${escapeHtml(plannerReasonLabel(decision.reasonCode))}</p>`
-    : '<p class="schedule-explanation">Waiting for the provider’s first update.</p>';
-  const laterItems =
-    upcoming.length > 1
-      ? `<details><summary>More scheduled times</summary><ol class="upcoming-list">${upcoming
-          .slice(1)
-          .map(
-            (item) =>
-              `<li><time datetime="${escapeAttribute(item.at)}">${escapeHtml(formatUpcomingTime(item.at, timezone))}</time><span>${escapeHtml(item.label === 'Start window' ? 'Start a new window' : item.label)}</span></li>`,
-          )
-          .join('')}</ol></details>`
+    : '<p class="schedule-explanation">Waiting for the provider’s first update. No start can be planned until usage data is available.</p>';
+}
+
+export interface ScheduleHorizonInput {
+  policy: ActivationPolicy | undefined;
+  provider: SettingsProviderView | undefined;
+  currentWindow: CurrentWindowState | undefined;
+  referenceInstant: Date;
+  timezone: string;
+}
+
+export function renderScheduleHorizon(input: ScheduleHorizonInput): string {
+  const { policy, provider, currentWindow, referenceInstant, timezone } = input;
+  const horizonMs = 24 * 60 * 60 * 1000;
+  const endMs = referenceInstant.getTime() + horizonMs;
+  const selectedKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
+  const selectedWindow = provider?.windows?.find((window) => window.windowKind === selectedKind);
+  const duration = selectedWindow?.durationSeconds;
+  const durationSeconds =
+    duration && ['exact', 'high'].includes(duration.confidence) ? duration.value : undefined;
+  const ageSeconds = currentWindow?.observedAt
+    ? Math.max(0, (referenceInstant.getTime() - Date.parse(currentWindow.observedAt)) / 1000)
+    : Number.POSITIVE_INFINITY;
+  const currentIsFresh = Boolean(
+    currentWindow?.status === 'ACTIVE' &&
+    provider?.staleAfterSeconds !== undefined &&
+    ageSeconds <= provider.staleAfterSeconds,
+  );
+  const schedule = policy ? upcomingSchedule(policy, referenceInstant, durationSeconds, 32) : [];
+  const milestones: { at: string; label: string; type: 'start' | 'reset' }[] = [];
+  for (const item of schedule) {
+    const at = Date.parse(item.at);
+    if (Number.isFinite(at) && at >= referenceInstant.getTime() && at <= endMs) {
+      milestones.push({ at: item.at, label: 'Scheduled start opportunity', type: 'start' });
+    }
+  }
+  const resetFact = currentWindow?.expectedEndAt;
+  const resetAt =
+    currentIsFresh && resetFact && ['exact', 'high'].includes(resetFact.confidence)
+      ? resetFact.value
+      : undefined;
+  const resetMs = resetAt ? Date.parse(resetAt) : Number.NaN;
+  if (Number.isFinite(resetMs) && resetMs >= referenceInstant.getTime() && resetMs <= endMs) {
+    milestones.push({
+      at: resetAt as string,
+      label: 'Expected current-window reset',
+      type: 'reset',
+    });
+  }
+  milestones.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const visibleMilestones = milestones.slice(0, 3);
+  const xFor = (instantMs: number) =>
+    40 + Math.max(0, Math.min(1, (instantMs - referenceInstant.getTime()) / horizonMs)) * 920;
+  const projectedSegments = schedule
+    .filter((item) => item.kind === 'start')
+    .map((item) => {
+      const startMs = Date.parse(item.at);
+      if (startMs < referenceInstant.getTime() || startMs > endMs || !durationSeconds) return '';
+      const x = xFor(startMs);
+      const right = xFor(Math.min(endMs, startMs + durationSeconds * 1000));
+      return `<rect class="horizon-projected" x="${x.toFixed(1)}" y="41" width="${Math.max(2, right - x).toFixed(1)}" height="14" rx="4"/>`;
+    })
+    .join('');
+  const currentEndX =
+    currentIsFresh && Number.isFinite(resetMs) ? xFor(Math.min(endMs, resetMs)) : 40;
+  const currentSegment =
+    currentIsFresh && currentEndX > 40
+      ? `<rect class="horizon-current" x="40" y="41" width="${(currentEndX - 40).toFixed(1)}" height="14" rx="4"/>`
       : '';
-  return `<div class="schedule-preview-body">${nextMarkup}${status}${laterItems}</div>`;
+  const activeHoursSegments =
+    policy?.kind === 'active_hours'
+      ? renderActiveHoursSegments(policy, referenceInstant, endMs, xFor)
+      : '';
+  const markerSvg = milestones
+    .map((item) => {
+      const x = xFor(Date.parse(item.at)).toFixed(1);
+      return `<line class="horizon-marker horizon-marker-${item.type}" x1="${x}" y1="27" x2="${x}" y2="62"/><circle class="horizon-marker-dot horizon-marker-${item.type}" cx="${x}" cy="48" r="4"/>`;
+    })
+    .join('');
+  const nowLine = '<line class="horizon-now" x1="40" y1="19" x2="40" y2="68"/>';
+  const ticks = [0, 6, 12, 18, 24]
+    .map((hour) => {
+      const x = 40 + (hour / 24) * 920;
+      return `<line class="horizon-tick" x1="${x}" y1="36" x2="${x}" y2="62"/>`;
+    })
+    .join('');
+  const axis = [0, 6, 12, 18, 24]
+    .map((hour) => {
+      const tickAt = new Date(referenceInstant.getTime() + hour * 60 * 60 * 1000);
+      return `<span>${escapeHtml(formatUpcomingTime(tickAt.toISOString(), timezone || 'UTC'))}</span>`;
+    })
+    .join('');
+  const opportunitiesInView = schedule.filter((item) => {
+    const at = Date.parse(item.at);
+    return Number.isFinite(at) && at >= referenceInstant.getTime() && at <= endMs;
+  }).length;
+  const stateNote =
+    !policy || policy.kind === 'manual'
+      ? 'No automatic start is scheduled.'
+      : !policy.enabled
+        ? 'This schedule is paused.'
+        : policy.kind === 'auto'
+          ? 'A start may happen when a fresh update confirms a new window is available.'
+          : opportunitiesInView === 0
+            ? 'No start opportunity falls within this 24-hour view.'
+            : `${opportunitiesInView} start ${opportunitiesInView === 1 ? 'opportunity' : 'opportunities'} in this view.`;
+  const milestonesHtml = visibleMilestones.length
+    ? `<ol class="horizon-milestones">${visibleMilestones.map((item) => `<li><time datetime="${escapeAttribute(item.at)}">${escapeHtml(formatReadableInstant(item.at, timezone || 'UTC'))}</time><span>${escapeHtml(item.label)}</span></li>`).join('')}</ol>`
+    : `<p class="horizon-empty">${escapeHtml(stateNote)}</p>`;
+  const stateDescription = currentIsFresh
+    ? 'A fresh provider update reports a window in use.'
+    : currentWindow?.status === 'ACTIVE'
+      ? 'The last report showed a window in use, but it is too old to project.'
+      : 'No current active window is projected.';
+  const title = `24-hour schedule view. ${stateDescription} ${stateNote}`;
+  const selectedHoursLegend =
+    policy?.kind === 'active_hours'
+      ? '<span><i class="horizon-legend-hours"></i>Chosen active hours</span>'
+      : '';
+  return `<div class="schedule-horizon"><div class="horizon-timeline-head"><strong>Now</strong><span>Next 24 hours</span></div><div class="horizon-chart-wrap"><svg class="schedule-horizon-chart" viewBox="0 0 1000 92" role="img" aria-label="${escapeAttribute(title)}"><title>${escapeHtml(title)}</title>${activeHoursSegments}<line class="horizon-track" x1="40" y1="48" x2="960" y2="48"/>${currentSegment}${projectedSegments}${ticks}${markerSvg}${nowLine}</svg><div class="horizon-axis" aria-hidden="true">${axis}</div></div><div class="horizon-legend">${selectedHoursLegend}<span><i class="horizon-legend-current"></i>Current window</span><span><i class="horizon-legend-projected"></i>Projected coverage</span><span><i class="horizon-legend-start"></i>Start opportunity</span></div><h3 class="horizon-milestones-title">Next milestones</h3>${milestonesHtml}<p class="field-help horizon-safety-note">${escapeHtml(stateDescription)} Schedule markers are opportunities; the service checks periodically and verifies safety before starting.</p></div>`;
+}
+
+function renderActiveHoursSegments(
+  policy: Extract<ActivationPolicy, { kind: 'active_hours' }>,
+  referenceInstant: Date,
+  endMs: number,
+  xFor: (instantMs: number) => number,
+): string {
+  const startDate = localDateAt(referenceInstant, policy.timezone);
+  const segments: string[] = [];
+  for (let dayOffset = -1; dayOffset <= 2; dayOffset += 1) {
+    const localDate = shiftLocalDate(startDate, dayOffset);
+    for (const period of policy.periods) {
+      const starts = resolveLocalOccurrenceOnDate({
+        localDate,
+        localTime: period.start,
+        timeZone: policy.timezone,
+      }).instant.getTime();
+      const endDate =
+        localTimeMinutes(period.end) <= localTimeMinutes(period.start)
+          ? shiftLocalDate(localDate, 1)
+          : localDate;
+      const ends = resolveLocalOccurrenceOnDate({
+        localDate: endDate,
+        localTime: period.end,
+        timeZone: policy.timezone,
+      }).instant.getTime();
+      const leftMs = Math.max(referenceInstant.getTime(), starts);
+      const rightMs = Math.min(endMs, ends);
+      if (rightMs <= leftMs) continue;
+      const left = xFor(leftMs);
+      const right = xFor(rightMs);
+      segments.push(
+        `<rect class="horizon-active-hours" x="${left.toFixed(1)}" y="34" width="${(right - left).toFixed(1)}" height="28" rx="6"/>`,
+      );
+    }
+  }
+  return segments.join('');
 }
 
 function renderPolicyFields(kind: string, active: boolean, content: string): string {
   const state = active ? '' : ' hidden aria-hidden="true"';
   return `<div class="policy-fields" data-policy-fields="${escapeAttribute(kind)}"${state}>${active ? content : disableFormControls(content)}</div>`;
+}
+
+function renderPolicyChoice(
+  value: string,
+  title: string,
+  description: string,
+  icon: string,
+  selected: boolean,
+): string {
+  const icons: Record<string, string> = {
+    bolt: '<path d="M13 2 4 14h7l-1 8 10-13h-7z"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
+    repeat:
+      '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    hand: '<path d="M8 11V5a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v8c0 5-3 8-8 8h-1c-2 0-3-1-4-3l-3-5a2 2 0 0 1 4-2l1 2"/>',
+  };
+  const id = `policy-kind-${value}`;
+  return `<label class="policy-choice${selected ? ' is-selected' : ''}" data-policy-choice><input id="${id}" type="radio" name="policyKind" value="${escapeAttribute(value)}"${selected ? ' checked' : ''} required><span class="policy-choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[icon] ?? ''}</svg></span><span class="policy-choice-copy"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></span><span class="policy-choice-indicator" aria-hidden="true"></span></label>`;
 }
 
 function disableFormControls(content: string): string {
@@ -232,9 +424,22 @@ function renderPolicyListField(
   kind: 'time' | 'period',
   help: string,
   helpId: string,
+  withPresets = false,
 ): string {
   const items = values.length ? values : [''];
-  return `<div class="field dynamic-list-field"><span class="field-label">${escapeHtml(label)}</span><div id="${escapeAttribute(id)}" class="dynamic-list" data-schedule-list data-list-name="${escapeAttribute(name)}" data-list-kind="${kind}" aria-describedby="${escapeAttribute(helpId)}">${items.map((value, index) => renderPolicyListItem(id, name, kind, value, index)).join('')}<button class="button button-secondary dynamic-list-add" type="button" data-list-add>Add another</button><span class="field-help" id="${escapeAttribute(helpId)}">${escapeHtml(help)}</span></div></div>`;
+  const presets = withPresets
+    ? `<div class="schedule-presets" aria-label="Suggested times">${[
+        ['09:00', 'Morning'],
+        ['14:00', 'Afternoon'],
+        ['18:00', 'Evening'],
+      ]
+        .map(
+          ([time, title]) =>
+            `<button type="button" class="button button-secondary" data-time-preset="${time}">${title} <span>${time}</span></button>`,
+        )
+        .join('')}</div>`
+    : '';
+  return `<div class="field dynamic-list-field"><span class="field-label">${escapeHtml(label)}</span><div id="${escapeAttribute(id)}" class="dynamic-list" data-schedule-list data-list-name="${escapeAttribute(name)}" data-list-kind="${kind}" aria-describedby="${escapeAttribute(helpId)}">${items.map((value, index) => renderPolicyListItem(id, name, kind, value, index)).join('')}<div class="dynamic-list-actions"><button class="button button-secondary dynamic-list-add" type="button" data-list-add>Add a time</button>${presets}</div><span class="field-help" id="${escapeAttribute(helpId)}">${escapeHtml(help)}</span></div></div>`;
 }
 
 function renderPolicyListItem(
@@ -247,7 +452,18 @@ function renderPolicyListItem(
   const label = kind === 'time' ? `Time ${index + 1}` : `Period ${index + 1}`;
   const type = kind === 'time' ? 'time' : 'text';
   const placeholder = kind === 'time' ? '' : '08:00-12:00';
-  return `<div class="dynamic-list-item" data-list-item><label for="${escapeAttribute(`${id}-${index}`)}">${escapeHtml(label)}<input id="${escapeAttribute(`${id}-${index}`)}" name="${escapeAttribute(name)}" type="${type}" value="${escapeAttribute(value)}"${placeholder ? ` placeholder="${placeholder}"` : ''} required data-list-value></label><button class="button button-secondary dynamic-list-remove" type="button" data-list-remove>Remove</button></div>`;
+  return `<div class="dynamic-list-item${kind === 'time' ? ' time-chip' : ''}" data-list-item><label for="${escapeAttribute(`${id}-${index}`)}">${escapeHtml(label)}<input id="${escapeAttribute(`${id}-${index}`)}" name="${escapeAttribute(name)}" type="${type}" value="${escapeAttribute(value)}"${placeholder ? ` placeholder="${placeholder}"` : ''} required data-list-value></label><button class="button button-secondary dynamic-list-remove" type="button" data-list-remove>Remove</button></div>`;
+}
+
+function renderActiveHoursField(periods: readonly { start: string; end: string }[]): string {
+  const values = periods.length ? periods : [{ start: '', end: '' }];
+  const items = values
+    .map(
+      (period, index) =>
+        `<div class="dynamic-list-item active-period-item" data-list-item><label for="active-hours-periods-start-${index}">From<input id="active-hours-periods-start-${index}" name="periodStarts" type="time" value="${escapeAttribute(period.start)}" required data-period-start></label><label for="active-hours-periods-end-${index}">To<input id="active-hours-periods-end-${index}" name="periodEnds" type="time" value="${escapeAttribute(period.end)}" required data-period-end></label><button class="button button-secondary dynamic-list-remove" type="button" data-list-remove aria-label="Remove active-hours period ${index + 1}">Remove</button></div>`,
+    )
+    .join('');
+  return `<div class="field dynamic-list-field"><span class="field-label">Active hours</span><div id="active-hours-periods" class="dynamic-list" data-schedule-list data-list-name="periods" data-list-kind="period" aria-describedby="active-hours-periods-help">${items}<div class="dynamic-list-actions"><button class="button button-secondary dynamic-list-add" type="button" data-list-add>Add a time range</button><div class="schedule-presets" aria-label="Suggested active hours"><button type="button" class="button button-secondary" data-period-preset-start="08:00" data-period-preset-end="18:00">Workday <span>08:00–18:00</span></button><button type="button" class="button button-secondary" data-period-preset-start="13:00" data-period-preset-end="22:00">Afternoon / night <span>13:00–22:00</span></button></div></div><span class="field-help" id="active-hours-periods-help">Choose the local hours when a new window may start.</span></div></div>`;
 }
 
 function renderPolicyWindowField(control: string, idPrefix: string): string {
@@ -329,6 +545,24 @@ function formatUpcomingTime(value: string, timeZone: string): string {
   }
 }
 
+function timeZoneOffsetLabel(timeZone: string, instant: Date): string {
+  try {
+    const value = new Intl.DateTimeFormat('en', {
+      timeZone,
+      timeZoneName: 'shortOffset',
+    })
+      .formatToParts(instant)
+      .find((part) => part.type === 'timeZoneName')?.value;
+    if (!value || value === 'GMT' || value === 'UTC') return 'UTC+00:00';
+    const match = /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/.exec(value);
+    return match
+      ? `UTC${match[1]}${match[2]?.padStart(2, '0')}:${match[3] ?? '00'}`
+      : value.replace(/^GMT/, 'UTC');
+  } catch {
+    return 'offset unavailable';
+  }
+}
+
 export interface SchedulePreview {
   status: 'resolved' | 'unknown';
   instantIso: string | null;
@@ -362,12 +596,19 @@ export function previewTargetReset(input: {
 export function renderSettingsPage(input: SettingsPageInput): string {
   const csrfToken = escapeHtml(input.csrfToken);
   const timezoneValue = input.timezone?.timezone ?? '';
-  const timezoneIsPreset = TIME_ZONE_CHOICES.some(([zone]) => zone === timezoneValue);
-  const timezoneOptions = TIME_ZONE_CHOICES.map(
-    ([zone, label]) =>
-      `<option value="${escapeAttribute(zone)}"${zone === timezoneValue ? ' selected' : ''}>${escapeHtml(label)}</option>`,
+  const referenceInstant = input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT;
+  const knownZones = new Set<string>(
+    TIME_ZONE_GROUPS.flatMap(([, zones]) => zones.map(([zone]) => zone)),
+  );
+  const timezoneOptions = TIME_ZONE_GROUPS.map(
+    ([region, zones]) =>
+      `<optgroup label="${region}">${zones.map(([zone, label]) => `<option value="${escapeAttribute(zone)}"${zone === timezoneValue ? ' selected' : ''}>${escapeHtml(label)} (${escapeHtml(timeZoneOffsetLabel(zone, referenceInstant))})</option>`).join('')}</optgroup>`,
   ).join('');
-  const timezoneField = `<select id="account-timezone" name="timezoneChoice" data-timezone-select data-timezone-auto-detect="${input.timezone ? 'false' : 'true'}" required><option value=""${timezoneValue ? '' : ' selected'} disabled>Choose a time zone</option>${timezoneOptions}<option value="custom"${timezoneValue && !timezoneIsPreset ? ' selected' : ''}>Another location…</option></select><details data-timezone-custom${!timezoneIsPreset && timezoneValue ? ' open' : ''}><summary>Use another time zone</summary><label for="custom-timezone">Time zone for another location</label><input id="custom-timezone" name="customTimezone" data-timezone-custom-input value="${escapeAttribute(timezoneIsPreset ? '' : timezoneValue)}" placeholder="e.g. Europe/Madrid" maxlength="128"><p class="field-help">Enter the time zone used by your location.</p></details>`;
+  const savedZoneOption =
+    timezoneValue && !knownZones.has(timezoneValue)
+      ? `<optgroup label="Saved location"><option value="${escapeAttribute(timezoneValue)}" selected>${escapeHtml(timezoneValue)} (${escapeHtml(timeZoneOffsetLabel(timezoneValue, referenceInstant))})</option></optgroup>`
+      : '';
+  const timezoneField = `<select id="account-timezone" name="timezoneChoice" data-timezone-select data-timezone-auto-detect="${input.timezone ? 'false' : 'true'}" required><option value=""${timezoneValue ? '' : ' selected'} disabled>Choose your local time zone</option>${timezoneOptions}${savedZoneOption}</select>`;
   const providerSections = input.providers.length
     ? input.providers.map((provider) => renderProviderCard(provider, csrfToken)).join('\n')
     : renderEmptyState(
@@ -380,7 +621,7 @@ export function renderSettingsPage(input: SettingsPageInput): string {
     title: 'Settings',
     description: 'Choose what to monitor, when to check, and your local time zone.',
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
-      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time zone</h2><p class="muted">Used for schedule times and dates shown in the app. It stays saved until you change it.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a nearby city, or use another time zone if yours is not listed.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
+      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time zone</h2><p class="muted">Used for schedule times and dates shown in the app. It stays saved until you change it.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
       <section aria-labelledby="provider-settings-title">
         <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Provider connection</p><h2 id="provider-settings-title">Connection and monitoring</h2></div><p class="muted">Only non-secret settings are editable here. Sign-in stays with the official provider client.</p></div>
         <div class="settings-stack">${providerSections}</div>

@@ -14,6 +14,7 @@ import type {
 import type { ProviderAdapter } from '../providers/provider.js';
 import { filterVisibleProviders, isProviderVisible } from '../providers/visibility.js';
 import type { Clock } from '../scheduler/clock.js';
+import { parseActivationPolicy } from '../scheduler/policy.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type {
   ActionIntentState,
@@ -27,6 +28,7 @@ import { registry } from '../metrics/metrics.js';
 import { createCommandApi } from './api-commands.js';
 import { createReadApi } from './api-read.js';
 import {
+  ActivationPolicySettingsSchema,
   readTimezoneSetting,
   updateActivationPolicy,
   updateProviderSettings,
@@ -39,6 +41,7 @@ import { readUsagePageData, USAGE_CHART_BUCKETS } from '../usage/service.js';
 import { renderUsagePage } from './usage-ui.js';
 import {
   renderActivationSchedulePage,
+  renderScheduleHorizon,
   renderSettingsPage as renderSettingsUiPage,
   type SettingsProviderView,
 } from './settings-ui.js';
@@ -440,6 +443,7 @@ export function buildServer(input: BuildServerInput) {
     return renderSettingsUiPage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
+      referenceInstant: input.clock.now(),
       ...(timezone ? { timezone } : {}),
       ...(notice ? { notice } : {}),
     });
@@ -470,8 +474,61 @@ export function buildServer(input: BuildServerInput) {
       ...(selected?.currentWindow ? { currentWindow: selected.currentWindow } : {}),
       ...(selected?.decision ? { decision: selected.decision } : {}),
       ...(selected?.upcoming ? { upcoming: selected.upcoming } : {}),
+      referenceInstant: input.clock.now(),
       ...(notice ? { notice } : {}),
     });
+  });
+
+  app.get('/schedule/preview', async (request, reply) => {
+    reply.type('text/html; charset=utf-8');
+    const settings = settingsProviderViews(input);
+    const normalized = normalizeActivationScheduleBody(request.query);
+    const parsed = ActivationPolicySettingsSchema.safeParse(normalized);
+    if (!parsed.success) {
+      return reply.send(
+        '<p class="horizon-empty" role="status">Complete the selected schedule to preview it.</p>',
+      );
+    }
+    const savedTimezone = readTimezoneSetting(settingsInput)?.timezone;
+    const existingPolicy = input.repositories.schedulePolicies
+      .list(parsed.data.providerId)
+      .find((candidate) => candidate.id === `activation-${parsed.data.providerId}`);
+    const timezone = parsed.data.timezone ?? savedTimezone ?? existingPolicy?.timezone;
+    if (!timezone) {
+      return reply.send(
+        '<p class="horizon-empty" role="status">Choose a time zone in Settings to see local schedule times.</p>',
+      );
+    }
+    let policy;
+    try {
+      policy = parseActivationPolicy({
+        ...parsed.data,
+        id: `activation-${parsed.data.providerId}`,
+        timezone,
+        updatedAtMs: input.clock.now().getTime(),
+      });
+    } catch {
+      return reply.send(
+        '<p class="horizon-empty" role="status">Complete the selected schedule to preview it.</p>',
+      );
+    }
+    const provider = settings.find((candidate) => candidate.id === policy.providerId);
+    const state = input.repositories.providerState.get(policy.providerId);
+    const currentWindow = deriveCurrentWindow(
+      policy.providerId,
+      state?.observation,
+      state?.health,
+      'windowKind' in policy ? policy.windowKind : undefined,
+    );
+    return reply.send(
+      renderScheduleHorizon({
+        policy,
+        provider,
+        currentWindow,
+        referenceInstant: input.clock.now(),
+        timezone,
+      }),
+    );
   });
 
   app.post('/settings/providers/:id', async (request, reply) => {
@@ -649,6 +706,12 @@ function normalizeActivationScheduleBody(body: unknown): unknown {
   if (typeof record.timezone === 'string' && record.timezone.length > 0) {
     (base as Record<string, unknown>).timezone = record.timezone;
   }
+  if (record.policyKind === 'auto') {
+    return {
+      ...base,
+      ...(typeof record.windowKind === 'string' ? { windowKind: record.windowKind } : {}),
+    };
+  }
   if (record.policyKind === 'fixed') {
     return {
       ...base,
@@ -666,13 +729,19 @@ function normalizeActivationScheduleBody(body: unknown): unknown {
     };
   }
   if (record.policyKind === 'active_hours') {
+    const starts = splitList(record.periodStarts);
+    const ends = splitList(record.periodEnds);
+    const periods =
+      starts.length > 0 && starts.length === ends.length
+        ? starts.map((start, index) => ({ start, end: ends[index] }))
+        : splitList(record.periods).map((value) => {
+            const [start, end] = value.split('-');
+            return { start, end };
+          });
     return {
       ...base,
       windowKind: record.windowKind,
-      periods: splitList(record.periods).map((value) => {
-        const [start, end] = value.split('-');
-        return { start, end };
-      }),
+      periods,
     };
   }
   return base;
@@ -731,6 +800,8 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
       pollIntervalSeconds: provider.pollIntervalSeconds,
       ...(capabilities ? { capabilities } : {}),
       windows: input.repositories.providerState.get(provider.id)?.observation?.windows ?? [],
+      staleAfterSeconds: input.repositories.providerState.get(provider.id)?.observation
+        ?.staleAfterSeconds,
     };
   });
 }

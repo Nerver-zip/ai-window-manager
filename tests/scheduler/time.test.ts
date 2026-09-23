@@ -37,6 +37,18 @@ describe('resolveLocalOccurrence', () => {
       resolution: 'nonexistent_shifted_to_next_valid',
     },
     {
+      label: 'spring-forward gap at its exact first missing minute',
+      input: occurrence({
+        localTime: '02:00',
+        timeZone: 'America/New_York',
+        referenceInstant: new Date('2024-03-10T12:00:00.000Z'),
+      }),
+      instant: '2024-03-10T07:00:00.000Z',
+      localDate: '2024-03-10',
+      resolvedLocalTime: '03:00',
+      resolution: 'nonexistent_shifted_to_next_valid',
+    },
+    {
       label: 'fall-back ambiguity at the earlier occurrence',
       input: occurrence({
         localTime: '01:30',

@@ -34,65 +34,155 @@ export const APP_JS = `(() => {
   }
 
   for (const form of document.querySelectorAll('[data-policy-form]')) {
-    const select = form.querySelector('[data-policy-kind]');
+    const choices = Array.from(form.querySelectorAll('[name="policyKind"]'));
     const sections = Array.from(form.querySelectorAll('[data-policy-fields]'));
-    if (!select) continue;
+    if (choices.length === 0) continue;
 
     const syncPolicyFields = () => {
-      const selected = select.value;
+      const selected = form.querySelector('[name="policyKind"]:checked')?.value;
+      for (const choice of form.querySelectorAll('[data-policy-choice]')) {
+        choice.classList.toggle('is-selected', choice.querySelector('input')?.checked === true);
+      }
       for (const section of sections) {
         setPolicyFieldState(section, section.dataset.policyFields === selected);
       }
     };
 
-    select.addEventListener('change', syncPolicyFields);
+    for (const choice of choices) choice.addEventListener('change', syncPolicyFields);
     syncPolicyFields();
+
+    let previewTimer;
+    let previewController;
+    const refreshPreview = () => {
+      const root = form.parentElement?.parentElement;
+      const target = root?.querySelector('[data-schedule-horizon]');
+      const status = root?.querySelector('[data-preview-status]');
+      if (!target) return;
+      clearTimeout(previewTimer);
+      previewController?.abort();
+      if (status) status.textContent = 'Updating the schedule preview.';
+      target.setAttribute('aria-busy', 'true');
+      previewTimer = setTimeout(async () => {
+        const controller = new AbortController();
+        previewController = controller;
+        const query = new URLSearchParams(new FormData(form));
+        query.delete('csrfToken');
+        try {
+          const response = await fetch('/schedule/preview?' + query.toString(), {
+            credentials: 'same-origin', signal: controller.signal,
+            headers: { Accept: 'text/html' },
+          });
+          if (!response.ok) {
+            if (status) status.textContent = 'Preview could not be updated. Your saved schedule is unchanged.';
+            return;
+          }
+          target.innerHTML = await response.text();
+          if (status) status.textContent = 'Schedule preview updated.';
+        } catch (error) {
+          if (error?.name !== 'AbortError' && status) {
+            status.textContent = 'Preview could not be updated. Your saved schedule is unchanged.';
+          }
+        } finally {
+          if (previewController === controller) target.removeAttribute('aria-busy');
+        }
+      }, 250);
+    };
+    form.addEventListener('input', refreshPreview);
+    form.addEventListener('change', refreshPreview);
   }
 
   function renumberList(list) {
     for (const [index, item] of Array.from(list.querySelectorAll('[data-list-item]')).entries()) {
-      const label = item.querySelector('label');
-      const input = item.querySelector('[data-list-value]');
-      if (!label || !input) continue;
-      const kind = list.dataset.listKind === 'time' ? 'Time' : 'Period';
-      const id = list.id + '-' + index;
-      label.htmlFor = id;
-      label.firstChild.textContent = kind + ' ' + (index + 1);
-      input.id = id;
+      if (list.dataset.listKind === 'period') {
+        const start = item.querySelector('[data-period-start]');
+        const end = item.querySelector('[data-period-end]');
+        const labels = item.querySelectorAll('label');
+        if (start) { start.id = list.id + '-start-' + index; labels[0].htmlFor = start.id; }
+        if (end) { end.id = list.id + '-end-' + index; labels[1].htmlFor = end.id; }
+        item.querySelector('[data-list-remove]')?.setAttribute('aria-label', 'Remove active-hours period ' + (index + 1));
+      } else {
+        const label = item.querySelector('label');
+        const input = item.querySelector('[data-list-value]');
+        if (!label || !input) continue;
+        const id = list.id + '-' + index;
+        label.htmlFor = id;
+        label.firstChild.textContent = 'Time ' + (index + 1);
+        input.id = id;
+      }
     }
+  }
+
+  function addScheduleItem(list, values = []) {
+    const item = document.createElement('div');
+    item.className = 'dynamic-list-item' + (list.dataset.listKind === 'period' ? ' active-period-item' : ' time-chip');
+    item.dataset.listItem = 'true';
+    if (list.dataset.listKind === 'period') {
+      for (const [index, labelText] of ['From', 'To'].entries()) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.name = index === 0 ? 'periodStarts' : 'periodEnds';
+        input.type = 'time'; input.required = true;
+        input.dataset[index === 0 ? 'periodStart' : 'periodEnd'] = 'true';
+        input.value = values[index] || '';
+        label.append(document.createTextNode(labelText), input);
+        item.append(label);
+      }
+    } else {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.name = list.dataset.listName || ''; input.type = 'time';
+      input.required = true; input.dataset.listValue = 'true';
+      label.append(document.createTextNode(''), input); item.append(label);
+    }
+    const remove = document.createElement('button');
+    remove.className = 'button button-secondary dynamic-list-remove';
+    remove.type = 'button'; remove.dataset.listRemove = 'true'; remove.textContent = 'Remove';
+    item.append(remove);
+    const actions = list.querySelector('.dynamic-list-actions');
+    list.insertBefore(item, actions || list.querySelector('[data-list-add]'));
+    renumberList(list);
+    return item;
   }
 
   for (const list of document.querySelectorAll('[data-schedule-list]')) {
     const add = list.querySelector('[data-list-add]');
     add?.addEventListener('click', () => {
-      const item = document.createElement('div');
-      item.className = 'dynamic-list-item';
-      item.dataset.listItem = 'true';
-      const label = document.createElement('label');
-      const input = document.createElement('input');
-      input.name = list.dataset.listName || '';
-      input.type = list.dataset.listKind === 'time' ? 'time' : 'text';
-      input.required = true;
-      input.dataset.listValue = 'true';
-      if (list.dataset.listKind !== 'time') input.placeholder = '08:00-12:00';
-      label.append(document.createTextNode(''), input);
-      const remove = document.createElement('button');
-      remove.className = 'button button-secondary dynamic-list-remove';
-      remove.type = 'button';
-      remove.dataset.listRemove = 'true';
-      remove.textContent = 'Remove';
-      item.append(label, remove);
-      list.insertBefore(item, add);
-      renumberList(list);
-      input.focus();
+      const item = addScheduleItem(list);
+      item.querySelector('input')?.focus();
+    });
+    list.addEventListener('click', (event) => {
+      const timePreset = event.target.closest?.('[data-time-preset]');
+      const periodPreset = event.target.closest?.('[data-period-preset-start]');
+      if (timePreset && list.dataset.listKind === 'time') {
+        const value = timePreset.dataset.timePreset;
+        const inputs = Array.from(list.querySelectorAll('[data-list-value]'));
+        if (!inputs.some((input) => input.value === value)) {
+          let target = inputs.find((input) => !input.value);
+          if (!target) target = addScheduleItem(list).querySelector('[data-list-value]');
+          if (target) { target.value = value; target.dispatchEvent(new Event('input', { bubbles: true })); }
+        }
+      }
+      if (periodPreset && list.dataset.listKind === 'period') {
+        const startValue = periodPreset.dataset.periodPresetStart;
+        const endValue = periodPreset.dataset.periodPresetEnd;
+        const item = list.querySelector('[data-list-item]') || addScheduleItem(list);
+        const start = item.querySelector('[data-period-start]');
+        const end = item.querySelector('[data-period-end]');
+        if (start && end) {
+          start.value = startValue;
+          end.value = endValue;
+          start.dispatchEvent(new Event('input', { bubbles: true }));
+          end.dispatchEvent(new Event('input', { bubbles: true }));
+          start.focus();
+        }
+      }
     });
     list.addEventListener('click', (event) => {
       const remove = event.target.closest?.('[data-list-remove]');
       if (!remove) return;
       const items = list.querySelectorAll('[data-list-item]');
       if (items.length <= 1) {
-        const input = items[0]?.querySelector('[data-list-value]');
-        if (input) input.value = '';
+        for (const input of items[0]?.querySelectorAll('input') || []) input.value = '';
         return;
       }
       remove.closest('[data-list-item]')?.remove();
@@ -103,15 +193,12 @@ export const APP_JS = `(() => {
 
   for (const select of document.querySelectorAll('[data-timezone-select]')) {
     const form = select.closest('form');
-    const custom = form?.querySelector('[data-timezone-custom]');
-    const customInput = form?.querySelector('[data-timezone-custom-input]');
-    const syncTimeZoneChoice = () => {
-      const useCustom = select.value === 'custom';
-      if (custom) custom.open = useCustom;
-      if (customInput) customInput.required = useCustom;
-    };
-    select.addEventListener('change', syncTimeZoneChoice);
-    syncTimeZoneChoice();
+    const source = form?.querySelector('[name="source"]');
+    const status = form?.querySelector('[data-timezone-status]');
+    select.addEventListener('change', () => {
+      if (source) source.value = 'manual';
+      if (status) status.textContent = '';
+    });
 
     if (select.dataset.timezoneAutoDetect !== 'true' || select.value !== '') continue;
 
@@ -123,33 +210,31 @@ export const APP_JS = `(() => {
     }
     if (!detected) continue;
 
-    const isPreset = Array.from(select.options).some((option) => option.value === detected);
-    select.value = isPreset ? detected : 'custom';
-    if (!isPreset && customInput) customInput.value = detected;
-    syncTimeZoneChoice();
-
-    const source = form?.querySelector('[name="source"]');
-    const status = form?.querySelector('[data-timezone-status]');
-    if (source) source.value = 'detected';
-    if (status) status.textContent = 'Detected from this device. Saving this as the initial time zone.';
-
-    if (form && window.fetch && window.FormData) {
-      const csrf = form.querySelector('[name="csrfToken"]')?.value;
-      fetch(form.action, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: csrf ? { 'X-CSRF-Token': csrf } : {},
-        body: new URLSearchParams(new FormData(form)),
-      }).then((response) => {
-        if (!response.ok && status) {
-          status.textContent = 'Detected for this visit. Save it manually if needed.';
-        } else if (status) {
-          status.textContent = 'Detected and saved as the initial time zone.';
-        }
-      }).catch(() => {
-        if (status) status.textContent = 'Detected for this visit. Save it manually if needed.';
-      });
+    let option = Array.from(select.options).find((candidate) => candidate.value === detected);
+    if (!option) {
+      let group = select.querySelector('optgroup[data-detected-timezone]');
+      if (!group) {
+        group = document.createElement('optgroup');
+        group.label = 'Detected from this device';
+        group.dataset.detectedTimezone = 'true';
+        select.append(group);
+      }
+      option = document.createElement('option');
+      option.value = detected;
+      const city = detected.split('/').at(-1)?.replaceAll('_', ' ') || detected;
+      let offset = '';
+      try {
+        offset = Intl.DateTimeFormat('en', { timeZone: detected, timeZoneName: 'shortOffset' })
+          .formatToParts(new Date()).find((part) => part.type === 'timeZoneName')?.value || '';
+      } catch {
+        offset = '';
+      }
+      option.textContent = city + (offset ? ' (' + offset.replace(/^GMT/, 'UTC') + ')' : '');
+      group.append(option);
     }
+    select.value = detected;
+    if (source) source.value = 'detected';
+    if (status) status.textContent = 'Detected from your browser. Save to use this time zone.';
   }
 
   function hide(root) {

@@ -323,7 +323,10 @@ function findTransition(
     if (offsetAt(formatter, middle) === before.offsetMs) low = middle;
     else high = middle;
   }
-  return high;
+  // Intl exposes timezone offsets at whole-second precision. The binary search
+  // can stop within that first changed second, so align the transition instant
+  // to the second boundary before testing the gap's inclusive start.
+  return Math.floor(high / 1000) * 1000;
 }
 
 function fieldsEqual(left: CalendarFields, right: CalendarFields): boolean {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
@@ -53,7 +53,7 @@ function setup() {
     clock,
   });
   resources.push({ app, db, dir });
-  return { app, repositories };
+  return { app, repositories, fake };
 }
 
 function headerValue(value: string | string[] | undefined): string {
@@ -62,6 +62,137 @@ function headerValue(value: string | string[] | undefined): string {
 }
 
 describe('settings and schedule pages', () => {
+  it('previews an edited schedule from persisted state without inspecting or saving', async () => {
+    const context = setup();
+    const inspect = vi.spyOn(context.fake, 'inspect');
+    const response = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?policyKind=custom_schedule&providerId=fake&enabled=on&timezone=America%2FSao_Paulo&windowKind=five_hour&times=09%3A00&times=14%3A00&toleranceSeconds=900',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/html');
+    expect(response.body).toContain('schedule-horizon');
+    expect(response.body).toContain('Scheduled start opportunity');
+    expect(inspect).not.toHaveBeenCalled();
+    expect(context.repositories.schedulePolicies.list('fake')).toHaveLength(0);
+  });
+
+  it('previews paired active-hour fields and rejects incomplete preview input safely', async () => {
+    const context = setup();
+    const valid = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?policyKind=active_hours&providerId=fake&enabled=on&timezone=UTC&windowKind=five_hour&periodStarts=08%3A00&periodEnds=18%3A00',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(valid.statusCode).toBe(200);
+    expect(valid.body).toContain('Scheduled start opportunity');
+
+    const invalid = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?policyKind=custom_schedule&providerId=fake&timezone=Not%2FAZone&windowKind=five_hour&times=09%3A00',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(invalid.statusCode).toBe(200);
+    expect(invalid.body).toContain('Complete the selected schedule');
+    expect(context.repositories.schedulePolicies.list('fake')).toHaveLength(0);
+  });
+
+  it('uses a saved timezone for an edited preview and fails closed on invalid policy semantics', async () => {
+    const context = setup();
+    const missingTimezone = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?policyKind=custom_schedule&providerId=fake&enabled=on&windowKind=five_hour&times=09%3A00&toleranceSeconds=900',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(missingTimezone.statusCode).toBe(200);
+    expect(missingTimezone.body).toContain('Choose a time zone in Settings');
+
+    context.repositories.settings.set('timezone', 'America/Sao_Paulo', 1);
+    context.repositories.settings.set('timezone_source', 'manual', 1);
+    const withSavedTimezone = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?policyKind=custom_schedule&providerId=fake&enabled=on&windowKind=five_hour&times=09%3A00&toleranceSeconds=900',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(withSavedTimezone.statusCode).toBe(200);
+    expect(withSavedTimezone.body).toContain('Scheduled start opportunity');
+
+    const duplicateTimes = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?policyKind=custom_schedule&providerId=fake&enabled=on&timezone=UTC&windowKind=five_hour&times=09%3A00&times=09%3A00',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(duplicateTimes.statusCode).toBe(200);
+    expect(duplicateTimes.body).toContain('Complete the selected schedule');
+
+    const missingKind = await context.app.inject({
+      method: 'GET',
+      url: '/schedule/preview?providerId=fake&timezone=UTC',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(missingKind.statusCode).toBe(200);
+    expect(missingKind.body).toContain('Complete the selected schedule');
+    expect(context.repositories.schedulePolicies.list('fake')).toHaveLength(0);
+  });
+
+  it('saves the new paired active-hours controls through the existing policy contract', async () => {
+    const context = setup();
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/schedule',
+      headers: { host: 'localhost:8787' },
+    });
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: '/schedule',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}&policyKind=active_hours&providerId=fake&enabled=on&timezone=America%2FSao_Paulo&windowKind=five_hour&periodStarts=08%3A00&periodEnds=18%3A00`,
+    });
+
+    expect(response.statusCode).toBe(303);
+    expect(context.repositories.schedulePolicies.list('fake')[0]?.config).toMatchObject({
+      periods: [{ start: '08:00', end: '18:00' }],
+    });
+  });
+
+  it('preserves the selected usage window in an automatic-start policy', async () => {
+    const context = setup();
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/schedule',
+      headers: { host: 'localhost:8787' },
+    });
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: '/schedule',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}&policyKind=auto&providerId=fake&enabled=on&timezone=UTC&windowKind=weekly`,
+    });
+    expect(response.statusCode).toBe(303);
+    expect(context.repositories.schedulePolicies.list('fake')[0]?.config).toMatchObject({
+      windowKind: 'weekly',
+    });
+  });
+
   it('renders forms and persists same-origin CSRF-protected updates', async () => {
     const context = setup();
     const page = await context.app.inject({

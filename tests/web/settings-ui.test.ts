@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { Script } from 'node:vm';
 import {
   previewTargetReset,
   renderActivationSchedulePage,
+  renderScheduleHorizon,
   renderSchedulePage,
   renderSettingsPage,
   renderSchedulePreview,
@@ -85,7 +87,7 @@ describe('settings UI helpers', () => {
     expect(html).not.toContain('consumesQuota');
   });
 
-  it('renders human activation controls with hidden policy fields disabled', () => {
+  it('renders accessible start-pattern cards and keeps inactive fields unavailable', () => {
     const html = renderActivationSchedulePage({
       csrfToken,
       providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
@@ -115,28 +117,39 @@ describe('settings UI helpers', () => {
     expect(html).toContain('Available');
     expect(html).not.toContain('Inactive');
     expect(html).toContain('Cycle start time');
+    expect(html).toContain('name="policyKind" value="fixed" checked');
+    expect(html).toContain('Whenever possible');
+    expect(html).toContain('At specific times');
+    expect(html).toContain('Only when I ask');
+    expect(html).not.toContain('data-policy-kind');
+    expect(html.match(/name="policyKind"/g)).toHaveLength(5);
     expect(html).toContain('data-policy-fields="custom_schedule" hidden');
     expect(html).toContain('data-policy-fields="custom_schedule" hidden aria-hidden="true"');
     expect(html).toMatch(/<input disabled[^>]*name="times"/);
     expect(html).not.toContain('reasonCode');
     expect(html).not.toContain('exact confidence');
     expect(html).not.toContain('confidence');
-    expect(html).toContain('Next scheduled start');
+    expect(html).toContain('Your schedule at a glance');
+    expect(html).toContain('role="img" aria-label="24-hour schedule view.');
     expect(html).toContain('name="toleranceSeconds" value="900"');
     expect(html).not.toContain('Tolerance</label>');
   });
 
-  it('ships progressive policy and one-time timezone detection behavior', () => {
+  it('ships progressive policy, preview, and non-persisting timezone detection behavior', () => {
     expect(APP_JS).toContain('[data-policy-form]');
     expect(APP_JS).toContain('control.disabled = !active');
+    expect(APP_JS).toContain('form.querySelector(\'[name="policyKind"]:checked\')?.value');
+    expect(APP_JS).toContain("fetch('/schedule/preview?' + query.toString()");
     expect(APP_JS).toContain('Intl.DateTimeFormat().resolvedOptions().timeZone');
     expect(APP_JS).toContain("select.dataset.timezoneAutoDetect !== 'true'");
-    expect(APP_JS).toContain("select.value === 'custom'");
-    expect(APP_JS).toContain('customInput.required = useCustom');
     expect(APP_JS).toContain("source.value = 'detected'");
+    expect(APP_JS).not.toContain("method: 'POST'");
+    expect(APP_JS).not.toContain('customTimezone');
     expect(APP_JS).toContain('[data-chart-range-select]');
     expect(APP_JS).toContain('form.requestSubmit()');
     expect(APP_JS).toContain('[data-refresh-preset]');
+    expect(() => new Script(APP_JS)).not.toThrow();
+    expect(new TextEncoder().encode(APP_JS).length).toBeLessThan(15 * 1024);
 
     const manualSettings = renderSettingsPage({
       csrfToken,
@@ -146,27 +159,35 @@ describe('settings UI helpers', () => {
     expect(manualSettings).toContain('data-timezone-auto-detect="false"');
   });
 
-  it('offers human-readable timezone choices and an advanced custom location field', () => {
+  it('offers grouped timezone choices with offsets and preserves a saved unlisted zone', () => {
     const preset = renderSettingsPage({
       csrfToken,
       providers: [],
       timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
     });
     expect(preset).toContain(
-      '<option value="America/Sao_Paulo" selected>São Paulo / Brasília</option>',
+      '<option value="America/Sao_Paulo" selected>São Paulo (UTC-03:00)</option>',
     );
     expect(preset).toContain('name="timezoneChoice"');
-    expect(preset).toContain('Another location…');
-    expect(preset).toContain('placeholder="e.g. Europe/Madrid"');
-    expect(preset).not.toContain('value="America/Sao_Paulo">America/Sao_Paulo</option>');
+    expect(preset).toContain('<optgroup label="Americas">');
+    expect(preset).toContain('<optgroup label="Europe">');
+    expect(preset).toContain('<optgroup label="Asia">');
+    expect(preset).not.toContain('customTimezone');
+    expect(preset).not.toContain('Another location…');
 
     const custom = renderSettingsPage({
       csrfToken,
       providers: [],
-      timezone: { timezone: 'Europe/Madrid', source: 'manual' },
+      timezone: { timezone: 'Pacific/Marquesas', source: 'manual' },
     });
-    expect(custom).toContain('<details data-timezone-custom open>');
-    expect(custom).toContain('value="Europe/Madrid" placeholder="e.g. Europe/Madrid"');
+    expect(custom).toContain(
+      '<optgroup label="Saved location"><option value="Pacific/Marquesas" selected>Pacific/Marquesas (UTC-09:30)</option></optgroup>',
+    );
+    expect(custom).not.toContain('type="text"');
+
+    const firstVisit = renderSettingsPage({ csrfToken, providers: [] });
+    expect(firstVisit).toContain('data-timezone-auto-detect="true"');
+    expect(firstVisit).toContain('data-timezone-status aria-live="polite"');
   });
 
   it('groups the provider settings heading for readable narrow layouts', () => {
@@ -332,6 +353,211 @@ describe('settings UI helpers', () => {
 
     expect(html).toContain('Automatic actions available');
     expect(html).not.toContain('automation ready');
+  });
+
+  it('renders a 24-hour schedule timeline, projected coverage and the next milestones', () => {
+    const referenceInstant = new Date('2026-09-19T11:00:00.000Z');
+    const html = renderScheduleHorizon({
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'custom_schedule',
+        enabled: true,
+        timezone: 'America/Sao_Paulo',
+        windowKind: 'five_hour',
+        times: ['09:00', '14:00'],
+        toleranceSeconds: 900,
+        updatedAtMs: referenceInstant.getTime(),
+      },
+      provider: { ...provider, windows: [windowWithDuration('exact')], staleAfterSeconds: 300 },
+      currentWindow: {
+        providerId: 'fake',
+        status: 'ACTIVE',
+        windowKind: 'five_hour',
+        observedAt: '2026-09-19T10:59:00.000Z',
+        confidence: 'exact',
+        expectedEndAt: {
+          value: '2026-09-19T15:00:00.000Z',
+          source: 'official_supported',
+          confidence: 'exact',
+          observedAt: '2026-09-19T10:59:00.000Z',
+        },
+      },
+      referenceInstant,
+      timezone: 'America/Sao_Paulo',
+    });
+    expect(html).toContain(
+      'role="img" aria-label="24-hour schedule view. A fresh provider update reports a window in use.',
+    );
+    expect(html).toContain('class="horizon-current"');
+    expect(html).toContain('class="horizon-projected"');
+    expect(html).toContain('Scheduled start opportunity');
+    expect(html).toContain('Expected current-window reset');
+    expect(html).toContain('Next milestones');
+    expect(html).toContain('08:00');
+  });
+
+  it('does not project stale active state or manual starts on the schedule horizon', () => {
+    const horizon = renderScheduleHorizon({
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        updatedAtMs: 1,
+      },
+      provider: { ...provider, staleAfterSeconds: 30 },
+      currentWindow: {
+        providerId: 'fake',
+        status: 'ACTIVE',
+        observedAt: '2026-09-19T10:00:00.000Z',
+        confidence: 'exact',
+        expectedEndAt: {
+          value: '2026-09-19T17:00:00.000Z',
+          source: 'observed',
+          confidence: 'exact',
+          observedAt: '2026-09-19T10:00:00.000Z',
+        },
+      },
+      referenceInstant: new Date('2026-09-19T15:00:00.000Z'),
+      timezone: 'UTC',
+    });
+    expect(horizon).not.toContain('class="horizon-current"');
+    expect(horizon).not.toContain('class="horizon-projected"');
+    expect(horizon).toContain('No automatic start is scheduled.');
+    expect(horizon).toContain('too old to project');
+  });
+
+  it('renders paired active-hour controls and workday/evening presets', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'active_hours',
+        enabled: true,
+        timezone: 'America/Sao_Paulo',
+        windowKind: 'five_hour',
+        periods: [{ start: '08:00', end: '18:00' }],
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+      referenceInstant: new Date('2026-09-19T11:00:00.000Z'),
+    });
+    expect(html).toContain('name="periodStarts" type="time" value="08:00"');
+    expect(html).toContain('name="periodEnds" type="time" value="18:00"');
+    expect(html).toContain('data-period-preset-start="08:00" data-period-preset-end="18:00"');
+    expect(html).toContain('data-period-preset-start="13:00" data-period-preset-end="22:00"');
+    expect(html).toContain('class="horizon-active-hours"');
+    expect(html).toContain('Chosen active hours');
+  });
+
+  it('renders a safe fallback without a provider or saved policy', () => {
+    const html = renderActivationSchedulePage({ csrfToken, providers: [] });
+    expect(html).toContain('No providers configured');
+    expect(html).toContain('Select a provider to see the current observed window.');
+    expect(html).toContain('Choose a time zone in Settings before enabling a time-based policy.');
+    expect(html).toContain('No automatic start is scheduled.');
+    expect(html).toContain('No start can be planned until usage data is available.');
+  });
+
+  it('renders removable daily time chips and the honest auto-policy preview', () => {
+    const daily = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'custom_schedule',
+        enabled: true,
+        timezone: 'America/Sao_Paulo',
+        windowKind: 'five_hour',
+        times: ['09:00', '14:00'],
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+      referenceInstant: new Date('2026-09-19T10:00:00.000Z'),
+    });
+    expect(daily).toContain('class="dynamic-list-item time-chip"');
+    expect(daily).toContain('Morning <span>09:00</span>');
+    expect(daily).toContain('Afternoon <span>14:00</span>');
+    expect(daily).toContain('Evening <span>18:00</span>');
+
+    const automatic = renderScheduleHorizon({
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'auto',
+        enabled: true,
+        timezone: 'UTC',
+        updatedAtMs: 1,
+      },
+      provider,
+      currentWindow: { providerId: 'fake', status: 'UNKNOWN', confidence: 'unknown' },
+      referenceInstant: new Date('2026-09-19T10:00:00.000Z'),
+      timezone: 'UTC',
+    });
+    expect(automatic).toContain(
+      'A start may happen when a fresh update confirms a new window is available.',
+    );
+  });
+
+  it('handles overnight active hours across DST and paused schedules without fake projections', () => {
+    const now = new Date('2024-03-10T06:30:00.000Z');
+    const overnight = renderScheduleHorizon({
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'active_hours',
+        enabled: true,
+        timezone: 'America/New_York',
+        windowKind: 'five_hour',
+        periods: [{ start: '22:00', end: '02:00' }],
+        updatedAtMs: now.getTime(),
+      },
+      provider: { ...provider, staleAfterSeconds: 300 },
+      currentWindow: {
+        providerId: 'fake',
+        status: 'ACTIVE',
+        observedAt: now.toISOString(),
+        confidence: 'exact',
+        expectedEndAt: {
+          value: '2024-03-10T08:00:00.000Z',
+          source: 'inferred',
+          confidence: 'low',
+          observedAt: now.toISOString(),
+        },
+      },
+      referenceInstant: now,
+      timezone: 'America/New_York',
+    });
+    expect(overnight).toContain('class="horizon-active-hours"');
+    expect(overnight).toContain('Chosen active hours');
+    expect(overnight).not.toContain('Expected current-window reset');
+    expect(overnight).toContain('A fresh provider update reports a window in use.');
+
+    const paused = renderScheduleHorizon({
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'fixed',
+        enabled: false,
+        timezone: 'UTC',
+        windowKind: 'five_hour',
+        anchorLocalTime: '08:00',
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      provider,
+      currentWindow: { providerId: 'fake', status: 'INACTIVE', confidence: 'exact' },
+      referenceInstant: new Date('2026-09-19T11:00:00.000Z'),
+      timezone: 'UTC',
+    });
+    expect(paused).toContain('This schedule is paused.');
+    expect(paused).not.toContain('horizon-projected');
   });
 });
 
