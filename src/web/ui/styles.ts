@@ -333,11 +333,13 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .provider-picker > legend { margin: 0 0 8px; padding: 0; color: var(--text-muted); font-size: 12px; font-weight: 500; }
 .provider-picker-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 138px), 1fr)); gap: 8px; min-width: 0; }
 .provider-picker-option { position: relative; display: block; min-width: 0; min-height: 60px; cursor: pointer; }
+.provider-picker-option-link { color: inherit; text-decoration: none; }
 .provider-picker-input { position: absolute; z-index: 1; top: 50%; left: 16px; width: 1px; height: 1px; min-height: 0; margin: 0; padding: 0; opacity: 0; }
 .provider-picker-card { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 60px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); padding: 9px 11px; transition: border-color .15s ease, background-color .15s ease; }
 .provider-picker-option:hover .provider-picker-card { border-color: var(--border-strong); background: var(--surface-raised); }
 .provider-picker-option.is-selected .provider-picker-card { border-color: var(--accent); background: #202b42; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent); }
 .provider-picker-input:focus-visible + .provider-picker-card { outline: 2px solid var(--focus); outline-offset: 3px; }
+.provider-picker-option-link:focus-visible .provider-picker-card { outline: 2px solid var(--focus); outline-offset: 3px; }
 .provider-picker-option.is-unconfigured .provider-picker-card { background: var(--input); color: var(--text-muted); }
 .provider-picker-option.is-unconfigured:hover .provider-picker-card { border-color: var(--border-strong); background: #171f2b; }
 .provider-picker-option.is-unconfigured.is-selected .provider-picker-card { border-color: var(--accent); background: #1b2432; }
@@ -362,6 +364,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .usage-controls-copy p { margin: 0 0 6px; color: var(--text-muted); }
 .usage-controls-copy .usage-timezone { margin-top: 10px; font-size: 12px; }
 .usage-filter-form { display: grid; grid-template-columns: minmax(140px, 1fr) auto; align-items: end; gap: 12px; min-width: 0; }
+.usage-filter-panel { display: grid; gap: 12px; min-width: 0; }
+.usage-filter-panel > .provider-picker { min-width: 0; }
 .usage-filter-form select { min-width: 0; }
 .usage-calendar-section .section-heading { align-items: flex-start; }
 .usage-calendar-section .section-heading p { margin: 6px 0 0; font-size: 12px; }

@@ -173,14 +173,17 @@ describe('Usage page', () => {
     expect(html).toContain('outside the available range');
     expect(html).toContain('name="window"><option value="weekly" selected>');
     expect(html).toContain('option value="five_hour"');
-    expect(html).toContain('name="provider" value="codex" checked');
-    expect(html).toContain('value="antigravity"');
-    expect(html).toContain('class="provider-picker"');
     expect(html).toContain(
-      'class="usage-filter-form" aria-label="Usage filters" data-provider-picker-auto-submit',
+      'href="/usage?provider=codex&amp;chartRange=codex%7Cweekly%7C6h&amp;chartRange=codex%7Cfive_hour%7C3h" data-configured="unknown" aria-current="page"',
+    );
+    expect(html).toMatch(/href="\/usage\?provider=antigravity(?:&amp;chartRange=[^"]+)+"/);
+    expect(html).not.toContain('class="provider-picker-input"');
+    expect(html).toContain('class="provider-picker provider-picker-navigation"');
+    expect(html).toContain(
+      'class="usage-filter-form" aria-label="Usage window" data-usage-filter-auto-submit',
     );
     expect(html).toContain(
-      '<button class="button button-secondary" type="submit">Update view</button>',
+      '<noscript><button class="button button-secondary" type="submit">Update view</button></noscript>',
     );
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('<option value="codex|five_hour|3h" selected>3h</option>');

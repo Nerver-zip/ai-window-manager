@@ -10,7 +10,7 @@ import {
 } from './logs-ui.js';
 import { escapeHtml, renderAppShell } from './ui/layout.js';
 import { providerDisplayName, timeZoneDisplayName, windowDisplayName } from './ui/presentation.js';
-import { renderProviderPicker } from './ui/provider-picker.js';
+import { renderProviderPickerLinks } from './ui/provider-picker.js';
 
 export interface UsagePageInput {
   data: UsagePageData;
@@ -48,8 +48,7 @@ export function renderUsagePage(input: UsagePageInput): string {
       return `<option value="${escapeHtml(window.windowKind)}"${window.windowKind === selectedWindow ? ' selected' : ''}>${escapeHtml(label)}</option>`;
     })
     .join('');
-  const providerPicker = renderProviderPicker({
-    name: 'provider',
+  const providerPicker = renderProviderPickerLinks({
     legend: 'Provider',
     options: data.providers.map((provider) => ({
       value: provider.id,
@@ -59,7 +58,7 @@ export function renderUsagePage(input: UsagePageInput): string {
       ...(provider.statusLabel !== undefined ? { statusLabel: provider.statusLabel } : {}),
     })),
     selectedValue: providerId,
-    required: data.providers.length > 0,
+    getHref: (provider) => usageProviderHref(provider.value, chartRanges, selectedDay?.localDate),
     emptyText: 'No providers available.',
   });
   const preservedRanges = chartSeries
@@ -106,12 +105,10 @@ export function renderUsagePage(input: UsagePageInput): string {
     ${notice}${dataStatus}
     <section class="usage-controls" aria-label="Usage filters">
       <div class="usage-controls-copy"><span class="eyebrow">Your activity</span><h2>Usage by day</h2><p>Weekly allowance used, based on saved provider updates.</p><p class="usage-timezone">Calendar dates use ${escapeHtml(timeZoneDisplayName(data.timezone))} · <a href="/settings">Change in Settings</a></p></div>
-      <form method="get" action="/usage" class="usage-filter-form" aria-label="Usage filters" data-provider-picker-auto-submit>
-        ${preservedRanges}${selectedDayField}
+      <div class="usage-filter-panel">
         ${providerPicker}
-        ${data.windows.length > 1 ? `<label class="field"><span class="field-label">Usage window</span><select name="window">${windowOptions}</select></label>` : selectedWindow ? `<input type="hidden" name="window" value="${escapeHtml(selectedWindow)}">` : ''}
-        <button class="button button-secondary" type="submit">Update view</button>
-      </form>
+        ${data.windows.length > 1 ? `<form method="get" action="/usage" class="usage-filter-form" aria-label="Usage window" data-usage-filter-auto-submit"><input type="hidden" name="provider" value="${escapeHtml(providerId ?? '')}">${preservedRanges}${selectedDayField}<label class="field"><span class="field-label">Usage window</span><select name="window">${windowOptions}</select></label><noscript><button class="button button-secondary" type="submit">Update view</button></noscript></form>` : ''}
+      </div>
     </section>
     ${chartSection}
     ${calendar}
@@ -124,6 +121,24 @@ export function renderUsagePage(input: UsagePageInput): string {
     description: 'See how your weekly allowance changes over time.',
     content,
   });
+}
+
+function usageProviderHref(
+  providerId: string,
+  chartRanges: Readonly<Record<string, HistoryRange>>,
+  selectedDay?: string,
+): string {
+  const query = new URLSearchParams({ provider: providerId });
+  if (selectedDay) query.set('day', selectedDay);
+  for (const [key, range] of Object.entries(chartRanges)) {
+    const separator = key.indexOf('\u0000');
+    if (separator <= 0 || separator === key.length - 1) continue;
+    query.append(
+      'chartRange',
+      serializeChartRangeSelection(key.slice(0, separator), key.slice(separator + 1), range),
+    );
+  }
+  return `/usage?${query.toString()}`;
 }
 
 function ensureWindowCharts(
