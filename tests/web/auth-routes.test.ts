@@ -4,8 +4,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.js';
 import {
+  type AuthOutputStream,
   AuthSessionManager,
   type AuthManagedProcess,
+  type AuthProviderId,
   type ProviderAuthDriver,
 } from '../../src/auth/session-manager.js';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
@@ -25,16 +27,27 @@ const resources: Array<{
 
 class TestProcess implements AuthManagedProcess {
   readonly signals: string[] = [];
+  readonly inputs: string[] = [];
+  private readonly outputListeners = new Set<
+    (stream: AuthOutputStream, chunk: string | Buffer) => void
+  >();
 
-  onOutput(): () => void {
-    return () => {};
+  onOutput(listener: (stream: AuthOutputStream, chunk: string | Buffer) => void): () => void {
+    this.outputListeners.add(listener);
+    return () => this.outputListeners.delete(listener);
   }
 
   onExit(): () => void {
     return () => {};
   }
 
-  writeInput(): void {}
+  writeInput(value: string): void {
+    this.inputs.push(value);
+  }
+
+  output(stream: AuthOutputStream, chunk: string): void {
+    for (const listener of this.outputListeners) listener(stream, chunk);
+  }
 
   signal(signal: 'SIGTERM' | 'SIGKILL'): void {
     this.signals.push(signal);
@@ -46,9 +59,14 @@ class TestProcess implements AuthManagedProcess {
 }
 
 class TestDriver implements ProviderAuthDriver {
-  readonly providerId = 'codex' as const;
+  readonly providerId: AuthProviderId;
   readonly process = new TestProcess();
   launchCount = 0;
+  readonly submittedCodes: string[] = [];
+
+  constructor(providerId: AuthProviderId) {
+    this.providerId = providerId;
+  }
 
   isAlreadyAuthenticated(): Promise<boolean> {
     return Promise.resolve(false);
@@ -59,26 +77,44 @@ class TestDriver implements ProviderAuthDriver {
     return this.process;
   }
 
-  parseOutput() {
-    return undefined;
+  parseOutput(_stream: AuthOutputStream, line: string) {
+    if (line !== 'auth-prompt') return undefined;
+    return {
+      awaitingUserAction: true,
+      authorizationUrl:
+        this.providerId === 'codex'
+          ? 'https://auth.openai.com/codex/device'
+          : 'https://accounts.google.com/o/oauth2/auth?state=synthetic',
+      ...(this.providerId === 'codex' ? { userCode: 'ABCD-EFGH' } : {}),
+      requiresCodeSubmission: this.providerId === 'antigravity',
+    };
   }
 
-  submitCode(): void {}
+  submitCode(process: AuthManagedProcess, code: string): void {
+    this.submittedCodes.push(code);
+    process.writeInput(`${code}\r`);
+  }
 
   verify(): Promise<boolean> {
     return Promise.resolve(true);
   }
 }
 
-function createAuthApp() {
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function createAuthApp(providerId: AuthProviderId = 'codex') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-auth-web-'));
   const dbPath = path.join(dir, 'awm.db');
   const db = openDatabase(dbPath);
   const clock = new FakeClock(NOW);
   const repositories = createRepositories(db);
   repositories.providers.upsert({
-    id: 'codex',
-    kind: 'codex',
+    id: providerId,
+    kind: providerId,
     enabled: true,
     mode: 'monitor_only',
     pollIntervalSeconds: 300,
@@ -88,8 +124,8 @@ function createAuthApp() {
     updatedAtMs: Date.parse(NOW),
   });
   repositories.providerState.upsert({
-    providerId: 'codex',
-    health: 'UP',
+    providerId,
+    health: providerId === 'antigravity' ? 'AUTH_REQUIRED' : 'UP',
     observedAtMs: Date.parse(NOW),
     staleAfterMs: 300_000,
     observation: null,
@@ -98,7 +134,7 @@ function createAuthApp() {
     updatedAtMs: Date.parse(NOW),
   });
   const adapter: ProviderAdapter = {
-    id: 'codex',
+    id: providerId,
     capabilities: () => ({
       usageRead: { supported: true, contract: 'official_supported' },
       resetRead: { supported: true, contract: 'official_supported' },
@@ -113,23 +149,36 @@ function createAuthApp() {
         errorCode: 'TRIGGER_UNSUPPORTED',
       }),
   };
-  const driver = new TestDriver();
+  const driver = new TestDriver(providerId);
   const auth = new AuthSessionManager({
     clock,
-    drivers: new Map([['codex', driver]]),
+    drivers: new Map([[providerId, driver]]),
     sessionTimeoutMs: 60_000,
     processStopGraceMs: 5,
+    onEvent: (event) => {
+      repositories.events.append({
+        occurredAtMs: clock.now().getTime(),
+        providerId: event.providerId,
+        type: event.type,
+        severity:
+          event.type === 'provider_auth_failed' || event.type === 'provider_auth_timed_out'
+            ? 'warn'
+            : 'info',
+        reasonCode: event.reasonCode,
+        data: {},
+      });
+    },
   });
   const app = buildServer({
     config: loadConfig({ AWM_DB_PATH: dbPath, AWM_LOG_LEVEL: 'silent' }),
     db,
     repositories,
-    adapters: new Map([['codex', adapter]]),
+    adapters: new Map([[providerId, adapter]]),
     clock,
     authSessions: auth,
   });
   resources.push({ app, db, dir, auth });
-  return { app, auth, driver };
+  return { app, auth, db, driver };
 }
 
 function setProviderHealth(health: 'UP' | 'DEGRADED') {
@@ -169,21 +218,23 @@ describe('provider auth routes', () => {
   it('protects auth session mutations with same-origin and CSRF checks', async () => {
     const { app, driver } = createAuthApp();
 
-    const rejected = await app.inject({
-      method: 'POST',
-      url: '/api/v1/providers/codex/auth/start',
-      headers: { origin: 'null', host: '127.0.0.1:8787' },
-    });
-    const missingCsrf = await app.inject({
-      method: 'POST',
-      url: '/api/v1/providers/codex/auth/start',
-      headers: { origin: 'http://127.0.0.1:8787', host: '127.0.0.1:8787' },
-    });
+    for (const action of ['start', 'submit', 'cancel']) {
+      const rejected = await app.inject({
+        method: 'POST',
+        url: `/api/v1/providers/codex/auth/${action}`,
+        headers: { origin: 'null', host: '127.0.0.1:8787' },
+      });
+      const missingCsrf = await app.inject({
+        method: 'POST',
+        url: `/api/v1/providers/codex/auth/${action}`,
+        headers: { origin: 'http://127.0.0.1:8787', host: '127.0.0.1:8787' },
+      });
 
-    expect(rejected.statusCode).toBe(403);
-    expect(rejected.json()).toMatchObject({ error: { code: 'ORIGIN_REJECTED' } });
-    expect(missingCsrf.statusCode).toBe(403);
-    expect(missingCsrf.json()).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
+      expect(rejected.statusCode).toBe(403);
+      expect(rejected.json()).toMatchObject({ error: { code: 'ORIGIN_REJECTED' } });
+      expect(missingCsrf.statusCode).toBe(403);
+      expect(missingCsrf.json()).toMatchObject({ error: { code: 'CSRF_REJECTED' } });
+    }
     expect(driver.launchCount).toBe(0);
   });
 
@@ -214,6 +265,76 @@ describe('provider auth routes', () => {
     expect(response.statusCode).toBe(202);
     expect(response.json()).toMatchObject({ providerId: 'codex', state: 'STARTING' });
     expect(driver.launchCount).toBeLessThanOrEqual(1);
+    await auth.shutdown();
+  });
+
+  it('forwards a one-time Antigravity code only to the active official process', async () => {
+    const { app, auth, db, driver } = createAuthApp('antigravity');
+    const headers = {
+      origin: 'http://127.0.0.1:8787',
+      host: '127.0.0.1:8787',
+      cookie: `awm_csrf=${CSRF}`,
+      'x-csrf-token': CSRF,
+    };
+
+    const started = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/antigravity/auth/start',
+      headers,
+    });
+    await flushMicrotasks();
+    driver.process.output('stdout', 'auth-prompt\n');
+    const awaiting = await app.inject('/api/v1/providers/antigravity/auth/status');
+    const code = '4/0AbC-DEfGh=';
+    const submitted = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/antigravity/auth/submit',
+      headers: { ...headers, 'content-type': 'application/json' },
+      payload: { code },
+    });
+
+    expect(started.statusCode).toBe(202);
+    expect(awaiting.statusCode).toBe(200);
+    expect(awaiting.json()).toMatchObject({
+      providerId: 'antigravity',
+      state: 'AWAITING_USER_ACTION',
+      requiresCodeSubmission: true,
+    });
+    expect(submitted.statusCode).toBe(202);
+    expect(submitted.body).not.toContain(code);
+    expect(driver.submittedCodes).toEqual([code]);
+    expect(driver.process.inputs).toEqual([`${code}\r`]);
+
+    const history = db.prepare('SELECT type, reason_code, data_json FROM events').all();
+    expect(JSON.stringify(history)).not.toContain(code);
+    await auth.shutdown();
+  });
+
+  it('cancels a running provider sign-in through the protected API', async () => {
+    const { app, auth, driver } = createAuthApp();
+    const headers = {
+      origin: 'http://127.0.0.1:8787',
+      host: '127.0.0.1:8787',
+      cookie: `awm_csrf=${CSRF}`,
+      'x-csrf-token': CSRF,
+    };
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/codex/auth/start',
+      headers,
+    });
+    await flushMicrotasks();
+    driver.process.output('stderr', 'auth-prompt\n');
+
+    const canceled = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/codex/auth/cancel',
+      headers,
+    });
+
+    expect(canceled.statusCode).toBe(200);
+    expect(canceled.json()).toMatchObject({ providerId: 'codex', state: 'CANCELED' });
+    expect(driver.process.signals).toContain('SIGTERM');
     await auth.shutdown();
   });
 

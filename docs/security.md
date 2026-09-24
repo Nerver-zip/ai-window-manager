@@ -22,7 +22,9 @@ but the runtime keeps `AWM_CODEX_ENABLED=false` by default. A dedicated
 only through the official Codex login/device/app-server flow. AI Window
 Manager talks to the official client protocol and does not copy a workstation
 auth file back and forth. This avoids shared refresh-token races and reduces
-coupling to raw token formats.
+coupling to raw token formats. Authentication processes must emit a recognized
+sign-in prompt within 60 seconds or are stopped; this is separate from the
+bounded overall interactive session deadline.
 The Web-assisted login flow has offline process/UI coverage; completing it
 with an operator account and verifying the new session after container restart
 remain pending acceptance.

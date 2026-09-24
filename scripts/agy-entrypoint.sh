@@ -11,7 +11,44 @@ chmod 700 "$runtime_dir"
 export XDG_RUNTIME_DIR="$runtime_dir"
 
 if [ "${AWM_ANTIGRAVITY_DBUS_SESSION:-}" != "1" ]; then
-  exec dbus-run-session -- env AWM_ANTIGRAVITY_DBUS_SESSION=1 "$0" "$@"
+  app_pid_file="$runtime_dir/awm-app.pid"
+  session_pid=""
+  shutdown_requested=0
+
+  forward_shutdown() {
+    shutdown_requested=1
+    if [ -r "$app_pid_file" ]; then
+      read -r app_pid < "$app_pid_file"
+      case "$app_pid" in
+        ''|*[!0-9]*) ;;
+        *) kill -TERM "$app_pid" 2>/dev/null || true ;;
+      esac
+    elif [ -n "$session_pid" ]; then
+      # The app has not reached exec yet; stop startup before it can accept work.
+      kill -TERM "$session_pid" 2>/dev/null || true
+    fi
+  }
+
+  trap forward_shutdown TERM INT
+  dbus-run-session -- env AWM_ANTIGRAVITY_DBUS_SESSION=1 "$0" "$@" &
+  session_pid=$!
+  if [ "$shutdown_requested" = "1" ]; then
+    kill -TERM "$session_pid" 2>/dev/null || true
+  fi
+
+  session_status=0
+  while :; do
+    if wait "$session_pid"; then
+      session_status=0
+      break
+    else
+      session_status=$?
+      if ! kill -0 "$session_pid" 2>/dev/null; then break; fi
+    fi
+  done
+  rm -f "$app_pid_file"
+  trap - TERM INT
+  exit "$session_status"
 fi
 
 agy_home="${AWM_ANTIGRAVITY_HOME:-/antigravity-state}"
@@ -67,4 +104,5 @@ if [ -n "$keyring_secret_file" ]; then
   unset AWM_ANTIGRAVITY_KEYRING_SECRET_FILE
 fi
 
+printf '%s\n' "$$" > "$runtime_dir/awm-app.pid"
 exec node dist/src/index.js "$@"

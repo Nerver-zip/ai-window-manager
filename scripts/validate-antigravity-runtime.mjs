@@ -40,7 +40,9 @@ run('gnome-keyring-daemon', ['--version']);
 const runtimeRoot = '/tmp/awm-antigravity-runtime-check';
 const home = `${runtimeRoot}/home`;
 const runtimeDir = `${runtimeRoot}/run`;
+const cacheDir = `${home}/.cache`;
 mkdirSync(home, { recursive: true, mode: 0o700 });
+mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
 mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
 
 const check = spawnSync(
@@ -50,7 +52,7 @@ const check = spawnSync(
     'sh',
     '-eu',
     '-c',
-    'gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1 && test -S "$XDG_RUNTIME_DIR/keyring/control"',
+    'gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1 && test -S "$XDG_RUNTIME_DIR/keyring/control" && dbus-send --session --print-reply --reply-timeout=5000 --dest=org.freedesktop.secrets /org/freedesktop/secrets org.freedesktop.DBus.Introspectable.Introspect | grep -q org.freedesktop.Secret.Service',
   ],
   {
     encoding: 'utf8',
@@ -62,6 +64,7 @@ const check = spawnSync(
       HOME: home,
       XDG_CONFIG_HOME: `${home}/.config`,
       XDG_DATA_HOME: `${home}/.local/share`,
+      XDG_CACHE_HOME: cacheDir,
       XDG_RUNTIME_DIR: runtimeDir,
     },
   },
@@ -73,4 +76,4 @@ if (check.error || check.status !== 0) {
 
 console.log(`antigravity-cli ${version}`);
 console.log('dbus-session ok');
-console.log('secret-service ok');
+console.log('secret-service D-Bus interface ok');

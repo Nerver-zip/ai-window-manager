@@ -121,6 +121,7 @@ function createManager(
   input: {
     driver?: FakeDriver;
     clock?: Clock;
+    startupTimeoutMs?: number;
     timeoutMs?: number;
     processStopGraceMs?: number;
     verificationAttempts?: number;
@@ -135,6 +136,7 @@ function createManager(
   const manager = new AuthSessionManager({
     clock: input.clock ?? new FakeClock(NOW),
     drivers: new Map([[driver.providerId, driver]]),
+    ...(input.startupTimeoutMs !== undefined ? { startupTimeoutMs: input.startupTimeoutMs } : {}),
     sessionTimeoutMs: input.timeoutMs ?? 60_000,
     processStopGraceMs: input.processStopGraceMs ?? 20,
     verificationAttempts: input.verificationAttempts ?? 3,
@@ -206,6 +208,38 @@ describe('AuthSessionManager', () => {
       { type: 'provider_auth_awaiting_user', providerId: 'codex', reasonCode: null },
     ]);
     expect(JSON.stringify(events)).not.toContain('ABCD-EFGH');
+  });
+
+  it('times out and stops a launched process that never emits sign-in progress', async () => {
+    vi.useFakeTimers();
+    const { manager, driver, events } = createManager({ startupTimeoutMs: 100 });
+    manager.start('codex');
+    await flushMicrotasks();
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(manager.status('codex')).toMatchObject({
+      state: 'TIMED_OUT',
+      reasonCode: 'AUTH_START_TIMEOUT',
+    });
+    expect(driver.process.signals).toContain('SIGTERM');
+    expect(events.at(-1)).toMatchObject({
+      type: 'provider_auth_timed_out',
+      reasonCode: 'AUTH_START_TIMEOUT',
+    });
+  });
+
+  it('stops the startup deadline when the official client requests user action', async () => {
+    vi.useFakeTimers();
+    const { manager, driver } = createManager({ startupTimeoutMs: 100 });
+    manager.start('codex');
+    await flushMicrotasks();
+    driver.process.output('stderr', 'auth-prompt\n');
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(manager.status('codex').state).toBe('AWAITING_USER_ACTION');
+    await manager.shutdown();
   });
 
   it('rejects a second active session for the same provider', async () => {

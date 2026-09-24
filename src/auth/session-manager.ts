@@ -17,6 +17,7 @@ export type AuthReasonCode =
   | 'ALREADY_AUTHENTICATED'
   | 'AUTH_STATUS_UNAVAILABLE'
   | 'AUTH_START_FAILED'
+  | 'AUTH_START_TIMEOUT'
   | 'AUTH_PROCESS_FAILED'
   | 'AUTH_SESSION_EXPIRED'
   | 'AUTH_CANCELED'
@@ -98,10 +99,12 @@ interface Session extends AuthSessionSnapshot {
   outputBytes: number;
   verificationRun: number;
   stopping: Promise<void> | undefined;
+  startupTimer: NodeJS.Timeout | undefined;
   expiresTimer: NodeJS.Timeout;
 }
 
 const TERMINAL_STATES = new Set<AuthSessionState>(['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED']);
+const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_LINE_BYTES = 16 * 1024;
 const MAX_AUTH_CODE_LENGTH = 128;
@@ -121,6 +124,7 @@ export class AuthSessionManager {
     private readonly options: {
       clock: Clock;
       drivers: ReadonlyMap<AuthProviderId, ProviderAuthDriver>;
+      startupTimeoutMs?: number;
       sessionTimeoutMs?: number;
       verificationAttempts?: number;
       verificationIntervalMs?: number;
@@ -164,6 +168,7 @@ export class AuthSessionManager {
       outputBytes: 0,
       verificationRun: 0,
       stopping: undefined,
+      startupTimer: undefined,
       expiresTimer: setTimeout(() => {
         if (this.isActive(session)) this.finish(session, 'TIMED_OUT', 'AUTH_SESSION_EXPIRED');
       }, timeoutMs),
@@ -242,6 +247,11 @@ export class AuthSessionManager {
         return;
       }
 
+      session.startupTimer = setTimeout(() => {
+        if (this.isActive(session) && session.state === 'STARTING') {
+          this.finish(session, 'TIMED_OUT', 'AUTH_START_TIMEOUT');
+        }
+      }, this.options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS);
       const process = driver.launch();
       if (!this.isActive(session)) {
         process.signal('SIGTERM');
@@ -394,6 +404,8 @@ export class AuthSessionManager {
     session.requiresCodeSubmission = false;
     session.verificationRun += 1;
     session.abortController.abort();
+    if (session.startupTimer) clearTimeout(session.startupTimer);
+    session.startupTimer = undefined;
     clearTimeout(session.expiresTimer);
     const eventType =
       state === 'SUCCEEDED'
@@ -432,6 +444,10 @@ export class AuthSessionManager {
       CANCELED: [],
     };
     if (!allowed[session.state].includes(state)) return;
+    if (session.state === 'STARTING' && state !== 'STARTING') {
+      if (session.startupTimer) clearTimeout(session.startupTimer);
+      session.startupTimer = undefined;
+    }
     session.state = state;
   }
 

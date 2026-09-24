@@ -121,6 +121,15 @@ describe('auth onboarding UI', () => {
     expect(html).toContain('official client could not start sign-in');
   });
 
+  it('explains when the official sign-in process never starts responding', () => {
+    const html = renderAuthOnboarding({
+      providerId: 'codex',
+      status: status({ state: 'TIMED_OUT', reasonCode: 'AUTH_START_TIMEOUT' }),
+    });
+
+    expect(html).toContain('official sign-in process did not respond in time');
+  });
+
   it('keeps the client-side flow safe and progressive', () => {
     expect(AUTH_ONBOARDING_JS).toContain('fetch(url, options)');
     expect(AUTH_ONBOARDING_JS).toContain("readCookie('awm_csrf')");

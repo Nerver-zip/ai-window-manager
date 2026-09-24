@@ -91,7 +91,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      ca-certificates dbus-daemon gnome-keyring libsecret-1-0 \
+      ca-certificates dbus-daemon gnome-keyring libsecret-1-0 tini \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable \
     && useradd --system --uid 10001 --create-home --home-dir /home/awm awm \
@@ -113,4 +113,4 @@ EXPOSE 8787
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-ENTRYPOINT ["/app/scripts/agy-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/agy-entrypoint.sh"]

@@ -24,7 +24,8 @@ keyring is mounted.
 - `no-new-privileges:true`;
 - read-only root filesystem with `/tmp` tmpfs;
 - healthcheck against `/healthz`;
-- graceful SIGTERM;
+- Tini provides PID 1 signal handling; the Antigravity entrypoint forwards
+  SIGTERM to the app and waits for it to close HTTP/SQLite before D-Bus exits;
 - no Docker socket.
 
 At startup the daemon seeds only enabled bootstrap providers when their DB record
@@ -56,7 +57,9 @@ trigger capability is permanently false in this milestone.
 
 Authentication sessions are temporary and reset to idle if the daemon restarts;
 the official provider clients persist credentials in their separate state
-volumes. For an operator-authorized acceptance, enable the provider in `.env`
+volumes. A login process must emit its first recognized progress within 60
+seconds; the overall interactive session defaults to 900 seconds and can be
+adjusted with `AWM_AUTH_SESSION_TIMEOUT_SECONDS`. For an operator-authorized acceptance, enable the provider in `.env`
 (`AWM_CODEX_ENABLED=true` or `AWM_ANTIGRAVITY_ENABLED=true`), start the
 container, then use **Settings → Connect** for that provider and complete only
 the official sign-in flow. Confirm that the UI reports **Connected** and that

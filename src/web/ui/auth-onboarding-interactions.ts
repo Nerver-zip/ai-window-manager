@@ -28,6 +28,7 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     AUTH_STATUS_UNAVAILABLE: 'The app could not safely check the current sign-in state. The existing sign-in was left unchanged.',
     AUTH_REQUIRED: 'The provider needs you to sign in with its official client.',
     AUTH_START_FAILED: 'The official client could not start sign-in.',
+    AUTH_START_TIMEOUT: 'The official sign-in process did not respond in time. Try again.',
     AUTH_PROCESS_FAILED: 'The official client ended before sign-in could be verified.',
     AUTH_VERIFICATION_FAILED: 'Sign-in finished, but the provider could not verify it.',
     AUTH_SESSION_EXPIRED: 'The sign-in window expired before it was completed.',
