@@ -146,10 +146,19 @@ progress::-moz-progress-bar { background: var(--accent); }
 .window-reset strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .window-reset small { color: var(--text-muted); font-size: 11px; }
 .reset-relative { display: block; color: var(--accent); font-size: 13px; }
+.provider-action-notice { border-left: 2px solid var(--warning); margin: 18px 0; background: var(--surface-raised); padding: 12px 14px; color: var(--text-muted); font-size: 12px; }
+.provider-action-notice strong { color: var(--text-soft); }
+.manual-start-form { display: grid; justify-items: start; gap: 10px; border-top: 1px solid var(--border); margin-top: 18px; padding-top: 14px; }
+.manual-start-form button { min-height: 44px; }
+.manual-start-model { margin: 0; color: var(--text-muted); font-size: 12px; }
+.manual-start-model strong { color: var(--text-soft); }
 .current-window-read { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; border-bottom: 1px solid var(--border); padding: 18px 0; }
 .current-window-read > :last-child { margin-bottom: 0; text-align: right; }
 .current-window-status { display: block; margin: 2px 0 6px; color: var(--text); font-size: clamp(20px, 2vw, 26px); font-weight: 600; letter-spacing: -.4px; }
 .current-window-status::before { display: inline-block; width: 8px; height: 8px; margin: 0 8px 3px 0; border-radius: 50%; background: var(--accent); content: ''; }
+.managed-window-summary, .managed-window-model { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 12px 0 0; }
+.managed-window-summary strong { color: var(--text); font-size: 14px; }
+.managed-window-model code { color: var(--text-soft); font-size: 12px; }
 .policy-fields { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 20px; }
 .policy-fields[aria-hidden="true"] { display: none; }
 .policy-fields > .field-help { margin-top: 14px; }
@@ -554,6 +563,7 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   .horizon-axis { font-size: 9px; }
   .horizon-milestones li { grid-template-columns: 1fr; gap: 3px; }
   .window-card { padding: 16px; }
+  .manual-start-form button { width: 100%; }
   .chart-card { padding: 16px; }
   .chart-card-header { display: block; }
   .chart-card-controls { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: 12px; margin-top: 12px; }

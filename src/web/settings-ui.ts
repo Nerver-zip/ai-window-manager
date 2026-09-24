@@ -24,8 +24,15 @@ import {
   providerDisplayName,
   providerLogoUrl,
   timeZoneDisplayName,
+  windowGroupDisplayName,
   windowDisplayName,
 } from './ui/presentation.js';
+import {
+  observedWindowTargets,
+  resolveWindowTarget,
+  type WindowTargetDescriptor,
+  type WindowTargetResolution,
+} from './ui/window-targets.js';
 
 // These are browser hints only. settings-api.ts remains the server-side authority.
 const MIN_POLL_INTERVAL_SECONDS = 30;
@@ -98,6 +105,7 @@ export interface SettingsProviderView {
   staleAfterSeconds?: number | undefined;
   configured?: boolean | undefined;
   connectionLabel?: string | undefined;
+  triggerModels?: { gemini: string; claudeGpt: string } | undefined;
 }
 
 export interface SettingsPageInput {
@@ -145,12 +153,12 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const policy = input.policy;
   const providerId = policy?.providerId ?? input.selectedProviderId ?? input.providers[0]?.id ?? '';
   const selectedProvider = input.providers.find((provider) => provider.id === providerId);
-  const selectedWindowKind =
-    policy && 'windowKind' in policy
-      ? policy.windowKind
-      : (selectedProvider?.windows?.[0]?.windowKind ?? 'five_hour');
+  const configuredWindowKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
+  const windowTargets = observedWindowTargets(providerId, selectedProvider?.windows);
+  const targetResolution = resolveWindowTarget(configuredWindowKind, windowTargets);
   const timezone = input.timezone?.timezone ?? policy?.timezone ?? '';
   const kind = policy?.kind ?? 'manual';
+  const noObservedTargets = windowTargets.length === 0;
   const currentWindow = input.currentWindow;
   const decision = input.decision;
   const providerPicker = renderProviderPicker({
@@ -176,7 +184,12 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
     ['active_hours', 'Within active hours', 'Only start during the hours you choose.', 'clock'],
     ['manual', 'Only when I ask', 'Keep monitoring; never start automatically.', 'hand'],
   ] as const;
-  const windowControl = renderWindowControl(selectedProvider, selectedWindowKind ?? 'five_hour');
+  const windowField = renderWindowTargetField(
+    selectedProvider,
+    windowTargets,
+    targetResolution,
+    'Choose the exact provider-reported window this schedule should manage.',
+  );
   const tolerance = policy && 'toleranceSeconds' in policy ? policy.toleranceSeconds : 15 * 60;
   const anchor = policy?.kind === 'fixed' ? policy.anchorLocalTime : '18:00';
   const customTimes = policy?.kind === 'custom_schedule' ? policy.times : ['08:00', '18:00'];
@@ -185,6 +198,17 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const timezoneText = timezone
     ? timeZoneDisplayName(timezone)
     : 'Choose a time zone in Settings before enabling a time-based policy.';
+  const automaticPolicySelected = kind !== 'manual';
+  const targetBlocksAutomaticPolicy =
+    automaticPolicySelected && targetResolution.status !== 'resolved';
+  const previewPolicy = targetBlocksAutomaticPolicy
+    ? undefined
+    : policy && targetResolution.status === 'resolved' && 'windowKind' in policy
+      ? { ...policy, windowKind: targetResolution.target.windowKind }
+      : policy;
+  const scheduleExplanation = targetBlocksAutomaticPolicy
+    ? renderUnresolvedScheduleExplanation(windowTargets, targetResolution)
+    : renderPlannerPreview(decision);
 
   return renderAppShell({
     page: 'schedule',
@@ -206,18 +230,19 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
           <input type="hidden" name="providerId" value="${escapeAttribute(providerId)}">
           <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
           <input type="hidden" name="toleranceSeconds" value="${tolerance}">
-          <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><p class="field-help">Choose a pattern. You can change it later without affecting the current window.</p><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value)).join('')}</div></fieldset>
+          <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><p class="field-help">Choose a pattern. You can change it later without affecting the current window.</p><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value, noObservedTargets && value !== 'manual')).join('')}</div></fieldset>
           <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change</a></p>
-          ${renderPolicyFields('auto', kind === 'auto', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'auto-window')}</div><p class="policy-guidance">The service checks for a newly available window and starts it only when fresh provider data and safety checks agree.</p>`)}
-          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'custom-window')}${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Times use your saved local time zone.', 'custom-times-help', true)}</div><p class="policy-guidance">A scheduled time is an opportunity, not a guarantee. The service checks periodically and still requires fresh, safe provider data.</p>`)}
-          ${renderPolicyFields('fixed', kind === 'fixed', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
-          ${renderPolicyFields('active_hours', kind === 'active_hours', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
+          ${windowField}
+          ${renderPolicyFields('auto', kind === 'auto' && !noObservedTargets, '<p class="policy-guidance">The service checks for a newly available window and starts it only when fresh provider data and provider safety checks agree.</p>')}
+          ${renderPolicyFields('custom_schedule', kind === 'custom_schedule' && !noObservedTargets, `<div class="policy-controls-grid">${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Times use your saved local time zone.', 'custom-times-help', true)}</div><p class="policy-guidance">A scheduled time is an opportunity, not a guarantee. The service checks periodically and still requires fresh, safe provider data.</p>`)}
+          ${renderPolicyFields('fixed', kind === 'fixed' && !noObservedTargets, `<div class="policy-controls-grid">${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
+          ${renderPolicyFields('active_hours', kind === 'active_hours' && !noObservedTargets, `<div class="policy-controls-grid">${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
           ${renderPolicyFields('manual', kind === 'manual', '<p class="policy-guidance">Monitoring continues. The service will not start a window automatically.</p>')}
           <div class="form-actions"><button type="submit"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div>
         </form>
       </section>
-      <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
-      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${renderPlannerPreview(decision)}</section>
+      <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
+      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}</section>
     </div>`,
   });
 }
@@ -240,10 +265,21 @@ function renderCurrentWindowSummary(
   const details = currentWindow.expectedEndAt
     ? `<p class="muted"><span>Expected reset</span><br><time datetime="${escapeAttribute(currentWindow.expectedEndAt.value)}">${escapeHtml(formatReadableInstant(currentWindow.expectedEndAt.value, timeZone))}</time></p>`
     : '<p class="muted">Expected reset is not available yet.</p>';
+  const selectedSnapshot = provider?.windows?.find(
+    (window) => window.windowKind === currentWindow.windowKind,
+  );
   const windowLabel = currentWindow.windowKind
-    ? windowDisplayName(provider?.id ?? '', currentWindow.windowKind)
+    ? windowDisplayName(
+        provider?.id ?? '',
+        currentWindow.windowKind,
+        selectedSnapshot?.durationSeconds?.value,
+      )
     : 'No window selected';
-  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(windowLabel)}</p></div>${details}</div>`;
+  const groupLabel = currentWindow.windowKind
+    ? windowGroupDisplayName(currentWindow.windowKind)
+    : null;
+  const targetLabel = groupLabel ? `${groupLabel} · ${windowLabel}` : windowLabel;
+  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(targetLabel)}</p></div>${details}</div>`;
 }
 
 function renderPlannerPreview(decision: PlannerDecision | null | undefined): string {
@@ -420,6 +456,7 @@ function renderPolicyChoice(
   description: string,
   icon: string,
   selected: boolean,
+  disabled = false,
 ): string {
   const icons: Record<string, string> = {
     bolt: '<path d="M13 2 4 14h7l-1 8 10-13h-7z"/>',
@@ -430,7 +467,7 @@ function renderPolicyChoice(
     hand: '<path d="M8 11V5a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v8c0 5-3 8-8 8h-1c-2 0-3-1-4-3l-3-5a2 2 0 0 1 4-2l1 2"/>',
   };
   const id = `policy-kind-${value}`;
-  return `<label class="policy-choice${selected ? ' is-selected' : ''}" data-policy-choice><input id="${id}" type="radio" name="policyKind" value="${escapeAttribute(value)}"${selected ? ' checked' : ''} required><span class="policy-choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[icon] ?? ''}</svg></span><span class="policy-choice-copy"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></span><span class="policy-choice-indicator" aria-hidden="true"></span></label>`;
+  return `<label class="policy-choice${selected ? ' is-selected' : ''}" data-policy-choice><input id="${id}" type="radio" name="policyKind" value="${escapeAttribute(value)}"${selected ? ' checked' : ''}${disabled ? ' disabled' : ''} required><span class="policy-choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[icon] ?? ''}</svg></span><span class="policy-choice-copy"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(description)}</span></span><span class="policy-choice-indicator" aria-hidden="true"></span></label>`;
 }
 
 function disableFormControls(content: string): string {
@@ -487,16 +524,121 @@ function renderActiveHoursField(periods: readonly { start: string; end: string }
   return `<div class="field dynamic-list-field"><span class="field-label">Active hours</span><div id="active-hours-periods" class="dynamic-list" data-schedule-list data-list-name="periods" data-list-kind="period" aria-describedby="active-hours-periods-help">${items}<div class="dynamic-list-actions"><button class="button button-secondary dynamic-list-add" type="button" data-list-add>Add a time range</button><div class="schedule-presets" aria-label="Suggested active hours"><button type="button" class="button button-secondary" data-period-preset-start="08:00" data-period-preset-end="18:00">Workday <span>08:00–18:00</span></button><button type="button" class="button button-secondary" data-period-preset-start="13:00" data-period-preset-end="22:00">Afternoon / night <span>13:00–22:00</span></button></div></div><span class="field-help" id="active-hours-periods-help">Choose the local hours when a new window may start.</span></div></div>`;
 }
 
-function renderPolicyWindowField(control: string, idPrefix: string): string {
-  return renderField(
-    `${idPrefix}-kind`,
-    'Usage window',
-    control
-      .replaceAll('schedule-window-kind-help', `${idPrefix}-help`)
-      .replaceAll('schedule-window-kind', `${idPrefix}-kind`),
-    'Choose the provider window this policy should cover.',
-    `${idPrefix}-help`,
-  );
+function renderWindowTargetField(
+  provider: SettingsProviderView | undefined,
+  targets: readonly WindowTargetDescriptor[],
+  resolution: WindowTargetResolution,
+  helpText: string,
+): string {
+  const selectedWindowKind = resolution.status === 'resolved' ? resolution.target.windowKind : '';
+  const select = renderWindowTargetControl(targets, selectedWindowKind, targets.length > 0);
+  const selectedTarget = resolution.status === 'resolved' ? resolution.target : undefined;
+  const selectedGroupLabel = selectedTarget?.groupLabel;
+  const selectedTargetSummary = selectedTarget
+    ? `<p class="managed-window-summary"><span class="field-label">Currently managing</span><strong>${escapeHtml(selectedGroupLabel ? `${selectedGroupLabel} · ${selectedTarget.label}` : selectedTarget.label)}</strong></p>`
+    : '';
+  const triggerModel = triggerModelForTarget(provider, selectedTarget);
+  const triggerModelNote = triggerModel
+    ? `<p class="managed-window-model"><span class="field-label">Trigger model</span><code>${escapeHtml(triggerModel)}</code></p>`
+    : '';
+  const resolutionNote = renderWindowTargetResolutionNote(resolution, targets.length);
+  const sideEffectWarning = crossWindowSideEffectWarning(provider);
+  const sideEffectNote = sideEffectWarning
+    ? `<p class="policy-guidance" role="note">${escapeHtml(sideEffectWarning)}</p>`
+    : '';
+  return `<div class="managed-window-target">${renderField('schedule-window-kind', 'Usage window', select, helpText, 'schedule-window-kind-help')}${selectedTargetSummary}${triggerModelNote}${resolutionNote}${sideEffectNote}</div>`;
+}
+
+function triggerModelForTarget(
+  provider: SettingsProviderView | undefined,
+  target: WindowTargetDescriptor | undefined,
+): string | undefined {
+  if (
+    !provider ||
+    provider.kind !== 'antigravity' ||
+    provider.capabilities?.windowTrigger.supported !== true ||
+    !provider.triggerModels
+  ) {
+    return undefined;
+  }
+  if (target?.groupLabel === 'Gemini Models') return provider.triggerModels.gemini;
+  if (target?.groupLabel === 'Claude and GPT Models') return provider.triggerModels.claudeGpt;
+  return undefined;
+}
+
+function renderWindowTargetResolutionNote(
+  resolution: WindowTargetResolution,
+  targetCount: number,
+): string {
+  if (targetCount === 0) {
+    return '<p class="field-help" role="status">Waiting for a provider-reported usage window. No target has been invented; automatic schedules are unavailable until an exact window is reported.</p>';
+  }
+  if (resolution.status === 'resolved' && resolution.source === 'legacy') {
+    return `<p class="field-help" role="status">The saved ${escapeHtml(resolution.target.label.toLowerCase())} preference matches the only reported window of this cadence. Saving will associate it with that exact window.</p>`;
+  }
+  if (resolution.status === 'ambiguous') {
+    const matches = resolution.matches
+      .map((target) => escapeHtml(windowTargetSummary(target, resolution.matches)))
+      .join(', ');
+    return `<p class="field-help" role="alert">The saved ${escapeHtml(cadenceLabel(resolution.legacyCadence).toLowerCase())} target matches multiple reported windows (${matches}). Choose the exact window below; the schedule will not guess.</p>`;
+  }
+  if (resolution.status === 'unresolved') {
+    return '<p class="field-help" role="alert">The saved target is not currently reported by this provider. Choose one of the exact reported windows before saving automatic scheduling.</p>';
+  }
+  if (resolution.status === 'none') {
+    return '<p class="field-help">Choose one exact reported window. The first window is never selected automatically.</p>';
+  }
+  return '';
+}
+
+function renderUnresolvedScheduleExplanation(
+  targets: readonly WindowTargetDescriptor[],
+  resolution: WindowTargetResolution,
+): string {
+  if (targets.length === 0) {
+    return '<p class="schedule-explanation">Waiting for a provider-reported usage window. No automatic start can be planned until one is available.</p>';
+  }
+  if (resolution.status === 'ambiguous') {
+    return '<p class="schedule-explanation">Choose one exact reported window to resolve this schedule. No target will be guessed.</p>';
+  }
+  return '<p class="schedule-explanation">Choose an exact provider-reported window before this automatic schedule can be evaluated.</p>';
+}
+
+function windowTargetSummary(
+  target: WindowTargetDescriptor,
+  peers: readonly WindowTargetDescriptor[],
+): string {
+  const groupPeers = peers.filter((peer) => peer.groupLabel === target.groupLabel);
+  const label = windowTargetOptionLabel(target, groupPeers);
+  return target.groupLabel ? `${target.groupLabel} · ${label}` : label;
+}
+
+function windowTargetOptionLabel(
+  target: WindowTargetDescriptor,
+  peers: readonly WindowTargetDescriptor[],
+): string {
+  const sameLabel = peers.filter((peer) => peer.label === target.label);
+  if (sameLabel.length <= 1) return target.label;
+  const ordinal = sameLabel.findIndex((peer) => peer.windowKind === target.windowKind) + 1;
+  return `${target.label} · Window ${ordinal}`;
+}
+
+function cadenceLabel(cadence: 'five_hour' | 'weekly'): string {
+  return cadence === 'five_hour' ? '5-hour window' : 'Weekly window';
+}
+
+function crossWindowSideEffectWarning(provider: SettingsProviderView | undefined): string {
+  const kind = `${provider?.kind ?? ''} ${provider?.id ?? ''}`.toLowerCase();
+  if (kind.includes('antigravity') || kind.includes('agy')) {
+    return 'A start may use quota in both the 5-hour and weekly windows in this group. The selected group chooses the model family; it does not limit which of that family’s quotas the provider charges.';
+  }
+  if (kind.includes('codex')) {
+    return 'This choice controls which Codex window the schedule follows; a start request may still count against more than one Codex quota window.';
+  }
+  if ((provider?.windows?.length ?? 0) > 1) {
+    return 'A start request may affect other quota windows too. This choice controls scheduling and confirmation, not provider-side quota isolation.';
+  }
+  return '';
 }
 
 function plannerReasonLabel(reasonCode: string): string {
@@ -505,6 +647,7 @@ function plannerReasonLabel(reasonCode: string): string {
     MANUAL_POLICY: 'New windows are started only by you.',
     AUTOMATION_DISABLED: 'Monitoring continues, but automatic starts are turned off.',
     TRIGGER_CAPABILITY_UNAVAILABLE: 'This provider cannot start a window automatically.',
+    WINDOW_TARGET_NOT_SELECTED: 'Choose one reported usage window for this schedule.',
     MONITORING_UNAVAILABLE: 'Provider monitoring is unavailable.',
     WINDOW_PHASE_CONFIDENCE_TOO_LOW: 'The current window state is not reliable enough yet.',
     WINDOW_NOT_REPORTED: 'The selected usage window is not reported by this provider.',
@@ -665,6 +808,10 @@ export function renderSchedulePage(input: SchedulePageInput): string {
   const timezone = stringValue(policy.timezone);
   const toleranceSeconds = numberValue(policy.toleranceSeconds);
   const selectedProvider = input.providers.find((provider) => provider.id === providerId);
+  const windowTargets = observedWindowTargets(providerId, selectedProvider?.windows);
+  const targetResolution = resolveWindowTarget(windowKind || undefined, windowTargets);
+  const selectedWindowKind =
+    targetResolution.status === 'resolved' ? targetResolution.target.windowKind : '';
   const basePreview =
     targetResetLocalTime && timezone
       ? previewTargetReset({
@@ -673,7 +820,7 @@ export function renderSchedulePage(input: SchedulePageInput): string {
           referenceInstant: input.referenceInstant,
         })
       : unknownPreview(targetResetLocalTime || null, timezone || null);
-  const preview = addWindowCandidate(basePreview, selectedProvider, windowKind);
+  const preview = addWindowCandidate(basePreview, selectedProvider, selectedWindowKind);
   const providerPicker = renderProviderPicker({
     name: 'providerId',
     legend: 'Provider',
@@ -706,13 +853,13 @@ export function renderSchedulePage(input: SchedulePageInput): string {
               <div class="form-grid">
                 ${renderField('schedule-enabled', 'Plan status', `<select id="schedule-enabled" name="enabled" aria-describedby="schedule-enabled-help">${booleanOptions(policy.enabled, 'Active', 'Paused')}</select>`, 'Pause this plan without deleting it or changing its saved values.', 'schedule-enabled-help')}
                 ${providerPicker}
-                ${renderField('schedule-window-kind', 'Usage window', renderWindowControl(selectedProvider, windowKind), 'Choose the window whose reset you want to plan around.', 'schedule-window-kind-help')}
+                ${renderWindowTargetField(selectedProvider, windowTargets, targetResolution, 'Choose the exact provider-reported window whose reset you want to plan around.')}
                 ${renderField('schedule-target-reset', 'Reset time', `<input id="schedule-target-reset" name="targetResetLocalTime" type="time" value="${escapeAttribute(targetResetLocalTime)}" step="60" aria-describedby="schedule-target-reset-help" required>`, 'The local time when this usage window is expected to reset.', 'schedule-target-reset-help')}
                 ${renderField('schedule-timezone', 'Timezone', `<input id="schedule-timezone" name="timezone" value="${escapeAttribute(timezone)}" placeholder="America/Sao_Paulo" maxlength="128" aria-describedby="schedule-timezone-help" required>`, 'Use an IANA timezone so daylight-saving transitions remain explicit.', 'schedule-timezone-help')}
                 ${renderField('schedule-tolerance', 'Timing tolerance', `<input id="schedule-tolerance" name="toleranceSeconds" type="number" min="${MIN_TOLERANCE_SECONDS}" max="${MAX_TOLERANCE_SECONDS}" value="${toleranceSeconds === null ? '' : toleranceSeconds}" aria-describedby="schedule-tolerance-help" required>`, 'How many seconds of variation are acceptable around the planned start.', 'schedule-tolerance-help')}
               </div>
             </fieldset>
-            <div class="form-actions"><button type="submit">Save schedule</button></div>
+            <div class="form-actions"><button type="submit"${windowTargets.length ? '' : ' disabled'}>Save schedule</button></div>
           </form>
         </section>
         <aside class="card schedule-preview" aria-labelledby="schedule-preview-title">
@@ -1006,28 +1153,40 @@ function booleanOptions(
   return `<option value="true"${value === true ? ' selected' : ''}>${escapeHtml(enabledLabel)}</option><option value="false"${value === false ? ' selected' : ''}>${escapeHtml(disabledLabel)}</option>`;
 }
 
-function renderWindowControl(
-  provider: SettingsProviderView | undefined,
+function renderWindowTargetControl(
+  targets: readonly WindowTargetDescriptor[],
   selectedWindowKind: string,
+  required: boolean,
 ): string {
-  const candidates = [
-    'five_hour',
-    'weekly',
-    ...(provider?.windows?.map((window) => window.windowKind).filter((kind) => kind.length > 0) ??
-      []),
-  ].filter((kind, index, all) => all.indexOf(kind) === index);
-  if (selectedWindowKind && !candidates.includes(selectedWindowKind)) {
-    candidates.unshift(selectedWindowKind);
+  if (targets.length === 0) {
+    return '<select id="schedule-window-kind" name="windowKind" aria-describedby="schedule-window-kind-help" disabled><option value="" selected>No provider window reported</option></select>';
   }
-  const options = candidates
-    .map((kind) => {
-      const duration = provider?.windows?.find((window) => window.windowKind === kind)
-        ?.durationSeconds?.value;
-      const label = windowDisplayName(provider?.id ?? '', kind, duration);
-      return `<option value="${escapeAttribute(kind)}"${kind === selectedWindowKind ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+
+  const grouped = new Map<string | null, WindowTargetDescriptor[]>();
+  for (const target of targets) {
+    const group = target.groupLabel;
+    const entries = grouped.get(group) ?? [];
+    entries.push(target);
+    grouped.set(group, entries);
+  }
+
+  const options = [...grouped.entries()]
+    .map(([group, groupTargets]) => {
+      const rendered = groupTargets
+        .map((target) => {
+          const label = windowTargetOptionLabel(target, groupTargets);
+          return `<option value="${escapeAttribute(target.windowKind)}"${target.windowKind === selectedWindowKind ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+        })
+        .join('');
+      return group
+        ? `<optgroup label="${escapeAttribute(group)}">${rendered}</optgroup>`
+        : rendered;
     })
     .join('');
-  return `<select id="schedule-window-kind" name="windowKind" aria-describedby="schedule-window-kind-help" required>${selectedWindowKind ? '' : '<option value="" selected disabled>Choose a usage window</option>'}${options}</select>`;
+  const placeholder = selectedWindowKind
+    ? ''
+    : '<option value="" selected disabled>Choose a reported usage window</option>';
+  return `<select id="schedule-window-kind" name="windowKind" aria-describedby="schedule-window-kind-help"${required ? ' required' : ''}>${placeholder}${options}</select>`;
 }
 
 function resolutionLabel(resolution: LocalOccurrence['resolution'] | null): string {

@@ -146,6 +146,11 @@ export const TriggerCapabilitySchema = z
     supported: z.boolean(),
     contract: CapabilityContractSchema,
     consumesQuota: z.union([z.boolean(), z.literal('unknown')]),
+    supportedWindowKinds: z
+      .array(WindowKindSchema)
+      .max(32)
+      .refine((windowKinds) => new Set(windowKinds).size === windowKinds.length)
+      .optional(),
     notes: BoundedNotesSchema.optional(),
   })
   .strict();
@@ -163,6 +168,7 @@ export const TriggerWindowRequestSchema = z
     intentId: z.string().min(1).max(128),
     dedupeKey: z.string().min(1).max(256),
     reasonCode: z.string().min(1).max(128),
+    windowKind: z.string().min(1).max(128).optional(),
   })
   .strict();
 

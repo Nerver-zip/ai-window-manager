@@ -33,6 +33,16 @@ export const APP_JS = `(() => {
     }
   }
 
+  for (const form of document.querySelectorAll('[data-usage-filter-auto-submit]')) {
+    form.addEventListener('change', (event) => {
+      const target = event.target;
+      if (target?.matches?.('select[name="window"]')) {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit?.();
+      }
+    });
+  }
+
   function setPolicyFieldState(section, active) {
     section.hidden = !active;
     section.setAttribute('aria-hidden', active ? 'false' : 'true');

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ActivationPolicy } from '../domain/types.js';
+import { resolveWindowTarget } from '../domain/window-target.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import {
@@ -48,10 +49,13 @@ const ActivationPolicyBaseSchema = z.object({
 });
 
 export const ActivationPolicySettingsSchema = z.discriminatedUnion('kind', [
-  ActivationPolicyBaseSchema.extend({ kind: z.literal('manual') }),
+  ActivationPolicyBaseSchema.extend({
+    kind: z.literal('manual'),
+    windowKind: z.string().min(1).max(64).optional(),
+  }),
   ActivationPolicyBaseSchema.extend({
     kind: z.literal('auto'),
-    windowKind: z.string().min(1).max(64).optional(),
+    windowKind: z.string().min(1).max(64),
   }),
   ActivationPolicyBaseSchema.extend({
     kind: z.literal('fixed'),
@@ -164,6 +168,7 @@ export function updateActivationPolicy(
     return failure(404, 'NOT_FOUND', 'provider not found');
   const provider = input.repositories.providers.get(parsed.data.providerId);
   if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
+
   const existingTimezone = readTimezoneSetting(input);
   const existingPolicy = input.repositories.schedulePolicies
     .list(parsed.data.providerId)
@@ -176,20 +181,42 @@ export function updateActivationPolicy(
     parsed.data.timezone &&
     (!existingTimezone || parsed.data.timezone !== existingTimezone.timezone),
   );
-  if (timezoneChanged) {
-    const timezoneResult = updateTimezoneSetting(input, {
-      timezone: parsed.data.timezone,
-      source: 'manual',
-    });
-    if (!timezoneResult.ok)
-      return failure(timezoneResult.statusCode, timezoneResult.code, timezoneResult.message);
-  }
 
   const currentObservation = input.repositories.providerState.get(
     parsed.data.providerId,
   )?.observation;
+  const requestedWindowKind = 'windowKind' in parsed.data ? parsed.data.windowKind : undefined;
+  let windowKind: string | undefined;
+  if (requestedWindowKind) {
+    const target = resolveWindowTarget(requestedWindowKind, currentObservation?.windows ?? []);
+    if (target.status === 'ambiguous') {
+      return failure(
+        400,
+        'AMBIGUOUS_WINDOW_TARGET',
+        'choose a quota group because this saved window target matches multiple provider windows',
+      );
+    }
+    if (target.status === 'missing') {
+      return failure(
+        400,
+        'WINDOW_TARGET_NOT_REPORTED',
+        'choose a usage window reported by the provider before saving this policy',
+      );
+    }
+    windowKind = target.windowKind;
+  }
+  if (
+    !windowKind &&
+    (parsed.data.kind !== 'manual' || (currentObservation?.windows.length ?? 0) > 0)
+  ) {
+    return failure(
+      400,
+      'WINDOW_TARGET_REQUIRED',
+      'choose one exact reported usage window before saving this policy',
+    );
+  }
   const selectedWindow = currentObservation?.windows.find(
-    (window) => 'windowKind' in parsed.data && window.windowKind === parsed.data.windowKind,
+    (window) => window.windowKind === windowKind,
   );
   if ('toleranceSeconds' in parsed.data) {
     try {
@@ -210,8 +237,7 @@ export function updateActivationPolicy(
   const policyId = `activation-${parsed.data.providerId}`;
   const previous = input.repositories.schedulePolicies.get(policyId);
   const config: Record<string, unknown> = {};
-  if ('windowKind' in parsed.data && parsed.data.windowKind)
-    config.windowKind = parsed.data.windowKind;
+  if (windowKind) config.windowKind = windowKind;
   if (parsed.data.kind === 'fixed') {
     config.anchorLocalTime = parsed.data.anchorLocalTime;
     config.toleranceSeconds = parsed.data.toleranceSeconds;
@@ -248,6 +274,14 @@ export function updateActivationPolicy(
       'INVALID_POLICY',
       error instanceof Error ? error.message : 'activation policy is invalid',
     );
+  }
+  if (timezoneChanged) {
+    const timezoneResult = updateTimezoneSetting(input, {
+      timezone: parsed.data.timezone,
+      source: 'manual',
+    });
+    if (!timezoneResult.ok)
+      return failure(timezoneResult.statusCode, timezoneResult.code, timezoneResult.message);
   }
   input.repositories.schedulePolicies.upsert(record);
   input.repositories.events.append({

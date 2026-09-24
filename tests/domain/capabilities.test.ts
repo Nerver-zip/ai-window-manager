@@ -55,8 +55,9 @@ describe('capability and action schemas', () => {
         intentId: 'intent-1',
         dedupeKey: 'fake:trigger_window:policy:target',
         reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+        windowKind: 'antigravity_gemini_five_hour',
       }),
-    ).toBeTruthy();
+    ).toMatchObject({ windowKind: 'antigravity_gemini_five_hour' });
     expect(
       ProviderActionResultSchema.parse({
         status: 'uncertain',

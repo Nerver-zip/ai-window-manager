@@ -72,6 +72,32 @@ export function deriveCurrentWindow(
   };
 }
 
+export function deriveCurrentWindowForTarget(
+  providerId: string,
+  observation: ProviderObservation | null | undefined,
+  health: ProviderHealth | undefined,
+  windowKind: string | undefined,
+): CurrentWindowState {
+  if (
+    !observation ||
+    health === 'AUTH_REQUIRED' ||
+    health === 'UNAVAILABLE' ||
+    health === 'ERROR'
+  ) {
+    return deriveCurrentWindow(providerId, observation, health);
+  }
+  if (!windowKind) {
+    return {
+      providerId,
+      status: 'UNKNOWN',
+      observedAt: observation.observedAt,
+      confidence: 'unknown',
+      reason: 'WINDOW_TARGET_NOT_SELECTED',
+    };
+  }
+  return deriveCurrentWindow(providerId, observation, health, windowKind);
+}
+
 function activeState(
   providerId: string,
   window: WindowSnapshot,

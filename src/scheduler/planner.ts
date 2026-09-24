@@ -22,6 +22,7 @@ export const PlannerReasonCode = {
   ObservationMissing: 'OBSERVATION_MISSING',
   WindowPhaseConfidenceTooLow: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW',
   WindowNotReported: 'WINDOW_NOT_REPORTED',
+  WindowTargetNotSelected: 'WINDOW_TARGET_NOT_SELECTED',
   CurrentWindowActive: 'CURRENT_WINDOW_ACTIVE',
   WindowDurationUnknown: 'WINDOW_DURATION_UNKNOWN',
   WindowDurationConfidenceTooLow: 'WINDOW_DURATION_CONFIDENCE_TOO_LOW',
@@ -150,9 +151,11 @@ export function planWindowAction(input: PlannerInput): PlannerDecision {
       base,
       input.currentWindow.reason === 'WINDOW_STATE_UNCERTAIN'
         ? PlannerReasonCode.WindowPhaseConfidenceTooLow
-        : input.currentWindow.reason === 'WINDOW_NOT_REPORTED'
-          ? PlannerReasonCode.WindowNotReported
-          : PlannerReasonCode.MonitoringUnavailable,
+        : input.currentWindow.reason === 'WINDOW_TARGET_NOT_SELECTED'
+          ? PlannerReasonCode.WindowTargetNotSelected
+          : input.currentWindow.reason === 'WINDOW_NOT_REPORTED'
+            ? PlannerReasonCode.WindowNotReported
+            : PlannerReasonCode.MonitoringUnavailable,
     );
   }
 

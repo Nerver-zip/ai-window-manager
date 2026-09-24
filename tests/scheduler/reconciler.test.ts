@@ -64,6 +64,7 @@ function setup(initial = '2026-09-14T07:59:00.000Z') {
     enabled: true,
     timezone: 'UTC',
     config: {
+      windowKind: 'five_hour',
       targetResetAt: '2026-09-14T13:00:00.000Z',
       toleranceSeconds: 30,
     },

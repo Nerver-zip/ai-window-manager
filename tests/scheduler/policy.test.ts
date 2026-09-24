@@ -24,6 +24,13 @@ describe('activation policies', () => {
     expect(parseActivationPolicy({ ...base, kind })).toMatchObject({ kind });
   });
 
+  it('preserves an optional exact managed window on manual policies', () => {
+    expect(parseActivationPolicy({ ...base, kind: 'manual', windowKind: 'weekly' })).toMatchObject({
+      kind: 'manual',
+      windowKind: 'weekly',
+    });
+  });
+
   it('parses fixed, custom and active-hours policies', () => {
     expect(
       parseActivationPolicy({
@@ -129,7 +136,11 @@ describe('activation policies', () => {
       activationPolicyFromRecord(
         record('target_reset', { targetResetLocalTime: '08:00', toleranceSeconds: 30 }),
       ),
-    ).toMatchObject({ kind: 'fixed', anchorLocalTime: '08:00' });
+    ).toBeUndefined();
+    expect(activationPolicyFromRecord(record('manual', { windowKind: 'weekly' }))).toMatchObject({
+      kind: 'manual',
+      windowKind: 'weekly',
+    });
     expect(
       activationPolicyFromRecord(
         record('fixed', { anchorLocalTime: '09:00', windowKind: 'weekly' }),
@@ -140,15 +151,16 @@ describe('activation policies', () => {
         record('custom_schedule', { times: ['08:00'], windowKind: 'five_hour' }),
       ),
     ).toMatchObject({ kind: 'custom_schedule' });
-    expect(() => activationPolicyFromRecord(record('custom_schedule', {}))).toThrow();
+    expect(activationPolicyFromRecord(record('custom_schedule', {}))).toBeUndefined();
     expect(
       activationPolicyFromRecord(
         record('work_window', { periods: [{ start: '08:00', end: '12:00' }] }),
       ),
-    ).toMatchObject({ kind: 'active_hours' });
+    ).toBeUndefined();
     expect(
       activationPolicyFromRecord(
         record('active_hours', {
+          windowKind: 'five_hour',
           periods: [{ start: '08:00', end: '12:00' }, 'invalid', null],
         }),
       ),

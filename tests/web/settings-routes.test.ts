@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config.js';
+import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { openDatabase } from '../../src/storage/database.js';
@@ -59,6 +60,42 @@ function setup() {
 function headerValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? '';
   return value ?? '';
+}
+
+async function persistObservedWindow(
+  context: ReturnType<typeof setup>,
+  windowKind: 'five_hour' | 'weekly',
+): Promise<void> {
+  const original = await context.fake.inspect({});
+  const sourceWindow = original.windows[0]!;
+  const window = parseProviderObservation({
+    ...original,
+    windows: [
+      {
+        ...sourceWindow,
+        windowKind,
+        ...(windowKind === 'weekly' && sourceWindow.durationSeconds
+          ? {
+              durationSeconds: {
+                ...sourceWindow.durationSeconds,
+                value: 604_800,
+              },
+            }
+          : {}),
+      },
+    ],
+  });
+  const observedAtMs = Date.parse(window.observedAt);
+  context.repositories.providerState.upsert({
+    providerId: window.providerId,
+    health: window.health,
+    observedAtMs,
+    staleAfterMs: window.staleAfterSeconds * 1000,
+    observation: window,
+    lastSuccessAtMs: observedAtMs,
+    lastErrorCode: null,
+    updatedAtMs: observedAtMs,
+  });
 }
 
 describe('settings and schedule pages', () => {
@@ -138,6 +175,7 @@ describe('settings and schedule pages', () => {
 
   it('saves the new paired active-hours controls through the existing policy contract', async () => {
     const context = setup();
+    await persistObservedWindow(context, 'five_hour');
     const page = await context.app.inject({
       method: 'GET',
       url: '/schedule',
@@ -168,6 +206,7 @@ describe('settings and schedule pages', () => {
 
   it('preserves the selected usage window in an automatic-start policy', async () => {
     const context = setup();
+    await persistObservedWindow(context, 'weekly');
     const page = await context.app.inject({
       method: 'GET',
       url: '/schedule',

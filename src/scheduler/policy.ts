@@ -19,7 +19,10 @@ const BaseSchema = z.object({
 });
 
 export const ActivationPolicySchema = z.discriminatedUnion('kind', [
-  BaseSchema.extend({ kind: z.literal('manual') }),
+  BaseSchema.extend({
+    kind: z.literal('manual'),
+    windowKind: z.string().min(1).max(64).optional(),
+  }),
   BaseSchema.extend({
     kind: z.literal('auto'),
     windowKind: z.string().min(1).max(64).optional(),
@@ -101,7 +104,12 @@ export function activationPolicyFromRecord(
   };
 
   if (record.kind === 'manual') {
-    return parseActivationPolicy({ ...base, kind: 'manual' });
+    const windowKind = stringValue(config.windowKind);
+    return parseActivationPolicy({
+      ...base,
+      kind: 'manual',
+      ...(windowKind ? { windowKind } : {}),
+    });
   }
 
   if (record.kind === 'auto') {
@@ -124,30 +132,34 @@ export function activationPolicyFromRecord(
       config.anchorLocalTime ?? config.targetResetLocalTime ?? config.target,
     );
     const toleranceSeconds = numberValue(config.toleranceSeconds) ?? 30;
-    if (!anchorLocalTime) return undefined;
+    const windowKind = stringValue(config.windowKind);
+    if (!anchorLocalTime || !windowKind) return undefined;
     return parseActivationPolicy({
       ...base,
       kind: 'fixed',
-      windowKind: stringValue(config.windowKind) ?? 'five_hour',
+      windowKind,
       anchorLocalTime,
       toleranceSeconds,
     });
   }
 
   if (record.kind === 'custom_schedule') {
+    const windowKind = stringValue(config.windowKind);
     const times = Array.isArray(config.times)
       ? config.times.filter((value): value is string => typeof value === 'string')
       : [];
+    if (!windowKind) return undefined;
     return parseActivationPolicy({
       ...base,
       kind: 'custom_schedule',
-      windowKind: stringValue(config.windowKind) ?? 'five_hour',
+      windowKind,
       times,
       toleranceSeconds: numberValue(config.toleranceSeconds) ?? 30,
     });
   }
 
   if (record.kind === 'active_hours' || record.kind === 'work_window') {
+    const windowKind = stringValue(config.windowKind);
     const periods = Array.isArray(config.periods)
       ? config.periods.flatMap((value) => {
           if (
@@ -160,11 +172,11 @@ export function activationPolicyFromRecord(
           return [{ start: value.start, end: value.end }];
         })
       : [];
-    if (periods.length === 0) return undefined;
+    if (periods.length === 0 || !windowKind) return undefined;
     return parseActivationPolicy({
       ...base,
       kind: 'active_hours',
-      windowKind: stringValue(config.windowKind) ?? 'five_hour',
+      windowKind,
       periods,
     });
   }

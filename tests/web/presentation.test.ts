@@ -68,6 +68,8 @@ describe('human-facing presentation labels', () => {
     ['fake', 'five_hour', undefined, '5-hour window'],
     ['fake', 'weekly', undefined, 'Weekly window'],
     ['fake', 'seven_day', undefined, 'Weekly window'],
+    ['codex', 'codex_primary', 604_800, 'Weekly window'],
+    ['codex', 'codex_secondary', 18_000, '5-hour window'],
     ['custom', 'anything', 18_000, '5-hour window'],
     ['custom', 'anything', 604_800, 'Weekly window'],
     ['custom', 'anything', 86_400, 'Usage window'],
@@ -80,6 +82,7 @@ describe('human-facing presentation labels', () => {
     ['antigravity_gemini_five_hour', 'Gemini Models'],
     ['antigravity_claude_gpt_weekly', 'Claude and GPT Models'],
     ['antigravity_claude_gpt_five_hour', 'Claude and GPT Models'],
+    ['antigravity_future_team_weekly', 'Future Team'],
     ['codex_primary', null],
   ])('groups window %s under %s', (windowKind, expected) => {
     expect(windowGroupDisplayName(windowKind)).toBe(expected);
@@ -116,6 +119,12 @@ describe('human-facing presentation labels', () => {
     expect(isEstimatedSource('inferred')).toBe(true);
     expect(isEstimatedSource('estimated')).toBe(true);
     expect(isEstimatedSource('observed')).toBe(false);
+  });
+
+  it('explains an unset exact window without exposing the reason code', () => {
+    expect(reasonLabel('WINDOW_TARGET_NOT_SELECTED')).toBe(
+      'Choose one reported usage window for this schedule.',
+    );
   });
 
   it.each([

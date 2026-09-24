@@ -239,7 +239,6 @@ describe('readScheduling', () => {
 
     expect(result.providers[0]?.currentWindow).toMatchObject({
       status: 'UNKNOWN',
-      windowKind: 'weekly',
       reason: 'WINDOW_NOT_REPORTED',
     });
     expect(result.providers[0]?.decision).toMatchObject({

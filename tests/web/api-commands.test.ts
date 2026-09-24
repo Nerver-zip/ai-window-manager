@@ -52,6 +52,38 @@ function setup() {
   };
 }
 
+async function persistObservation(
+  context: ReturnType<typeof setup>,
+  windowKinds = ['five_hour'],
+): Promise<void> {
+  const observation = await context.fake.inspect({});
+  const baseWindow = observation.windows[0];
+  if (!baseWindow) throw new Error('fake observation has no window');
+  const observedAtMs = Date.parse(observation.observedAt);
+  context.repositories.providerState.upsert({
+    providerId: 'fake',
+    health: observation.health,
+    observedAtMs,
+    staleAfterMs: observation.staleAfterSeconds * 1_000,
+    observation: {
+      ...observation,
+      windows: windowKinds.map((windowKind) => ({
+        ...baseWindow,
+        windowKind,
+        durationSeconds: {
+          value: windowKind.endsWith('weekly') ? 604_800 : 18_000,
+          source: 'observed',
+          confidence: 'exact',
+          observedAt: observation.observedAt,
+        },
+      })),
+    },
+    lastSuccessAtMs: observedAtMs,
+    lastErrorCode: null,
+    updatedAtMs: observedAtMs,
+  });
+}
+
 describe('command API', () => {
   it('does not accept commands for a provider hidden by environment configuration', () => {
     const context = setup();
@@ -90,8 +122,9 @@ describe('command API', () => {
     });
   });
 
-  it('creates one durable manual intent for repeated idempotent trigger requests', () => {
+  it('creates one durable manual intent for repeated idempotent trigger requests', async () => {
     const context = setup();
+    await persistObservation(context);
 
     const first = context.api.trigger('fake', {
       idempotencyKey: 'button-1',
@@ -122,6 +155,113 @@ describe('command API', () => {
         .list('fake')
         .filter((event) => event.type === 'manual_trigger_requested'),
     ).toHaveLength(2);
+  });
+
+  it('keeps otherwise identical manual requests for different exact windows distinct', async () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('provider missing');
+    context.repositories.providers.upsert({ ...provider, kind: 'antigravity' });
+    await persistObservation(context, [
+      'antigravity_gemini_five_hour',
+      'antigravity_claude_gpt_five_hour',
+    ]);
+    let nextId = 0;
+    const api = createCommandApi({
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.fake]]),
+      clock: context.clock,
+      idFactory: () => `intent-${++nextId}`,
+    });
+
+    const gemini = api.trigger('fake', {
+      idempotencyKey: 'same-click',
+      windowKind: 'antigravity_gemini_five_hour',
+    });
+    const claude = api.trigger('fake', {
+      idempotencyKey: 'same-click',
+      windowKind: 'antigravity_claude_gpt_five_hour',
+    });
+
+    expect(gemini.statusCode).toBe(202);
+    expect(claude.statusCode).toBe(202);
+    expect(context.repositories.actionIntents.listOpen()).toHaveLength(2);
+    expect(context.repositories.actionIntents.listOpen().map((intent) => intent.dedupeKey)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('manual:antigravity_gemini_five_hour:same-click'),
+        expect.stringContaining('manual:antigravity_claude_gpt_five_hour:same-click'),
+      ]),
+    );
+  });
+
+  it('requires an Antigravity target for manual actions', () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('provider missing');
+    context.repositories.providers.upsert({ ...provider, kind: 'antigravity' });
+
+    expect(context.api.trigger('fake', {})).toMatchObject({
+      statusCode: 400,
+      body: { accepted: false, error: { code: 'BAD_REQUEST' } },
+    });
+    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
+  });
+
+  it('rejects manual actions for absent or ambiguous targets without creating an intent', async () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('provider missing');
+    context.repositories.providers.upsert({ ...provider, kind: 'antigravity' });
+    await persistObservation(context, [
+      'antigravity_gemini_five_hour',
+      'antigravity_claude_gpt_five_hour',
+    ]);
+
+    expect(context.api.trigger('fake', { windowKind: 'antigravity_unknown_weekly' })).toMatchObject(
+      {
+        statusCode: 400,
+        body: { accepted: false, error: { code: 'BAD_REQUEST' } },
+      },
+    );
+    expect(context.api.trigger('fake', { windowKind: 'five_hour' })).toMatchObject({
+      statusCode: 400,
+      body: { accepted: false, error: { code: 'BAD_REQUEST' } },
+    });
+    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
+  });
+
+  it('uses only an observed exact current policy target for an older Codex-style request', async () => {
+    const context = setup();
+    const nowMs = context.clock.now().getTime();
+    const observation = await context.fake.inspect({});
+    context.repositories.providerState.upsert({
+      providerId: 'fake',
+      health: 'UP',
+      observedAtMs: nowMs,
+      staleAfterMs: 300_000,
+      observation,
+      lastSuccessAtMs: nowMs,
+      lastErrorCode: null,
+      updatedAtMs: nowMs,
+    });
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-fake',
+      providerId: 'fake',
+      kind: 'auto',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'five_hour' },
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+
+    const result = context.api.trigger('fake', { idempotencyKey: 'legacy-client' });
+
+    expect(result.statusCode).toBe(202);
+    expect(context.repositories.actionIntents.listOpen()[0]).toMatchObject({
+      dedupeKey: 'fake:trigger_window:manual:five_hour:legacy-client',
+      explanation: { windowKind: 'five_hour' },
+    });
   });
 
   it('rejects disabled, monitor-only and unsupported providers safely', () => {

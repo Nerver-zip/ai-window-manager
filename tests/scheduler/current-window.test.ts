@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderObservation, WindowSnapshot } from '../../src/domain/types.js';
-import { deriveCurrentWindow } from '../../src/scheduler/current-window.js';
+import {
+  deriveCurrentWindow,
+  deriveCurrentWindowForTarget,
+} from '../../src/scheduler/current-window.js';
 
 const observedAt = '2026-09-19T12:00:00.000Z';
 
@@ -143,6 +146,16 @@ describe('deriveCurrentWindow', () => {
         reason: 'WINDOW_NOT_REPORTED',
       },
     );
+  });
+
+  it('does not choose an arbitrary reported window when the managed target is unset', () => {
+    expect(
+      deriveCurrentWindowForTarget('fake', observation([window()]), undefined, undefined),
+    ).toMatchObject({
+      status: 'UNKNOWN',
+      confidence: 'unknown',
+      reason: 'WINDOW_TARGET_NOT_SELECTED',
+    });
   });
 
   it('does not turn uncertain or exhausted evidence into a confident state', () => {

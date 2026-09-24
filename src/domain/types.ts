@@ -48,6 +48,7 @@ export type ActivationPolicy =
       kind: 'manual';
       enabled: boolean;
       timezone: string;
+      windowKind?: string | undefined;
       updatedAtMs: number;
     }
   | {
@@ -124,6 +125,7 @@ export interface TriggerCapability {
   supported: boolean;
   contract: CapabilityContract;
   consumesQuota: boolean | 'unknown';
+  supportedWindowKinds?: string[];
   notes?: string;
 }
 
@@ -139,6 +141,7 @@ export interface TriggerWindowRequest {
   intentId: string;
   dedupeKey: string;
   reasonCode: string;
+  windowKind?: string;
 }
 
 export interface ProviderActionResult {

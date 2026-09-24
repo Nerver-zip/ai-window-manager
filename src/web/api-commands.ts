@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { resolveWindowTarget } from '../domain/window-target.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { StorageRepositories } from '../storage/repositories.js';
@@ -108,9 +109,27 @@ function triggerProvider(
     return unsupported(input, providerId, 'ACTION_CAPABILITY_UNAVAILABLE');
   }
 
+  if (provider.kind === 'antigravity' && !command.windowKind) {
+    return badRequest('choose an Antigravity quota window before requesting a start');
+  }
+  const windowKind = command.windowKind ?? exactSavedPolicyWindowKind(input, providerId);
+  if (!windowKind) return badRequest('choose a reported usage window before requesting a start');
+  const observation = input.repositories.providerState.get(providerId)?.observation;
+  const target = resolveWindowTarget(windowKind, observation?.windows ?? []);
+  if (target.status !== 'exact' && target.status !== 'legacy_resolved') {
+    return badRequest('choose one exact usage window from the latest provider observation');
+  }
+  const exactWindowKind = target.windowKind;
+  if (
+    capabilities.windowTrigger.supportedWindowKinds &&
+    !capabilities.windowTrigger.supportedWindowKinds.includes(exactWindowKind)
+  ) {
+    return unsupported(input, providerId, 'ACTION_TARGET_UNSUPPORTED');
+  }
+
   const nowMs = input.clock.now().getTime();
   const manualKey = command.idempotencyKey ?? String(Math.floor(nowMs / (5 * 60 * 1000)));
-  const dedupeKey = `${providerId}:trigger_window:manual:${manualKey}`;
+  const dedupeKey = `${providerId}:trigger_window:manual:${exactWindowKind}:${manualKey}`;
   const intent: ActionIntentRecord = {
     id: (input.idFactory ?? randomUUID)(),
     providerId,
@@ -127,7 +146,7 @@ function triggerProvider(
       decision: 'manual_trigger',
       reasonCode: 'MANUAL_TRIGGER_REQUESTED',
       providerId,
-      ...(command.windowKind ? { windowKind: command.windowKind } : {}),
+      windowKind: exactWindowKind,
     },
     lastErrorCode: null,
     createdAtMs: nowMs,
@@ -136,6 +155,7 @@ function triggerProvider(
     updatedAtMs: nowMs,
   };
   const result = input.repositories.actionIntents.createIfAbsent(intent);
+  input.requestReconcile?.();
   appendEvent(input, {
     occurredAtMs: nowMs,
     providerId,
@@ -146,6 +166,7 @@ function triggerProvider(
       intentId: result.intent.id,
       dedupeKey: result.intent.dedupeKey,
       created: result.created,
+      windowKind: exactWindowKind,
     },
   });
   return {
@@ -161,6 +182,30 @@ function triggerProvider(
       },
     },
   };
+}
+
+function exactSavedPolicyWindowKind(
+  input: CommandApiInput,
+  providerId: string,
+): string | undefined {
+  const policy = input.repositories.schedulePolicies.get(`activation-${providerId}`);
+  if (!policy) return undefined;
+  const config = asRecord(policy.config);
+  const windowKind = config.windowKind;
+  if (typeof windowKind !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(windowKind)) {
+    return undefined;
+  }
+  const observation = input.repositories.providerState.get(providerId)?.observation;
+  const target = resolveWindowTarget(windowKind, observation?.windows ?? []);
+  return target.status === 'exact' || target.status === 'legacy_resolved'
+    ? target.windowKind
+    : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function unsupported(

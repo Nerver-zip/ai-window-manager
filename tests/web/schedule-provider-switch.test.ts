@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Script } from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.js';
+import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { openDatabase, type SqliteDatabase } from '../../src/storage/database.js';
 import {
@@ -38,13 +39,23 @@ function createScheduleApp(requestReconcile: () => void = () => {}) {
   const clock = new FakeClock(now);
   seedProvider(repositories, 'codex', 'codex');
   seedProvider(repositories, 'antigravity', 'antigravity');
+  seedObservedWindows(repositories, 'codex', [
+    ['codex_primary', 18_000],
+    ['codex_secondary', 604_800],
+  ]);
+  seedObservedWindows(repositories, 'antigravity', [
+    ['antigravity_gemini_five_hour', 18_000],
+    ['antigravity_gemini_weekly', 604_800],
+    ['antigravity_claude_gpt_five_hour', 18_000],
+    ['antigravity_claude_gpt_weekly', 604_800],
+  ]);
   seedPolicy(repositories, 'codex', 'fixed', {
     windowKind: 'five_hour',
     anchorLocalTime: '17:00',
     toleranceSeconds: 900,
   });
   seedPolicy(repositories, 'antigravity', 'custom_schedule', {
-    windowKind: 'weekly',
+    windowKind: 'antigravity_gemini_weekly',
     times: ['09:30'],
     toleranceSeconds: 600,
   });
@@ -76,6 +87,44 @@ function seedProvider(repositories: StorageRepositories, id: string, kind: strin
     createdAtMs: Date.parse(now),
     updatedAtMs: Date.parse(now),
   } satisfies ProviderRecord);
+}
+
+function seedObservedWindows(
+  repositories: StorageRepositories,
+  providerId: string,
+  windows: readonly (readonly [windowKind: string, durationSeconds: number])[],
+): void {
+  const observation = parseProviderObservation({
+    providerId,
+    health: 'UP',
+    observedAt: now,
+    staleAfterSeconds: 300,
+    windows: windows.map(([windowKind, durationSeconds]) => ({
+      providerId,
+      windowKind,
+      observedAt: now,
+      phase: { value: 'INACTIVE', source: 'observed', confidence: 'exact', observedAt: now },
+      durationSeconds: {
+        value: durationSeconds,
+        source: 'inferred',
+        confidence: 'exact',
+        observedAt: now,
+      },
+      usageRatio: { value: 0, source: 'observed', confidence: 'exact', observedAt: now },
+      remainingRatio: { value: 1, source: 'observed', confidence: 'exact', observedAt: now },
+    })),
+  });
+  const observedAtMs = Date.parse(now);
+  repositories.providerState.upsert({
+    providerId,
+    health: 'UP',
+    observedAtMs,
+    staleAfterMs: observation.staleAfterSeconds * 1000,
+    observation,
+    lastSuccessAtMs: observedAtMs,
+    lastErrorCode: null,
+    updatedAtMs: observedAtMs,
+  });
 }
 
 function seedPolicy(
@@ -181,7 +230,7 @@ describe('schedule provider switching', () => {
         policyKind: 'fixed',
         enabled: 'true',
         timezone: 'America/Sao_Paulo',
-        windowKind: 'weekly',
+        windowKind: 'antigravity_claude_gpt_weekly',
         anchorLocalTime: '10:30',
         toleranceSeconds: '900',
       }).toString(),
@@ -192,9 +241,11 @@ describe('schedule provider switching', () => {
     expect(schedulePolicy(repositories, 'codex')).toEqual(codexBefore);
     expect(schedulePolicy(repositories, 'antigravity')?.kind).toBe('fixed');
     expect(schedulePolicy(repositories, 'antigravity')?.config).toMatchObject({
-      windowKind: 'weekly',
+      windowKind: 'antigravity_claude_gpt_weekly',
       anchorLocalTime: '10:30',
     });
+    expect(repositories.schedulePolicies.list('antigravity')).toHaveLength(1);
+    expect(schedulePolicy(repositories, 'antigravity')?.id).toBe('activation-antigravity');
     expect(reconcileRequests).toBe(1);
   });
 
@@ -227,6 +278,30 @@ describe('schedule provider switching', () => {
     new Script(APP_JS).runInNewContext({ document, window: {} });
     providerChange?.();
     windowChange?.();
+
+    expect(submitted).toBe(1);
+  });
+
+  it('automatically applies usage-window changes on the Usage page', () => {
+    let changed:
+      ((event: { target: { matches: (selector: string) => boolean } }) => void) | undefined;
+    let submitted = 0;
+    const form = {
+      addEventListener: (event: string, listener: typeof changed) => {
+        if (event === 'change') changed = listener;
+      },
+      requestSubmit: () => {
+        submitted += 1;
+      },
+    };
+    const document = {
+      querySelectorAll: (selector: string) =>
+        selector === '[data-usage-filter-auto-submit]' ? [form] : [],
+    };
+
+    new Script(APP_JS).runInNewContext({ document, window: {} });
+    changed?.({ target: { matches: (selector) => selector === 'select[name="window"]' } });
+    changed?.({ target: { matches: () => false } });
 
     expect(submitted).toBe(1);
   });

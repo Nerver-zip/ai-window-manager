@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { parseProviderObservation } from '../domain/schemas.js';
+import { resolveWindowTarget } from '../domain/window-target.js';
 import type { ProviderObservation } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import { decideTargetReset, type SchedulerDecision } from './decision.js';
-import { deriveCurrentWindow } from './current-window.js';
+import { deriveCurrentWindow, deriveCurrentWindowForTarget } from './current-window.js';
 import { planWindowAction, type PlannerDecision } from './planner.js';
 import { activationPolicyFromRecord } from './policy.js';
 import type { Clock } from './clock.js';
@@ -164,20 +165,36 @@ export class Reconciler {
           continue;
         }
         const config = asRecord(policy.config);
-        const selectedWindowKind =
+        const requestedWindowKind =
           typeof config.windowKind === 'string'
             ? config.windowKind
             : activationPolicyWindowKind(activationPolicy);
-        const window = selectWindow(state.observation, selectedWindowKind);
+        const targetResolution = resolveWindowTarget(
+          requestedWindowKind,
+          state.observation.windows,
+        );
+        const selectedWindowKind =
+          targetResolution.status === 'exact' || targetResolution.status === 'legacy_resolved'
+            ? targetResolution.windowKind
+            : undefined;
+        const currentWindowKind =
+          selectedWindowKind ??
+          (targetResolution.status === 'missing' ? requestedWindowKind : undefined);
+        const resolvedPolicy = withResolvedWindowKind(activationPolicy, selectedWindowKind);
+        const window = selectedWindowKind
+          ? state.observation.windows.find(
+              (candidate) => candidate.windowKind === selectedWindowKind,
+            )
+          : undefined;
         const decision = planWindowAction({
           now,
           providerId: provider.id,
-          policy: activationPolicy,
-          currentWindow: deriveCurrentWindow(
+          policy: resolvedPolicy,
+          currentWindow: deriveCurrentWindowForTarget(
             provider.id,
             state.observation,
             state.health,
-            selectedWindowKind,
+            currentWindowKind,
           ),
           ...(window ? { window } : {}),
           observation: {
@@ -269,7 +286,16 @@ export class Reconciler {
     );
     if (!targetResetAt || !state.observation) return undefined;
     const config = asRecord(policy.config);
-    const window = selectWindow(state.observation, config.windowKind);
+    const requestedWindowKind =
+      typeof config.windowKind === 'string' ? config.windowKind : undefined;
+    const target = resolveWindowTarget(requestedWindowKind, state.observation.windows);
+    const selectedWindowKind =
+      target.status === 'exact' || target.status === 'legacy_resolved'
+        ? target.windowKind
+        : undefined;
+    const window = selectedWindowKind
+      ? state.observation.windows.find((candidate) => candidate.windowKind === selectedWindowKind)
+      : undefined;
     const toleranceSeconds = positiveInteger(config.toleranceSeconds) ?? 30;
     const decision = decideTargetReset({
       now,
@@ -548,19 +574,16 @@ function safeActivationPolicy(policy: SchedulePolicyRecord) {
 function activationPolicyWindowKind(
   policy: ReturnType<typeof activationPolicyFromRecord>,
 ): string | undefined {
-  if (!policy || policy.kind === 'manual') return undefined;
-  if (policy.kind === 'auto') return policy.windowKind;
+  if (!policy || !('windowKind' in policy)) return undefined;
   return policy.windowKind;
 }
 
-function selectWindow(
-  observation: ProviderObservation,
-  windowKind: unknown,
-): ProviderObservation['windows'][number] | undefined {
-  if (typeof windowKind === 'string') {
-    return observation.windows.find((window) => window.windowKind === windowKind);
-  }
-  return observation.windows[0];
+function withResolvedWindowKind(
+  policy: NonNullable<ReturnType<typeof activationPolicyFromRecord>>,
+  windowKind: string | undefined,
+): NonNullable<ReturnType<typeof activationPolicyFromRecord>> {
+  if (!windowKind || !('windowKind' in policy)) return policy;
+  return { ...policy, windowKind };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

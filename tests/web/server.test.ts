@@ -163,6 +163,29 @@ function seedObservedProvider(
   });
 }
 
+function setObservedWindows(
+  repositories: StorageRepositories,
+  providerId: string,
+  targets: readonly { windowKind: string; durationSeconds: number }[],
+): void {
+  const state = repositories.providerState.get(providerId);
+  const base = state?.observation?.windows[0];
+  if (!state?.observation || !base?.durationSeconds) {
+    throw new Error(`test observation is missing for ${providerId}`);
+  }
+  repositories.providerState.upsert({
+    ...state,
+    observation: {
+      ...state.observation,
+      windows: targets.map(({ windowKind, durationSeconds }) => ({
+        ...base,
+        windowKind,
+        durationSeconds: { ...base.durationSeconds!, value: durationSeconds },
+      })),
+    },
+  });
+}
+
 function seedActivationPolicy(
   repositories: StorageRepositories,
   kind: SchedulePolicyRecord['kind'],
@@ -331,9 +354,9 @@ describe('web server persisted overview', () => {
     {
       name: 'manual',
       kind: 'manual' as const,
-      config: {},
+      config: { windowKind: 'five_hour' },
       title: 'Only when I ask',
-      detail: 'New windows start only when you ask.',
+      detail: 'New windows start only when you ask · 5-hour window.',
     },
     {
       name: 'automatic',
@@ -371,6 +394,11 @@ describe('web server persisted overview', () => {
   ])('shows the saved $name policy in plain language', async ({ kind, config, title, detail }) => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories);
+      if (kind === 'custom_schedule') {
+        setObservedWindows(repositories, 'fake', [
+          { windowKind: 'weekly', durationSeconds: 604_800 },
+        ]);
+      }
       seedActivationPolicy(repositories, kind, config);
     });
 
@@ -381,6 +409,19 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('href="/schedule?providerId=fake">Change</a>');
     expect(page.body).not.toContain('activation-fake');
     expect(page.body).not.toContain('five_hour');
+  });
+
+  it('flags a legacy manual policy for review when provider windows are already available', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      seedActivationPolicy(repositories, 'manual');
+    });
+
+    const page = await app.inject('/');
+
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('Saved policy needs attention');
+    expect(page.body).toContain('href="/schedule?providerId=fake">Review schedule</a>');
   });
 
   it('shows when the selected policy is paused or cannot currently run', async () => {
@@ -455,12 +496,16 @@ describe('web server persisted overview', () => {
   it('opens Schedule for the provider whose overview card was used', async () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories);
-      seedActivationPolicy(repositories, 'manual');
+      seedActivationPolicy(repositories, 'manual', { windowKind: 'five_hour' });
       seedObservedProvider(repositories, 'codex', NOW, 'codex');
+      setObservedWindows(repositories, 'codex', [
+        { windowKind: 'codex_primary', durationSeconds: 18_000 },
+        { windowKind: 'codex_secondary', durationSeconds: 604_800 },
+      ]);
       seedActivationPolicy(
         repositories,
         'fixed',
-        { windowKind: 'weekly', anchorLocalTime: '17:00', toleranceSeconds: 900 },
+        { windowKind: 'codex_secondary', anchorLocalTime: '17:00', toleranceSeconds: 900 },
         true,
         'codex',
       );
@@ -474,6 +519,44 @@ describe('web server persisted overview', () => {
     expect(schedule.body).toContain('value="17:00"');
   });
 
+  it('does not project an arbitrary first window in schedule preview without a selected target', async () => {
+    const { app, repositories } = createApp((store) => {
+      seedObservedProvider(store);
+      const state = store.providerState.get('fake');
+      if (!state?.observation) throw new Error('test observation is missing');
+      const observed = state.observation;
+      const first = observed.windows[0];
+      if (!first) throw new Error('test window is missing');
+      store.providerState.upsert({
+        ...state,
+        observation: {
+          ...observed,
+          windows: [
+            {
+              ...first,
+              windowKind: 'first_active_window',
+              phase: { ...first.phase, value: 'ACTIVE' },
+            },
+            {
+              ...first,
+              windowKind: 'second_inactive_window',
+              phase: { ...first.phase, value: 'INACTIVE' },
+            },
+          ],
+        },
+      });
+      seedActivationPolicy(store, 'manual');
+    });
+
+    const preview = await app.inject(
+      '/schedule/preview?policyKind=manual&providerId=fake&enabled=true&timezone=America%2FSao_Paulo',
+    );
+    expect(preview.statusCode).toBe(200);
+    expect(preview.body).not.toContain('class="horizon-current"');
+    expect(preview.body).not.toContain('Expected current-window reset');
+    expect(repositories.schedulePolicies.get('activation-fake')?.config).toEqual({});
+  });
+
   it('does not imply automatic starts are active when the saved schedule is manual', async () => {
     const automationAdapter: ProviderAdapter = {
       ...inspectionSpy('fake'),
@@ -485,7 +568,7 @@ describe('web server persisted overview', () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories);
       repositories.providers.upsert(providerRecord({ mode: 'automation' }));
-      seedActivationPolicy(repositories, 'manual');
+      seedActivationPolicy(repositories, 'manual', { windowKind: 'five_hour' });
       repositories.events.append({
         providerId: 'fake',
         occurredAtMs: Date.parse(NOW),
@@ -528,16 +611,19 @@ describe('web server persisted overview', () => {
   it('separates Antigravity usage windows by model family', async () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories, 'antigravity', NOW, 'antigravity');
-      const state = repositories.providerState.get('antigravity');
-      const baseWindow = state?.observation?.windows[0];
-      if (!state?.observation || !baseWindow) throw new Error('missing Antigravity observation');
-      state.observation.windows = [
-        'antigravity_gemini_weekly',
-        'antigravity_gemini_five_hour',
-        'antigravity_claude_gpt_weekly',
-        'antigravity_claude_gpt_five_hour',
-      ].map((windowKind) => ({ ...baseWindow, windowKind }));
-      repositories.providerState.upsert(state);
+      setObservedWindows(repositories, 'antigravity', [
+        { windowKind: 'antigravity_gemini_weekly', durationSeconds: 604_800 },
+        { windowKind: 'antigravity_gemini_five_hour', durationSeconds: 18_000 },
+        { windowKind: 'antigravity_claude_gpt_weekly', durationSeconds: 604_800 },
+        { windowKind: 'antigravity_claude_gpt_five_hour', durationSeconds: 18_000 },
+      ]);
+      seedActivationPolicy(
+        repositories,
+        'manual',
+        { windowKind: 'antigravity_claude_gpt_weekly' },
+        true,
+        'antigravity',
+      );
     });
 
     const page = await app.inject('/');
@@ -550,6 +636,56 @@ describe('web server persisted overview', () => {
     expect(page.body).not.toContain('>Usage window<');
     expect(page.body).not.toContain('antigravity_gemini');
     expect(page.body).not.toContain('antigravity_claude_gpt');
+    expect(page.body).toContain('Claude and GPT Models · Weekly window');
+
+    const schedule = await app.inject('/schedule?providerId=antigravity');
+    expect(schedule.body).toContain('Currently managing');
+    expect(schedule.body).toContain('Claude and GPT Models · Weekly window');
+    expect(schedule.body).toContain('Expected reset');
+  });
+
+  it('shows the configured Antigravity model and exact target on manual start controls', async () => {
+    const supportedTargets = [
+      'antigravity_gemini_five_hour',
+      'antigravity_gemini_weekly',
+      'antigravity_claude_gpt_five_hour',
+      'antigravity_claude_gpt_weekly',
+    ];
+    const adapter: ProviderAdapter = {
+      ...inspectionSpy('antigravity'),
+      capabilities: () => ({
+        ...capabilities,
+        windowTrigger: {
+          supported: true,
+          supportedWindowKinds: supportedTargets,
+          contract: 'observed_undocumented',
+          consumesQuota: true,
+        },
+      }),
+      triggerWindow: () => Promise.reject(new Error('HTTP handler must not execute triggers')),
+    };
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories, 'antigravity', NOW, 'antigravity');
+      repositories.providers.upsert(
+        providerRecord({ id: 'antigravity', kind: 'antigravity', mode: 'automation' }),
+      );
+      setObservedWindows(repositories, 'antigravity', [
+        { windowKind: supportedTargets[0]!, durationSeconds: 18_000 },
+        { windowKind: supportedTargets[1]!, durationSeconds: 604_800 },
+        { windowKind: supportedTargets[2]!, durationSeconds: 18_000 },
+        { windowKind: supportedTargets[3]!, durationSeconds: 604_800 },
+      ]);
+    }, adapter);
+
+    const page = await app.inject('/');
+
+    expect(page.body).toContain('Start model: <strong>Gemini 3.8 Flash Low</strong>');
+    expect(page.body).toContain('Start model: <strong>Claude Sonnet 4.6</strong>');
+    expect(page.body).toContain('aria-label="Start Gemini Models, 5-hour window now"');
+    expect(page.body).toContain('aria-describedby="provider-action-note-antigravity"');
+    expect(page.body.match(/action="\/providers\/antigravity\/trigger"/g)).toHaveLength(4);
+    expect(page.body).toContain('name="windowKind" value="antigravity_gemini_five_hour"');
+    expect(page.body).toContain('name="windowKind" value="antigravity_claude_gpt_weekly"');
   });
 
   it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
@@ -1109,6 +1245,10 @@ describe('web server persisted overview', () => {
     );
 
     const page = await app.inject({ method: 'GET', url: '/', headers: { host: 'localhost:8787' } });
+    expect(page.body).toContain('action="/providers/fake/trigger"');
+    expect(page.body).toContain('name="windowKind" value="five_hour"');
+    expect(page.body).toContain('Start this window now');
+    expect(page.body).toContain('uses normal provider quota');
     const setCookie = page.headers['set-cookie'];
     const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0];
     const token = cookie?.split('=')[1];
@@ -1128,6 +1268,19 @@ describe('web server persisted overview', () => {
       headers: { host: 'localhost:8787', origin: 'http://localhost:8787', cookie },
     });
     expect(missingCsrf.statusCode).toBe(403);
+
+    const missingFormCsrf = await app.inject({
+      method: 'POST',
+      url: '/providers/fake/trigger',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: 'windowKind=five_hour',
+    });
+    expect(missingFormCsrf.statusCode).toBe(403);
 
     const inspect = await app.inject({
       method: 'POST',
@@ -1153,9 +1306,29 @@ describe('web server persisted overview', () => {
         'x-csrf-token': token,
         'content-type': 'application/json',
       },
-      payload: { idempotencyKey: 'server-test' },
+      payload: { idempotencyKey: 'server-test', windowKind: 'five_hour' },
     });
     expect(trigger.statusCode).toBe(202);
+
+    const manualStart = await app.inject({
+      method: 'POST',
+      url: '/providers/fake/trigger',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: new URLSearchParams({ csrfToken: token ?? '', windowKind: 'five_hour' }).toString(),
+    });
+    expect(manualStart.statusCode).toBe(303);
+    expect(manualStart.headers.location).toBe('/?provider=fake&updated=start-requested');
+    const confirmation = await app.inject(manualStart.headers.location!);
+    expect(confirmation.body).toContain(
+      'Start request queued. A fresh provider check will run before any message is sent.',
+    );
     expect(triggered.count).toBe(0);
+    expect(inspected.count).toBe(0);
+    expect(reconcileRequested).toBe(3);
   });
 });

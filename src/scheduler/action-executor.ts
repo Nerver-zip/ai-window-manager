@@ -1,4 +1,5 @@
 import { parseProviderObservation } from '../domain/schemas.js';
+import { resolveWindowTarget } from '../domain/window-target.js';
 import type {
   ProviderActionResult,
   ProviderActionStatus,
@@ -27,6 +28,7 @@ export const ActionReasonCode = {
   RecoveryRequired: 'ACTION_RECOVERY_REQUIRED',
   AlreadySatisfied: 'ACTION_ALREADY_SATISFIED',
   PolicyChanged: 'ACTION_POLICY_CHANGED',
+  TargetWindowMissing: 'ACTION_TARGET_WINDOW_MISSING',
 } as const;
 
 export type ActionReasonCode = (typeof ActionReasonCode)[keyof typeof ActionReasonCode];
@@ -145,6 +147,11 @@ export class ActionExecutor {
       return;
     }
     if (intent.notBeforeMs !== null && nowMs < intent.notBeforeMs) return;
+    const targetWindowKind = windowKindFor(intent);
+    if (!targetWindowKind) {
+      this.markSkipped(intent, nowMs, ActionReasonCode.TargetWindowMissing, report);
+      return;
+    }
 
     const provider = this.input.repositories.providers.get(intent.providerId);
     const adapter = this.input.adapters.get(intent.providerId);
@@ -156,7 +163,10 @@ export class ActionExecutor {
       this.markSkipped(intent, nowMs, ActionReasonCode.ProviderUnavailable, report);
       return;
     }
-    if (!triggerCapabilityAvailable(adapter) || typeof adapter.triggerWindow !== 'function') {
+    if (
+      !triggerCapabilityAvailable(adapter, targetWindowKind) ||
+      typeof adapter.triggerWindow !== 'function'
+    ) {
       this.markSkipped(intent, nowMs, ActionReasonCode.CapabilityUnavailable, report);
       return;
     }
@@ -164,6 +174,10 @@ export class ActionExecutor {
     const preflight = await this.inspect(adapter);
     if (!preflight.observation) {
       this.markRetryable(intent, nowMs, preflight.failureCode ?? 'INSPECTION_FAILED', report);
+      return;
+    }
+    if (!policyStillCurrent(this.input.repositories, intent, preflight.observation)) {
+      this.markSkipped(intent, nowMs, ActionReasonCode.PolicyChanged, report);
       return;
     }
     if (!isEligibleForTrigger(preflight.observation, intent)) {
@@ -184,7 +198,6 @@ export class ActionExecutor {
     this.appendEventOnce(
       this.actionEvent(claimed, 'action_dispatch_started', 'ACTION_DISPATCH_STARTED'),
     );
-
     let result: ProviderActionResult;
     try {
       result = await adapter.triggerWindow(
@@ -193,6 +206,7 @@ export class ActionExecutor {
           intentId: claimed.id,
           dedupeKey: claimed.dedupeKey,
           reasonCode: claimed.reasonCode,
+          ...(targetWindowKind ? { windowKind: targetWindowKind } : {}),
         },
       );
     } catch (error) {
@@ -500,28 +514,47 @@ function isEligibleForTrigger(
 function policyStillCurrent(
   repositories: StorageRepositories,
   intent: ActionIntentRecord,
+  freshObservation?: ProviderObservation,
 ): boolean {
   if (!intent.policyId) return true;
   const policy = repositories.schedulePolicies.get(intent.policyId);
   if (!policy || !policy.enabled) return false;
   const expected = asRecord(intent.explanation).policyUpdatedAtMs;
-  return typeof expected !== 'number' || expected === policy.updatedAtMs;
+  if (typeof expected === 'number' && expected !== policy.updatedAtMs) return false;
+  const expectedWindowKind = windowKindFor(intent);
+  if (expectedWindowKind) {
+    const configuredWindowKind = asRecord(policy.config).windowKind;
+    if (configuredWindowKind === expectedWindowKind) return true;
+    if (typeof configuredWindowKind !== 'string') return false;
+    const observation =
+      freshObservation ?? repositories.providerState.get(intent.providerId)?.observation;
+    const resolution = resolveWindowTarget(configuredWindowKind, observation?.windows ?? []);
+    return (
+      (resolution.status === 'exact' || resolution.status === 'legacy_resolved') &&
+      resolution.windowKind === expectedWindowKind
+    );
+  }
+  return true;
 }
 
 function isSatisfied(observation: ProviderObservation, intent: ActionIntentRecord): boolean {
-  return windowFor(observation, intent)?.phase.value === 'ACTIVE';
+  const phase = windowFor(observation, intent)?.phase;
+  return phase?.value === 'ACTIVE' && (phase.confidence === 'exact' || phase.confidence === 'high');
 }
 
 function windowFor(
   observation: ProviderObservation,
   intent: ActionIntentRecord,
 ): ProviderObservation['windows'][number] | undefined {
-  const explanation = asRecord(intent.explanation);
-  const windowKind =
-    typeof explanation.windowKind === 'string' ? explanation.windowKind : undefined;
+  const windowKind = windowKindFor(intent);
   return windowKind
     ? observation.windows.find((candidate) => candidate.windowKind === windowKind)
-    : observation.windows[0];
+    : undefined;
+}
+
+function windowKindFor(intent: ActionIntentRecord): string | undefined {
+  const windowKind = asRecord(intent.explanation).windowKind;
+  return typeof windowKind === 'string' && windowKind.length > 0 ? windowKind : undefined;
 }
 
 function safeErrorCode(error: unknown): string | undefined {
@@ -534,9 +567,13 @@ function isDefinitelyPreDispatch(errorCode: string | undefined): boolean {
   return errorCode !== undefined && definitelyPreDispatchErrors.has(errorCode);
 }
 
-function triggerCapabilityAvailable(adapter: ProviderAdapter): boolean {
+function triggerCapabilityAvailable(adapter: ProviderAdapter, windowKind: string): boolean {
   try {
-    return adapter.capabilities().windowTrigger.supported;
+    const capability = adapter.capabilities().windowTrigger;
+    return (
+      capability.supported &&
+      (!capability.supportedWindowKinds || capability.supportedWindowKinds.includes(windowKind))
+    );
   } catch {
     return false;
   }

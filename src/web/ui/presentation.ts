@@ -1,14 +1,10 @@
+import { classifyWindowCadence } from '../../domain/window-target.js';
+
 const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   codex: 'Codex',
   fake: 'Test provider',
   antigravity: 'Antigravity',
   agy: 'Antigravity',
-};
-
-const WINDOW_LABELS: Readonly<Record<string, string>> = {
-  five_hour: '5-hour window',
-  weekly: 'Weekly window',
-  seven_day: 'Weekly window',
 };
 
 const EVIDENCE_LABELS: Readonly<Record<string, string>> = {
@@ -137,6 +133,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   OBSERVATION_STALE: 'The saved data is too old to safely plan an action.',
   OBSERVATION_MISSING: 'Waiting for the first valid provider update.',
   WINDOW_NOT_REPORTED: 'The selected usage window was not reported by the provider.',
+  WINDOW_TARGET_NOT_SELECTED: 'Choose one reported usage window for this schedule.',
   TRIGGER_CAPABILITY_UNAVAILABLE: 'Automatic action is unavailable for this provider.',
   AUTOMATION_DISABLED: 'Monitoring is enabled, but automatic actions are turned off.',
   POLICY_DISABLED: 'This activation policy is turned off.',
@@ -204,30 +201,29 @@ export function timeZoneDisplayName(timeZone: string): string {
 }
 
 export function windowDisplayName(
-  providerId: string,
+  _providerId: string,
   windowKind: string,
   durationSeconds?: number,
 ): string {
-  const providerWindow =
-    providerId === 'codex' && windowKind.endsWith('_primary')
-      ? 'five_hour'
-      : providerId === 'codex' && windowKind.endsWith('_secondary')
-        ? 'weekly'
-        : windowKind.startsWith('antigravity_') && windowKind.endsWith('_five_hour')
-          ? 'five_hour'
-          : windowKind.startsWith('antigravity_') && windowKind.endsWith('_weekly')
-            ? 'weekly'
-            : windowKind;
-  if (WINDOW_LABELS[providerWindow]) return WINDOW_LABELS[providerWindow];
-  if (durationSeconds === 18_000) return '5-hour window';
-  if (durationSeconds === 604_800) return 'Weekly window';
+  const cadence = classifyWindowCadence({ windowKind, durationSeconds });
+  if (cadence === 'five_hour') return '5-hour window';
+  if (cadence === 'weekly') return 'Weekly window';
   return 'Usage window';
 }
 
 export function windowGroupDisplayName(windowKind: string): string | null {
-  if (windowKind.startsWith('antigravity_gemini_')) return 'Gemini Models';
-  if (windowKind.startsWith('antigravity_claude_gpt_')) return 'Claude and GPT Models';
-  return null;
+  const prefix = 'antigravity_';
+  if (!windowKind.startsWith(prefix)) return null;
+
+  const groupKey = windowKind
+    .slice(prefix.length)
+    .replace(/_(?:five_hour|weekly|seven_day|primary|secondary)$/, '');
+  const normalized = groupKey.toLowerCase();
+  if (normalized === 'gemini') return 'Gemini Models';
+  if (normalized === 'claude_gpt' || normalized === 'claude_and_gpt') {
+    return 'Claude and GPT Models';
+  }
+  return humanizeIdentifier(groupKey, 'Other');
 }
 
 export function evidenceLabel(source: string): string {

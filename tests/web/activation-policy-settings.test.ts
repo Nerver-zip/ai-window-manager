@@ -164,8 +164,8 @@ describe('activation policy settings persistence', () => {
     },
     {
       name: 'auto',
-      body: { kind: 'auto' as const, enabled: true },
-      config: {},
+      body: { kind: 'auto' as const, enabled: true, windowKind: 'five_hour' },
+      config: { windowKind: 'five_hour' },
     },
     {
       name: 'fixed',
@@ -174,9 +174,9 @@ describe('activation policy settings persistence', () => {
         enabled: true,
         windowKind: 'five_hour',
         anchorLocalTime: '08:00',
-        toleranceSeconds: 30,
+        toleranceSeconds: 5,
       },
-      config: { windowKind: 'five_hour', anchorLocalTime: '08:00', toleranceSeconds: 30 },
+      config: { windowKind: 'five_hour', anchorLocalTime: '08:00', toleranceSeconds: 5 },
     },
     {
       name: 'custom schedule',
@@ -185,9 +185,9 @@ describe('activation policy settings persistence', () => {
         enabled: true,
         windowKind: 'five_hour',
         times: ['08:00', '16:00'],
-        toleranceSeconds: 30,
+        toleranceSeconds: 5,
       },
-      config: { windowKind: 'five_hour', times: ['08:00', '16:00'], toleranceSeconds: 30 },
+      config: { windowKind: 'five_hour', times: ['08:00', '16:00'], toleranceSeconds: 5 },
     },
     {
       name: 'active hours',
@@ -208,8 +208,9 @@ describe('activation policy settings persistence', () => {
         ],
       },
     },
-  ])('persists the $name activation policy shape', ({ body, config }) => {
+  ])('persists the $name activation policy shape', async ({ body, config }) => {
     const context = setup();
+    if (body.kind !== 'manual') await persistObservation(context);
     const result = updateActivationPolicy(settingsInput(context), {
       ...body,
       providerId: 'fake',
@@ -262,6 +263,43 @@ describe('activation policy settings persistence', () => {
     ).toHaveLength(1);
   });
 
+  it('requires an exact window target for a manual policy after provider windows are observed', async () => {
+    const context = setup();
+    await persistObservation(context);
+
+    const result = updateActivationPolicy(settingsInput(context), {
+      kind: 'manual',
+      enabled: true,
+      providerId: 'fake',
+      timezone: 'America/Sao_Paulo',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      statusCode: 400,
+      code: 'WINDOW_TARGET_REQUIRED',
+    });
+    expect(context.repositories.schedulePolicies.get('activation-fake')).toBeUndefined();
+  });
+
+  it('rejects automatic policies until the selected usage window has been observed', () => {
+    const context = setup();
+    expect(
+      updateActivationPolicy(settingsInput(context), {
+        kind: 'auto',
+        enabled: true,
+        providerId: 'fake',
+        timezone: 'UTC',
+        windowKind: 'five_hour',
+      }),
+    ).toMatchObject({
+      ok: false,
+      statusCode: 400,
+      code: 'WINDOW_TARGET_NOT_REPORTED',
+    });
+    expect(context.repositories.schedulePolicies.get('activation-fake')).toBeUndefined();
+  });
+
   it('rejects invalid timezone, unsupported tolerance, overlapping periods, and unknown provider', async () => {
     const context = setup();
     const input = settingsInput(context);
@@ -304,6 +342,10 @@ describe('activation policy settings persistence', () => {
       statusCode: 400,
       code: 'INVALID_TOLERANCE',
     });
+    expect(readTimezoneSetting(input)).toBeUndefined();
+    expect(
+      context.repositories.events.list('fake').some((event) => event.type === 'timezone_updated'),
+    ).toBe(false);
 
     expect(
       updateActivationPolicy(input, {
@@ -331,9 +373,10 @@ describe('activation policy settings persistence', () => {
     ).toHaveLength(0);
   });
 
-  it('reloads timezone, policy, and append-only events from SQLite', () => {
+  it('reloads timezone, policy, and append-only events from SQLite', async () => {
     const context = setup();
     const input = settingsInput(context);
+    await persistObservation(context);
     expect(
       updateTimezoneSetting(input, { timezone: 'America/Sao_Paulo', source: 'manual' }),
     ).toMatchObject({ ok: true });
@@ -344,7 +387,7 @@ describe('activation policy settings persistence', () => {
         providerId: 'fake',
         windowKind: 'five_hour',
         times: ['08:00', '20:00'],
-        toleranceSeconds: 45,
+        toleranceSeconds: 5,
       }),
     ).toMatchObject({ ok: true });
 
@@ -357,7 +400,7 @@ describe('activation policy settings persistence', () => {
     });
     expect(context.repositories.schedulePolicies.get('activation-fake')).toMatchObject({
       kind: 'custom_schedule',
-      config: { windowKind: 'five_hour', times: ['08:00', '20:00'], toleranceSeconds: 45 },
+      config: { windowKind: 'five_hour', times: ['08:00', '20:00'], toleranceSeconds: 5 },
     });
     expect(context.repositories.events.list('fake')).toHaveLength(eventCountBeforeReload);
     expect(context.repositories.events.list().map((event) => event.type)).toEqual(

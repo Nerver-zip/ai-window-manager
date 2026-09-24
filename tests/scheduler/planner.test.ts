@@ -122,6 +122,17 @@ describe('planWindowAction', () => {
       PlannerReasonCode.MonitoringUnavailable,
     ],
     [
+      'no exact managed target',
+      input({
+        currentWindow: {
+          ...inactive,
+          status: 'UNKNOWN',
+          reason: 'WINDOW_TARGET_NOT_SELECTED',
+        },
+      }),
+      PlannerReasonCode.WindowTargetNotSelected,
+    ],
+    [
       'unavailable monitoring',
       input({ currentWindow: { ...inactive, status: 'UNAVAILABLE' } }),
       PlannerReasonCode.MonitoringUnavailable,

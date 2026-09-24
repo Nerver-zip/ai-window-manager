@@ -40,6 +40,23 @@ function windowWithDuration(
   };
 }
 
+function observedWindowTarget(
+  providerId: string,
+  windowKind: string,
+  durationSeconds: number,
+): WindowSnapshot {
+  const base = windowWithDuration('exact');
+  return {
+    ...base,
+    providerId,
+    windowKind,
+    durationSeconds: {
+      ...base.durationSeconds!,
+      value: durationSeconds,
+    },
+  };
+}
+
 function authProvider(
   providerId: AuthOnboardingStatus['providerId'],
   state: AuthOnboardingStatus['state'],
@@ -201,6 +218,323 @@ describe('settings UI helpers', () => {
     expect(html).toContain('role="img" aria-label="24-hour schedule view.');
     expect(html).toContain('name="toleranceSeconds" value="900"');
     expect(html).not.toContain('Tolerance</label>');
+    expect(html.match(/name="windowKind"/g)).toHaveLength(1);
+    expect(html.match(/id="schedule-window-kind"/g)).toHaveLength(1);
+    expect(html).toContain('value="five_hour" selected');
+  });
+
+  it('offers only exact Codex windows in one primary control without synthetic cadence options', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          windows: [
+            observedWindowTarget('codex', 'codex_primary', 18_000),
+            observedWindowTarget('codex', 'codex_secondary', 604_800),
+          ],
+        },
+      ],
+      selectedProviderId: 'codex',
+      policy: {
+        id: 'activation-codex',
+        providerId: 'codex',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'codex_primary',
+        anchorLocalTime: '18:00',
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      referenceInstant: new Date('2026-09-24T12:00:00.000Z'),
+    });
+
+    const control = html.match(/<select id="schedule-window-kind"[\s\S]*?<\/select>/)?.[0];
+    expect(control).toContain('<option value="codex_primary" selected>5-hour window</option>');
+    expect(control).toContain('<option value="codex_secondary">Weekly window</option>');
+    expect(control).not.toContain('value="five_hour"');
+    expect(control).not.toContain('value="weekly"');
+    expect(html.match(/name="windowKind"/g)).toHaveLength(1);
+    expect(html.indexOf('id="schedule-window-kind"')).toBeLessThan(
+      html.indexOf('data-policy-fields="auto"'),
+    );
+    expect(html).toContain('may still count against more than one Codex quota window');
+  });
+
+  it('groups Antigravity targets by readable quota family, including unknown groups', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          capabilities: {
+            ...supportedCapabilities,
+            windowTrigger: {
+              supported: true,
+              contract: 'observed_undocumented',
+              consumesQuota: true,
+              supportedWindowKinds: [
+                'antigravity_gemini_five_hour',
+                'antigravity_gemini_weekly',
+                'antigravity_claude_gpt_five_hour',
+                'antigravity_future_team_weekly',
+                'antigravity_<script>_weekly',
+              ],
+            },
+          },
+          triggerModels: {
+            gemini: 'gemini-3.8-flash-low',
+            claudeGpt: 'claude-sonnet-4-6',
+          },
+          windows: [
+            observedWindowTarget('antigravity', 'antigravity_gemini_five_hour', 18_000),
+            observedWindowTarget('antigravity', 'antigravity_gemini_weekly', 604_800),
+            observedWindowTarget('antigravity', 'antigravity_claude_gpt_five_hour', 18_000),
+            observedWindowTarget('antigravity', 'antigravity_future_team_weekly', 604_800),
+            observedWindowTarget('antigravity', 'antigravity_<script>_weekly', 604_800),
+          ],
+        },
+      ],
+      selectedProviderId: 'antigravity',
+      policy: {
+        id: 'activation-antigravity',
+        providerId: 'antigravity',
+        kind: 'auto',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'antigravity_gemini_weekly',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      referenceInstant: new Date('2026-09-24T12:00:00.000Z'),
+    });
+
+    const control = html.match(/<select id="schedule-window-kind"[\s\S]*?<\/select>/)?.[0];
+    expect(control).toContain(
+      '<option value="antigravity_gemini_weekly" selected>Weekly window</option>',
+    );
+    expect(control).toContain('<optgroup label="Gemini Models">');
+    expect(control).toContain('<optgroup label="Claude and GPT Models">');
+    expect(control).toContain('<optgroup label="Future Team">');
+    expect(control).toContain('<optgroup label="&lt;Script&gt;">');
+    expect(control).not.toContain('<optgroup label="<script>');
+    expect(control).toContain('value="antigravity_gemini_five_hour">5-hour window');
+    expect(control).toContain('value="antigravity_claude_gpt_five_hour">5-hour window');
+    expect(html).toContain('Currently managing');
+    expect(html).toContain('Gemini Models · Weekly window');
+    expect(html).toContain(
+      '<span class="field-label">Trigger model</span><code>gemini-3.8-flash-low</code>',
+    );
+    expect(html).toContain('selected group chooses the model family');
+    expect(html).toContain('both the 5-hour and weekly windows in this group');
+  });
+
+  it('shows the configured Claude and GPT trigger model for that managed group', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          capabilities: {
+            ...supportedCapabilities,
+            windowTrigger: {
+              supported: true,
+              contract: 'observed_undocumented',
+              consumesQuota: true,
+            },
+          },
+          triggerModels: {
+            gemini: 'gemini-3.8-flash-low',
+            claudeGpt: 'claude-sonnet-4-6',
+          },
+          windows: [observedWindowTarget('antigravity', 'antigravity_claude_gpt_weekly', 604_800)],
+        },
+      ],
+      selectedProviderId: 'antigravity',
+      policy: {
+        id: 'activation-antigravity',
+        providerId: 'antigravity',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'antigravity_claude_gpt_weekly',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      referenceInstant: new Date('2026-09-24T12:00:00.000Z'),
+    });
+
+    expect(html).toContain('Claude and GPT Models · Weekly window');
+    expect(html).toContain(
+      '<span class="field-label">Trigger model</span><code>claude-sonnet-4-6</code>',
+    );
+    expect(html).not.toContain('gemini-3.8-flash-low</code>');
+  });
+
+  it('keeps monitoring-only save possible with no observations and blocks automatic modes', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+    });
+
+    const control = html.match(/<select id="schedule-window-kind"[\s\S]*?<\/select>/)?.[0];
+    expect(control).toContain('disabled');
+    expect(control).toContain('No provider window reported');
+    expect(control).not.toContain('value="five_hour"');
+    expect(control).not.toContain('value="weekly"');
+    expect(html).toContain('name="policyKind" value="manual" checked');
+    expect(html).toMatch(/name="policyKind" value="auto" disabled/);
+    expect(html).toContain('Waiting for a provider-reported usage window');
+    expect(html).toContain('<button type="submit">Save schedule</button>');
+  });
+
+  it('does not present a saved automatic policy as editable when its target is unobserved', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'five_hour',
+        anchorLocalTime: '18:00',
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+    });
+
+    expect(html).toMatch(/name="policyKind" value="fixed" checked disabled/);
+    expect(html).toContain('data-policy-fields="fixed" hidden aria-hidden="true"');
+    expect(html).toMatch(/<input disabled id="fixed-anchor"/);
+    expect(html).toContain('name="policyKind" value="manual"');
+    expect(html).toContain('Waiting for a provider-reported usage window');
+    expect(html).toContain('No automatic start can be planned until one is available.');
+  });
+
+  it('presents WINDOW_TARGET_NOT_SELECTED as a useful next step instead of an internal code', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, windows: [observedWindowTarget('fake', 'five_hour', 18_000)] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      decision: {
+        kind: 'WAIT',
+        reasonCode: 'WINDOW_TARGET_NOT_SELECTED',
+        explanation: {
+          decision: 'WAIT',
+          reasonCode: 'WINDOW_TARGET_NOT_SELECTED',
+          providerId: 'fake',
+          policyId: 'activation-fake',
+          policyKind: 'manual',
+          timezone: 'UTC',
+          currentWindow: 'UNKNOWN',
+        },
+      },
+    });
+
+    expect(html).toContain('Choose one reported usage window for this schedule.');
+    expect(html).not.toContain('WINDOW_TARGET_NOT_SELECTED');
+  });
+
+  it('resolves a legacy generic target only when one exact observed window matches', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          windows: [
+            observedWindowTarget('codex', 'codex_primary', 18_000),
+            observedWindowTarget('codex', 'codex_secondary', 604_800),
+          ],
+        },
+      ],
+      policy: {
+        id: 'activation-codex',
+        providerId: 'codex',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'five_hour',
+        anchorLocalTime: '18:00',
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+    });
+
+    const control = html.match(/<select id="schedule-window-kind"[\s\S]*?<\/select>/)?.[0];
+    expect(control).toContain('<option value="codex_primary" selected>5-hour window</option>');
+    expect(html).toContain('matches the only reported window of this cadence');
+  });
+
+  it('leaves multiple legacy cadence matches unselected and visibly fails closed', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          windows: [
+            observedWindowTarget('codex', 'codex_primary', 18_000),
+            observedWindowTarget('codex', 'codex_extra_five_hour', 18_000),
+          ],
+        },
+      ],
+      policy: {
+        id: 'activation-codex',
+        providerId: 'codex',
+        kind: 'auto',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'five_hour',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+    });
+
+    const control = html.match(/<select id="schedule-window-kind"[\s\S]*?<\/select>/)?.[0];
+    expect(control).toContain(
+      '<option value="" selected disabled>Choose a reported usage window</option>',
+    );
+    expect(control).toContain('required');
+    expect(control).toContain('value="codex_primary"');
+    expect(control).toContain('value="codex_extra_five_hour"');
+    expect(control).toContain('5-hour window · Window 1');
+    expect(control).toContain('5-hour window · Window 2');
+    expect(html).toContain('matches multiple reported windows');
+    expect(html).toContain('(5-hour window · Window 1, 5-hour window · Window 2)');
+    expect(html).toContain('No target will be guessed');
+    expect(html).not.toContain('codex_extra_five_hour</option>');
   });
 
   it('ships progressive policy, preview, and non-persisting timezone detection behavior', () => {
@@ -309,7 +643,7 @@ describe('settings UI helpers', () => {
       },
     });
 
-    expect(html).toContain('The selected usage window is not reported by this provider.');
+    expect(html).toContain('The saved target is not currently reported by this provider.');
   });
 
   it('renders only safe fields with hidden CSRF inputs and escaped values', () => {

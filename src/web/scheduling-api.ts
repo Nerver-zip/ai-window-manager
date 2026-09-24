@@ -2,11 +2,11 @@ import type {
   ActivationPolicy,
   CurrentWindowState,
   ProviderCapabilities,
-  WindowSnapshot,
 } from '../domain/types.js';
+import { resolveWindowTarget } from '../domain/window-target.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
-import { deriveCurrentWindow } from '../scheduler/current-window.js';
+import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
 import { planWindowAction, upcomingSchedule, type PlannerDecision } from '../scheduler/planner.js';
 import { activationPolicyFromRecord, type TimezoneSetting } from '../scheduler/policy.js';
 import { readTimezoneSetting } from './settings-api.js';
@@ -51,20 +51,30 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
         : null;
       const observation = state?.observation;
       const adapter = input.adapters.get(provider.id);
-      const windowKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
-      const window = observation ? selectWindow(observation.windows, windowKind) : undefined;
-      const currentWindow = deriveCurrentWindow(
+      const requestedWindowKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
+      const targetResolution = resolveWindowTarget(requestedWindowKind, observation?.windows ?? []);
+      const windowKind =
+        targetResolution.status === 'exact' || targetResolution.status === 'legacy_resolved'
+          ? targetResolution.windowKind
+          : undefined;
+      const currentWindowKind =
+        windowKind ?? (targetResolution.status === 'missing' ? requestedWindowKind : undefined);
+      const resolvedPolicy = withResolvedWindowKind(policy, windowKind);
+      const window = observation
+        ? observation.windows.find((candidate) => candidate.windowKind === windowKind)
+        : undefined;
+      const currentWindow = deriveCurrentWindowForTarget(
         provider.id,
         observation,
         state?.health,
-        windowKind,
+        currentWindowKind,
       );
       const decision =
-        policy && adapter && observation && state?.health === 'UP'
+        resolvedPolicy && adapter && observation && state?.health === 'UP'
           ? safeDecision({
               now,
               providerId: provider.id,
-              policy,
+              policy: resolvedPolicy,
               currentWindow,
               observation: {
                 observedAt: observation.observedAt,
@@ -78,13 +88,23 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
           : null;
       return {
         providerId: provider.id,
-        policy,
+        policy: resolvedPolicy,
         currentWindow,
         decision,
-        upcoming: policy ? upcomingSchedule(policy, now, window?.durationSeconds?.value) : [],
+        upcoming: resolvedPolicy
+          ? upcomingSchedule(resolvedPolicy, now, window?.durationSeconds?.value)
+          : [],
       };
     }),
   };
+}
+
+function withResolvedWindowKind(
+  policy: ActivationPolicy | null,
+  windowKind: string | undefined,
+): ActivationPolicy | null {
+  if (!policy || !windowKind || !('windowKind' in policy)) return policy;
+  return { ...policy, windowKind };
 }
 
 function safePolicy(
@@ -112,11 +132,4 @@ function safeCapabilities(adapter: ProviderAdapter): Pick<ProviderCapabilities, 
   } catch {
     return { windowTrigger: { supported: false, contract: 'unknown', consumesQuota: 'unknown' } };
   }
-}
-
-function selectWindow(
-  windows: readonly WindowSnapshot[],
-  windowKind: string | undefined,
-): WindowSnapshot | undefined {
-  return windowKind ? windows.find((window) => window.windowKind === windowKind) : windows[0];
 }

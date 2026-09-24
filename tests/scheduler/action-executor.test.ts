@@ -24,7 +24,10 @@ afterEach(() => {
 });
 
 function setup(
-  options: { triggerResult?: 'succeeded' | 'failed' | 'uncertain' | 'rejected' } = {},
+  options: {
+    triggerResult?: 'succeeded' | 'failed' | 'uncertain' | 'rejected';
+    targetWindowKind?: string | null;
+  } = {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-executor-'));
   const db = openDatabase(path.join(dir, 'awm.db'));
@@ -64,7 +67,7 @@ function setup(
     kind: 'target_reset',
     enabled: true,
     timezone: 'UTC',
-    config: {},
+    config: { windowKind: 'five_hour' },
     createdAtMs: nowMs,
     updatedAtMs: nowMs,
   };
@@ -81,7 +84,13 @@ function setup(
     expiresAtMs: nowMs + 30_000,
     attemptCount: 0,
     reasonCode: 'TARGET_RESET_WINDOW_MATCH',
-    explanation: { windowKind: 'five_hour', reasonCode: 'TARGET_RESET_WINDOW_MATCH' },
+    explanation:
+      options.targetWindowKind === null
+        ? { reasonCode: 'TARGET_RESET_WINDOW_MATCH' }
+        : {
+            windowKind: options.targetWindowKind ?? 'five_hour',
+            reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+          },
     lastErrorCode: null,
     createdAtMs: nowMs,
     startedAtMs: null,
@@ -135,11 +144,22 @@ describe('ActionExecutor', () => {
 
   it('claims, dispatches, confirms and audits a successful FakeProvider action', async () => {
     const context = setup();
+    const trigger = context.adapter.triggerWindow?.bind(context.adapter);
+    if (!trigger) throw new Error('fake trigger missing');
+    let dispatchedWindowKind: string | undefined;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: (ctx, request) => {
+        dispatchedWindowKind = request.windowKind;
+        return trigger(ctx, request);
+      },
+    };
 
-    const report = await context.executor().executeDue();
+    const report = await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
 
     expect(report.confirmedIntentIds).toEqual(['intent-1']);
     expect(context.triggerCount).toBe(1);
+    expect(dispatchedWindowKind).toBe('five_hour');
     expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
       state: 'confirmed',
       attemptCount: 1,
@@ -185,7 +205,11 @@ describe('ActionExecutor', () => {
       expiresAtMs: nowMs + 300_000,
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
-      explanation: { decision: 'manual_trigger', reasonCode: 'MANUAL_TRIGGER_REQUESTED' },
+      explanation: {
+        decision: 'manual_trigger',
+        reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+        windowKind: 'five_hour',
+      },
     });
     let dispatches = 0;
     const adapter: ProviderAdapter = {
@@ -227,6 +251,33 @@ describe('ActionExecutor', () => {
 
     expect(context.triggerCount).toBe(1);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
+  it('skips an intent with no exact target rather than defaulting to the first window', async () => {
+    const context = setup({ targetWindowKind: null });
+
+    await context.executor().executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_TARGET_WINDOW_MISSING',
+    });
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('invalidates an intent when the policy target changes even at the same timestamp', async () => {
+    const context = setup();
+    const policy = context.repositories.schedulePolicies.get('policy-1');
+    if (!policy) throw new Error('policy missing');
+    context.repositories.schedulePolicies.upsert({ ...policy, config: { windowKind: 'weekly' } });
+
+    await context.executor().executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_POLICY_CHANGED',
+    });
+    expect(context.triggerCount).toBe(0);
   });
 
   it('skips expired, already-satisfied, and unsupported intents without dispatch', async () => {

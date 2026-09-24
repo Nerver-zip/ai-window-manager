@@ -25,6 +25,8 @@ import type { ProviderAdapter } from '../providers/provider.js';
 import { filterVisibleProviders, isProviderVisible } from '../providers/visibility.js';
 import type { Clock } from '../scheduler/clock.js';
 import { activationPolicyFromRecord, parseActivationPolicy } from '../scheduler/policy.js';
+import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
+import { resolveWindowTarget } from '../domain/window-target.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type {
   EventRecord,
@@ -44,7 +46,6 @@ import {
   updateTimezoneSetting,
 } from './settings-api.js';
 import { readScheduling } from './scheduling-api.js';
-import { deriveCurrentWindow } from '../scheduler/current-window.js';
 import { readUsagePageData, USAGE_CHART_BUCKETS } from '../usage/service.js';
 import { renderUsagePage } from './usage-ui.js';
 import {
@@ -134,6 +135,7 @@ interface ProviderRead {
   activationPolicy: ActivationPolicy | null;
   activationPolicyNeedsAttention: boolean;
   capabilities?: ProviderCapabilities;
+  triggerModels?: { gemini: string; claudeGpt: string };
 }
 
 export function buildServer(input: BuildServerInput) {
@@ -537,7 +539,7 @@ export function buildServer(input: BuildServerInput) {
         '<p class="horizon-empty" role="status">Choose a time zone in Settings to see local schedule times.</p>',
       );
     }
-    let policy;
+    let policy: ActivationPolicy;
     try {
       policy = parseActivationPolicy({
         ...parsed.data,
@@ -552,11 +554,18 @@ export function buildServer(input: BuildServerInput) {
     }
     const provider = settings.find((candidate) => candidate.id === policy.providerId);
     const state = input.repositories.providerState.get(policy.providerId);
-    const currentWindow = deriveCurrentWindow(
+    const requestedWindowKind = 'windowKind' in policy ? policy.windowKind : undefined;
+    const target = resolveWindowTarget(requestedWindowKind, state?.observation?.windows ?? []);
+    const windowKind =
+      target.status === 'exact' || target.status === 'legacy_resolved'
+        ? target.windowKind
+        : undefined;
+    if (windowKind && 'windowKind' in policy) policy = { ...policy, windowKind };
+    const currentWindow = deriveCurrentWindowForTarget(
       policy.providerId,
       state?.observation,
       state?.health,
-      'windowKind' in policy ? policy.windowKind : undefined,
+      windowKind,
     );
     return reply.send(
       renderScheduleHorizon({
@@ -609,6 +618,20 @@ export function buildServer(input: BuildServerInput) {
     return reply.code(303).redirect(`/schedule?updated=schedule${providerQuery}`);
   });
 
+  app.post('/providers/:id/trigger', async (request, reply) => {
+    const providerId = (request.params as { id?: unknown }).id;
+    const body = asRecord(request.body);
+    const command = {
+      ...(typeof body.windowKind === 'string' ? { windowKind: body.windowKind } : {}),
+      ...(typeof body.idempotencyKey === 'string' ? { idempotencyKey: body.idempotencyKey } : {}),
+    };
+    const result = commandApi.trigger(providerId, command);
+    const query = new URLSearchParams();
+    if (typeof providerId === 'string') query.set('provider', providerId);
+    query.set('updated', result.statusCode === 202 ? 'start-requested' : 'start-unavailable');
+    return reply.code(303).redirect(`/?${query.toString()}`);
+  });
+
   app.post('/api/v1/providers/:id/inspect', async (request, reply) => {
     const result = commandApi.inspect((request.params as { id?: unknown }).id);
     return reply.code(result.statusCode).send(result.body);
@@ -633,7 +656,14 @@ export function buildServer(input: BuildServerInput) {
     const selectedProviderId = providers.some((provider) => provider.id === requestedProviderId)
       ? requestedProviderId
       : providers[0]?.id;
-    return renderOverview(providers, input.clock.now(), timezone, selectedProviderId);
+    return renderOverview(
+      providers,
+      input.clock.now(),
+      timezone,
+      selectedProviderId,
+      csrf.token,
+      queryMessage(request.query),
+    );
   });
 
   return app;
@@ -979,7 +1009,11 @@ function queryMessage(query: unknown): string | null {
       ? 'Schedule saved.'
       : value === 'timezone'
         ? 'Time zone saved.'
-        : null;
+        : value === 'start-requested'
+          ? 'Start request queued. A fresh provider check will run before any message is sent.'
+          : value === 'start-unavailable'
+            ? 'Could not request a start. Check the provider connection, settings, and selected usage window.'
+            : null;
 }
 
 function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] {
@@ -1002,6 +1036,14 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
       staleAfterSeconds: state?.observation?.staleAfterSeconds,
       configured: connection.configured,
       connectionLabel: connection.statusLabel,
+      ...(provider.kind === 'antigravity' && capabilities?.windowTrigger.supported
+        ? {
+            triggerModels: {
+              gemini: input.config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
+              claudeGpt: input.config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
+            },
+          }
+        : {}),
     };
   });
 }
@@ -1054,6 +1096,22 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
         activationPolicyNeedsAttention = true;
       }
     }
+    const requestedWindowKind =
+      activationPolicy && 'windowKind' in activationPolicy
+        ? activationPolicy.windowKind
+        : undefined;
+    const target = resolveWindowTarget(requestedWindowKind, observation?.windows ?? []);
+    const selectedWindowKind =
+      target.status === 'exact' || target.status === 'legacy_resolved'
+        ? target.windowKind
+        : undefined;
+    if (selectedWindowKind && activationPolicy && 'windowKind' in activationPolicy) {
+      activationPolicy = { ...activationPolicy, windowKind: selectedWindowKind };
+    } else if (requestedWindowKind && observation && target.status !== 'exact') {
+      activationPolicyNeedsAttention = true;
+    } else if (activationPolicy && !requestedWindowKind && (observation?.windows.length ?? 0) > 0) {
+      activationPolicyNeedsAttention = true;
+    }
 
     return {
       id: provider.id,
@@ -1063,12 +1121,25 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
       health: state?.health ?? 'UNKNOWN',
       lastErrorCode: state?.lastErrorCode ?? null,
       observation,
-      currentWindow: deriveCurrentWindow(provider.id, observation, state?.health),
+      currentWindow: deriveCurrentWindowForTarget(
+        provider.id,
+        observation,
+        state?.health,
+        selectedWindowKind,
+      ),
       windows: observation?.windows ?? [],
       freshness: freshness(state, nowMs),
       activationPolicy,
       activationPolicyNeedsAttention,
       ...(capabilities ? { capabilities } : {}),
+      ...(provider.kind === 'antigravity' && capabilities?.windowTrigger.supported
+        ? {
+            triggerModels: {
+              gemini: input.config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
+              claudeGpt: input.config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
+            },
+          }
+        : {}),
     };
   });
 }
@@ -1208,6 +1279,8 @@ function renderOverview(
   now: Date,
   timezone: string,
   selectedProviderId: string | undefined,
+  csrfToken: string,
+  notice: string | null,
 ): string {
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const selector =
@@ -1226,13 +1299,15 @@ function renderOverview(
           },
         )}<noscript><button type="submit">Show provider</button></noscript></form>`
       : '';
-  const card = selectedProvider ? renderProviderCard(selectedProvider, now, timezone) : '';
+  const card = selectedProvider
+    ? renderProviderCard(selectedProvider, now, timezone, csrfToken)
+    : '';
   return renderAppShell({
     page: 'overview',
     title: 'Overview',
     description: 'Your usage windows, remaining allowance, and selected start policies.',
     content: card
-      ? `${selector}${card}`
+      ? `${notice ? `<div class="notice" role="status">${escapeHtml(notice)}</div>` : ''}${selector}${card}`
       : '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>',
   });
 }
@@ -1259,7 +1334,12 @@ function historyUsageSample(snapshot: WindowSnapshot): HistoryUsageSample {
   };
 }
 
-function renderProviderCard(provider: ProviderRead, now: Date, timezone: string): string {
+function renderProviderCard(
+  provider: ProviderRead,
+  now: Date,
+  timezone: string,
+  csrfToken: string,
+): string {
   const staleClass = provider.freshness.stale ? ' stale' : '';
   const freshnessLabel =
     provider.freshness.ageSeconds === null
@@ -1267,7 +1347,7 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
         ? 'Waiting for the first update'
         : 'Monitoring is paused'
       : `Last checked ${formatAge(provider.freshness.ageSeconds)} ago`;
-  const windows = renderProviderWindows(provider, now, timezone);
+  const windows = renderProviderWindows(provider, now, timezone, csrfToken);
 
   const displayName = providerDisplayName(provider.id, provider.kind);
   const connectionState = !provider.enabled
@@ -1312,10 +1392,25 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
   return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${selectedPolicy}${windows}${details}</article>`;
 }
 
-function renderProviderWindows(provider: ProviderRead, now: Date, timezone: string): string {
+function renderProviderWindows(
+  provider: ProviderRead,
+  now: Date,
+  timezone: string,
+  csrfToken: string,
+): string {
   if (provider.windows.length === 0) {
     return '<div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div>';
   }
+
+  const triggerReady = provider.windows.some((window) => canManuallyTrigger(provider, window));
+  const actionNoticeId = `provider-action-note-${provider.id}`;
+  const actionNotice = triggerReady
+    ? `<p class="provider-action-notice" id="${escapeHtml(actionNoticeId)}"><strong>Starting a window sends one “Hi!” message and uses normal provider quota.</strong> ${provider.kind === 'antigravity' ? 'The same prompt may affect both the 5-hour and weekly limits for this model family.' : 'The provider may update more than one usage window.'} A fresh safety check runs before sending.</p>`
+    : '';
+  const renderedWindows = (windows: readonly WindowSnapshot[], headingTag: 'h3' | 'h4' = 'h3') =>
+    windows
+      .map((window) => renderWindow(provider, window, now, timezone, csrfToken, headingTag))
+      .join('');
 
   const groups = new Map<string | null, WindowSnapshot[]>();
   for (const window of provider.windows) {
@@ -1326,13 +1421,13 @@ function renderProviderWindows(provider: ProviderRead, now: Date, timezone: stri
   }
 
   if (groups.size === 1 && groups.has(null)) {
-    return `<div class="window-grid">${provider.windows.map((window) => renderWindow(provider.id, window, now, timezone)).join('')}</div>`;
+    return `${actionNotice}<div class="window-grid">${renderedWindows(provider.windows)}</div>`;
   }
 
-  return `<div class="window-families">${Array.from(groups, ([label, windows]) =>
+  return `${actionNotice}<div class="window-families">${Array.from(groups, ([label, windows]) =>
     label
-      ? `<section class="window-family" aria-label="${escapeHtml(label)}"><h3>${escapeHtml(label)}</h3><div class="window-grid">${windows.map((window) => renderWindow(provider.id, window, now, timezone, 'h4')).join('')}</div></section>`
-      : `<div class="window-grid">${windows.map((window) => renderWindow(provider.id, window, now, timezone)).join('')}</div>`,
+      ? `<section class="window-family" aria-label="${escapeHtml(label)}"><h3>${escapeHtml(label)}</h3><div class="window-grid">${renderedWindows(windows, 'h4')}</div></section>`
+      : `<div class="window-grid">${renderedWindows(windows)}</div>`,
   ).join('')}</div>`;
 }
 
@@ -1354,16 +1449,26 @@ function renderSelectedPolicy(provider: ProviderRead): string {
     custom_schedule: 'At specific times',
     active_hours: 'Within active hours',
   };
-  const description = selectedPolicyDescription(provider.id, policy);
+  const description = selectedPolicyDescription(provider, policy);
   const status = selectedPolicyStatus(provider, policy);
   return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p><p class="provider-policy-status">${escapeHtml(status)}</p></div><a href="${escapeHtml(scheduleHref)}">Change</a></section>`;
 }
 
-function selectedPolicyDescription(providerId: string, policy: ActivationPolicy): string {
-  if (policy.kind === 'manual') return 'New windows start only when you ask.';
-  const window = policy.windowKind
-    ? windowDisplayName(providerId, policy.windowKind)
-    : 'Any available usage window';
+function selectedPolicyDescription(provider: ProviderRead, policy: ActivationPolicy): string {
+  const selectedWindow = policy.windowKind
+    ? provider.observation?.windows.find((window) => window.windowKind === policy.windowKind)
+    : undefined;
+  const cadence = policy.windowKind
+    ? windowDisplayName(provider.id, policy.windowKind, selectedWindow?.durationSeconds?.value)
+    : undefined;
+  const group = policy.windowKind ? windowGroupDisplayName(policy.windowKind) : null;
+  const managedWindow = cadence ? (group ? `${group} · ${cadence}` : cadence) : undefined;
+  if (policy.kind === 'manual') {
+    return managedWindow
+      ? `New windows start only when you ask · ${managedWindow}.`
+      : 'New windows start only when you ask.';
+  }
+  const window = managedWindow ?? 'Any available usage window';
   if (policy.kind === 'auto') {
     return `${window} · Starts after a fresh check confirms availability.`;
   }
@@ -1445,14 +1550,15 @@ function formatAge(ageSeconds: number): string {
 }
 
 function renderWindow(
-  providerId: string,
+  provider: ProviderRead,
   window: WindowSnapshot,
   now: Date,
   timezone: string,
+  csrfToken: string,
   headingTag: 'h3' | 'h4' = 'h3',
 ): string {
   const usage = window.usageRatio;
-  const label = windowDisplayName(providerId, window.windowKind, window.durationSeconds?.value);
+  const label = windowDisplayName(provider.id, window.windowKind, window.durationSeconds?.value);
   const percentUsed = usage ? Math.round(usage.value * 100) : null;
   const remaining = window.remainingRatio?.value ?? (usage ? 1 - usage.value : null);
   const remainingIsEstimated =
@@ -1465,7 +1571,41 @@ function renderWindow(
   const reset = window.resetAt
     ? `<div class="window-reset"><span class="field-label">Resets</span><strong>${isEstimatedSource(window.resetAt.source) ? 'About ' : ''}${escapeHtml(formatLocalInstant(window.resetAt.value, timezone))}</strong><span class="reset-relative">${escapeHtml(approximateResetText(window.resetAt, now))}</span><small>${escapeHtml(timeZoneDisplayName(timezone))} · local</small><small>${escapeHtml(formatUtc(window.resetAt.value))}</small></div>`
     : `<div class="window-reset"><span class="field-label">Reset time</span><strong class="unknown">Not available yet</strong></div>`;
-  return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}</section>`;
+  const model = triggerModelForWindow(provider, window);
+  const targetLabel = windowGroupDisplayName(window.windowKind);
+  const actionLabel = targetLabel ? `${targetLabel}, ${label}` : label;
+  const startAction = canManuallyTrigger(provider, window)
+    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" aria-describedby="provider-action-note-${escapeHtml(provider.id)}"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
+    : '';
+  return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction}</section>`;
+}
+
+function canManuallyTrigger(provider: ProviderRead, window: WindowSnapshot): boolean {
+  const capability = provider.capabilities?.windowTrigger;
+  return Boolean(
+    provider.enabled &&
+    provider.mode === 'automation' &&
+    capability?.supported &&
+    (!capability.supportedWindowKinds ||
+      capability.supportedWindowKinds.includes(window.windowKind)),
+  );
+}
+
+function triggerModelForWindow(provider: ProviderRead, window: WindowSnapshot): string | null {
+  if (!canManuallyTrigger(provider, window)) return null;
+  if (provider.kind !== 'antigravity' || !provider.triggerModels) return null;
+  if (window.windowKind.startsWith('antigravity_gemini_')) return provider.triggerModels.gemini;
+  if (window.windowKind.startsWith('antigravity_claude_gpt_'))
+    return provider.triggerModels.claudeGpt;
+  return null;
+}
+
+function triggerModelDisplayName(model: string): string {
+  const knownNames: Record<string, string> = {
+    'gemini-3.8-flash-low': 'Gemini 3.8 Flash Low',
+    'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+  };
+  return knownNames[model] ?? model;
 }
 
 function windowPhaseLabel(window: WindowSnapshot): string | null {
