@@ -638,7 +638,9 @@ function classifyLogEvent(
   const alertEvent =
     type === 'action_uncertain' ||
     type.startsWith('action_failed_') ||
-    type === 'provider_auth_required';
+    type === 'provider_auth_required' ||
+    type === 'provider_auth_failed' ||
+    type === 'provider_auth_timed_out';
 
   if (type.startsWith('action_') || manualTrigger) tags.add('trigger');
   if (type === 'unexpected_reset_detected' || type === 'external_window_started') tags.add('reset');
@@ -647,10 +649,12 @@ function classifyLogEvent(
     type === 'inspect_requested' ||
     type === 'provider_inspection_failed' ||
     type === 'provider_auth_required' ||
+    type.startsWith('provider_auth_') ||
     type === 'scheduler_noop'
   )
     tags.add('sync');
   if (
+    type.startsWith('provider_auth_') ||
     type === 'schedule_policy_updated' ||
     type === 'provider_settings_updated' ||
     type === 'timezone_updated' ||
@@ -660,7 +664,15 @@ function classifyLogEvent(
   )
     tags.add('config');
   if (severity === 'warn' || severity === 'error' || alertEvent) tags.add('alert');
-  if (manualTrigger || type === 'inspect_requested' || hasManualOrigin(data)) tags.add('manual');
+  if (
+    manualTrigger ||
+    type === 'inspect_requested' ||
+    type === 'provider_auth_started' ||
+    type === 'provider_auth_awaiting_user' ||
+    type === 'provider_auth_canceled' ||
+    hasManualOrigin(data)
+  )
+    tags.add('manual');
 
   // Unknown informational events still receive a neutral operational category;
   // their human-facing copy remains sanitized by eventLabel().

@@ -4,6 +4,14 @@ import Fastify from 'fastify';
 import { renderAppShell } from './ui/layout.js';
 import { APP_CSS } from './ui/styles.js';
 import { APP_JS } from './ui/chart-interactions.js';
+import { AUTH_ONBOARDING_CSS } from './ui/auth-onboarding-styles.js';
+import { AUTH_ONBOARDING_JS } from './ui/auth-onboarding-interactions.js';
+import {
+  AuthSessionError,
+  type AuthProviderId,
+  type AuthSessionManager,
+  type AuthSessionSnapshot,
+} from '../auth/session-manager.js';
 import type { AppConfig } from '../config.js';
 import type {
   ActivationPolicy,
@@ -87,6 +95,9 @@ const STATIC_MIME_TYPES: Readonly<Record<string, string>> = {
 };
 
 const ASSETS_DIR = path.resolve(process.cwd(), 'assets');
+const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity'];
+const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}`;
+const APP_JS_WITH_AUTH = `${APP_JS}\n${AUTH_ONBOARDING_JS}`;
 
 export interface BuildServerInput {
   config: AppConfig;
@@ -94,6 +105,7 @@ export interface BuildServerInput {
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
   clock: Clock;
+  authSessions?: AuthSessionManager;
   requestReconcile?: () => void;
 }
 
@@ -135,10 +147,10 @@ export function buildServer(input: BuildServerInput) {
     fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
   });
   app.get('/assets/app.css', async (_request, reply) =>
-    reply.type('text/css; charset=utf-8').send(APP_CSS),
+    reply.type('text/css; charset=utf-8').send(APP_CSS_WITH_AUTH),
   );
   app.get('/assets/app.js', async (_request, reply) =>
-    reply.type('application/javascript; charset=utf-8').send(APP_JS),
+    reply.type('application/javascript; charset=utf-8').send(APP_JS_WITH_AUTH),
   );
   app.get('/assets/images/*', async (request, reply) => {
     const rawPath = (request.params as { '*': string })['*'];
@@ -236,6 +248,42 @@ export function buildServer(input: BuildServerInput) {
   });
 
   app.get('/api/v1/providers', () => readApi.getProviders().body);
+
+  app.get('/api/v1/providers/:id/auth/status', async (request, reply) => {
+    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+    return readAuthStatus(input, providerId);
+  });
+
+  app.post('/api/v1/providers/:id/auth/start', async (request, reply) => {
+    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+    try {
+      return reply.code(202).send(input.authSessions!.start(providerId));
+    } catch (error) {
+      const failure = authSessionFailure(error);
+      return reply.code(failure.statusCode).send({ error: failure.error });
+    }
+  });
+
+  app.post('/api/v1/providers/:id/auth/submit', async (request, reply) => {
+    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+    try {
+      return reply
+        .code(202)
+        .send(input.authSessions!.submitCode(providerId, asRecord(request.body).code));
+    } catch (error) {
+      const failure = authSessionFailure(error);
+      return reply.code(failure.statusCode).send({ error: failure.error });
+    }
+  });
+
+  app.post('/api/v1/providers/:id/auth/cancel', async (request, reply) => {
+    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+    return reply.code(200).send(input.authSessions!.cancel(providerId));
+  });
 
   app.get('/api/v1/providers/:id', async (request, reply) => {
     const result = readApi.getProvider((request.params as { id?: unknown }).id);
@@ -422,6 +470,7 @@ export function buildServer(input: BuildServerInput) {
     return renderSettingsUiPage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
+      authProviders: configuredAuthProviders(input),
       referenceInstant: input.clock.now(),
       ...(timezone ? { timezone } : {}),
       ...(notice ? { notice } : {}),
@@ -593,6 +642,96 @@ function expectedOrigin(
   const host =
     typeof request.headers.host === 'string' ? request.headers.host : `127.0.0.1:${fallbackPort}`;
   return `${protocol}://${host}`;
+}
+
+function configuredAuthProviderId(
+  input: BuildServerInput,
+  value: unknown,
+): AuthProviderId | undefined {
+  if (
+    !input.authSessions ||
+    typeof value !== 'string' ||
+    !AUTH_PROVIDER_IDS.includes(value as AuthProviderId) ||
+    !input.adapters.has(value)
+  ) {
+    return undefined;
+  }
+  return value as AuthProviderId;
+}
+
+function configuredAuthProviders(input: BuildServerInput) {
+  return AUTH_PROVIDER_IDS.flatMap((providerId) => {
+    if (!configuredAuthProviderId(input, providerId)) return [];
+    return [{ providerId, status: readAuthStatus(input, providerId), configured: true }];
+  });
+}
+
+function readAuthStatus(input: BuildServerInput, providerId: AuthProviderId): AuthSessionSnapshot {
+  const current = input.authSessions?.status(providerId);
+  if (!current || current.state !== 'IDLE') return current ?? idleAuthStatus(providerId);
+
+  const state = input.repositories.providerState.get(providerId);
+  if ((state?.health === 'UP' || state?.health === 'DEGRADED') && state.lastSuccessAtMs !== null) {
+    return {
+      ...current,
+      state: 'SUCCEEDED',
+      startedAt: new Date(state.lastSuccessAtMs).toISOString(),
+    };
+  }
+  if (state?.health === 'AUTH_REQUIRED') {
+    return { ...current, state: 'FAILED', reasonCode: 'AUTH_REQUIRED' };
+  }
+  return current;
+}
+
+function idleAuthStatus(providerId: AuthProviderId): AuthSessionSnapshot {
+  return {
+    providerId,
+    state: 'IDLE',
+    startedAt: null,
+    expiresAt: null,
+    authorizationUrl: null,
+    userCode: null,
+    requiresCodeSubmission: false,
+    reasonCode: null,
+  };
+}
+
+function authSessionFailure(error: unknown): {
+  statusCode: number;
+  error: { code: string; message: string };
+} {
+  if (!(error instanceof AuthSessionError)) {
+    return {
+      statusCode: 500,
+      error: { code: 'AUTH_SESSION_FAILED', message: 'The sign-in flow could not be started.' },
+    };
+  }
+  const failures = {
+    PROVIDER_UNAVAILABLE: {
+      statusCode: 404,
+      error: {
+        code: 'AUTH_PROVIDER_UNAVAILABLE',
+        message: 'Sign-in is not available for this provider.',
+      },
+    },
+    SESSION_ACTIVE: {
+      statusCode: 409,
+      error: { code: 'AUTH_SESSION_ACTIVE', message: 'A sign-in is already in progress.' },
+    },
+    SESSION_NOT_WAITING: {
+      statusCode: 409,
+      error: { code: 'AUTH_SESSION_NOT_WAITING', message: 'There is no sign-in code to submit.' },
+    },
+    CODE_INVALID: {
+      statusCode: 400,
+      error: {
+        code: 'AUTH_CODE_INVALID',
+        message: 'Enter the sign-in code shown by the provider.',
+      },
+    },
+  } as const;
+  return failures[error.code];
 }
 
 function bodyCsrfToken(body: unknown): string | undefined {

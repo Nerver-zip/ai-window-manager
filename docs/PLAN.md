@@ -9,7 +9,7 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The current safe executor dispatches only an explicitly enabled adapter capability; Codex has an opt-in quota-consuming path and Antigravity remains monitor-only in this milestone.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an explicitly enabled adapter capability; Codex has an opt-in quota-consuming path and Antigravity is read-only/disabled by default.
 
 ## Current milestone status
 
@@ -26,12 +26,17 @@ scope.
 `CODEX-002` is implemented behind an explicit trigger gate and has passed one
 operator-authorized live `Hi!` heartbeat acceptance; production enablement
 remains explicit and the action path now has a separate bounded timeout with
-uncertain-outcome confirmation. Antigravity work, work-window recommendations
-and broader statistics remain out of scope.
+uncertain-outcome confirmation. Provider onboarding now supervises official
+Codex and Antigravity sign-in processes in memory; Antigravity read-only
+observation and an isolated optional keyring runtime are implemented. Live
+Web-assisted login and restart reuse for both providers remain operator
+acceptance tasks.
+Antigravity triggers, work-window recommendations and broader statistics
+remain out of scope.
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
-Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. SPIKE-002 validated a structured official headless JSON/NDJSON usage path for monitor-only parsing, but SPIKE-003 found no supported safe container auth-persistence path. Google also explicitly warns that third-party software using Antigravity login violates its Terms. The design therefore forbids token extraction/direct backend impersonation and considers only the official `agy` executable. Exact inactive-window start semantics and container keyring persistence remain UNKNOWN; Antigravity stays monitor-only/disabled until the auth boundary is resolved.
+Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. SPIKE-002 validated a structured official headless usage path; SPIKE-003 recorded that no supported container auth-persistence path had been established at the time. For this milestone, the project explicitly accepts a self-hosted single-operator integration through the official CLI, with a dedicated D-Bus/Secret-Service/keyring runtime and optional mounted unlock file. No token extraction or backend impersonation is allowed. Live account login/restart remains unverified; exact inactive-window start semantics remain UNKNOWN, and `windowTrigger.supported=false`.
 
 The stack is Node 24 + TypeScript + Fastify + SQLite (`better-sqlite3`) + server-rendered HTML/tiny JS + `prom-client` + Vitest + pnpm. One service/container; no Redis/Postgres/broker/React/Kubernetes. Environment owns process/bootstrap config; SQLite owns mutable runtime config; secrets live in dedicated provider-owned/mounted storage.
 
@@ -126,11 +131,14 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 
 - inactive-window start event;
 - long-term stability of the nested machine-readable quota/reset payload;
-- secure/lightweight headless keyring persistence inside this Docker design.
+- authenticated account login and keyring reuse after a real container restart.
 
 **Risk**
 
-Google's official FAQ explicitly rejects third-party software using Antigravity login. Do not extract tokens or reproduce backend calls. The only considered seam is execution of Google's official CLI; even that requires a product-specific compliance/behavior spike. `canTriggerWindow=false` for MVP unless evidence materially changes.
+The project-level decision accepts this self-hosted single-operator integration
+only through Google's official CLI. Do not extract tokens or reproduce backend
+calls. The runtime remains opt-in/read-only; `canTriggerWindow=false` unless a
+separate future decision changes the scope.
 
 ## D. Product boundaries
 
@@ -281,7 +289,10 @@ Restart-required: bind/port, DB/data paths, low-level logging/startup provider e
 
 Codex: prefer dedicated official-client home/auth lifecycle. Do not mount whole `$HOME`; do not continuously copy auth files between workstation/server.
 
-Antigravity: keyring is a blocker/spike. Do not replace secure keyring integration with token scraping. Real adapter remains unavailable if a supported container flow cannot be proven.
+Antigravity: use only the official CLI and its Secret Service keyring. The
+container runtime is isolated and opt-in; no host home, D-Bus, keyring or
+credential files are mounted. The mounted unlock-file path carries no secret
+value. Live authenticated persistence/restart acceptance remains pending.
 
 Threat model and HTTP mitigations are detailed in `docs/security.md`. Loopback is default. No full app auth in MVP under private-network assumption, but untrusted LAN exposure requires upstream auth or a future native auth feature. Mutations still require CSRF/Origin checks.
 
@@ -515,7 +526,7 @@ STORAGE-001 ──────────────────────�
 
 SPIKE-001 ─ CODEX-001 ─ CODEX-002
 SPIKE-002 ─┐
-SPIKE-003 ─┴─ ANT-001 ─ ANT-002(research only / may remain unsupported)
+SPIKE-003 ─┴─ ANT-001 (official CLI, read-only) ─ ANT-002 (research only / may remain unsupported)
 
 CORE/STORAGE/OPS/research spikes can start in parallel.
 ```
@@ -528,6 +539,10 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [x] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
 - [x] Codex automation, if enabled, is explicit opt-in and performs only one persisted/confirmed minimal ordinary action per target cycle.
 - [x] Antigravity is available as monitor-only **only if** official-CLI auth/inspection is proven; otherwise it is explicitly `UNAVAILABLE/AUTH_REQUIRED` with no hack.
+- [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
+- [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service, optional mounted unlock file, and remains disabled by default.
+- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger capability is false.
+- [ ] Web-assisted Codex and Antigravity login, followed by restart reuse, are verified by an operator in the intended deployment.
 - [x] no Antigravity trigger ships without resolved semantics/compliance evidence.
 - [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
 - [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.
@@ -546,14 +561,14 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 
 ### P0
 
-- **Antigravity Terms**: third-party access warning can invalidate direct integration. Mitigation: official CLI only, monitor-only/default disabled, SPIKE-002/003; no extracted tokens.
+- **Antigravity auth persistence**: the official docs require OS keyring/Secret Service; this project accepts an isolated official-CLI runtime but still requires authenticated restart acceptance. No token extraction or internal calls.
 - **Duplicate quota-affecting actions**: mitigation is durable intent + unique dedupe + uncertain state + confirmation before any retry.
 - **Provider contract churn**: strict boundary validation, sanitized fixtures, last-known-good/staleness, fail closed, research refresh.
 
 ### P1
 
 - **Codex official-client integration lifecycle/auth in headless container**: SPIKE-001.
-- **Antigravity keyring/DBus in container**: SPIKE-003; don't add heavy sidecar until proven necessary and worth it.
+- **Antigravity keyring/DBus in container**: isolated in-container runtime is implemented and locally probeable; live auth/restart remains pending.
 - **Exact Antigravity window-start semantics**: ANT-002; default false.
 - **Clock/DST mis-scheduling**: dedicated temporal tests + skip missed actions.
 

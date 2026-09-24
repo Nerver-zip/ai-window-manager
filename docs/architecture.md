@@ -13,6 +13,13 @@ reconciler┘         │
 metrics + health + structured logs are in the same process.
 ```
 
+Provider onboarding is a separate application boundary: a small in-memory
+`AuthSessionManager` supervises one official-client sign-in process per
+provider, enforces bounded output/time, exposes only a safe session DTO, and
+verifies completion through the provider adapter. Credentials remain in the
+official client's dedicated state/keyring; auth sessions and submitted codes
+are not stored in SQLite.
+
 ### Why TypeScript rather than C++ for this project
 
 Both are viable given the existing repositories. C++ would produce a lean runtime and matches `ghinfo`, but this product's hardest work is external-client orchestration, JSON/schema evolution, time-policy tests, a tiny web UI and rapid provider adaptation—not compute. TypeScript reduces implementation surface for those concerns and aligns with the user's current pnpm/TypeScript agent workflow without requiring a frontend framework.

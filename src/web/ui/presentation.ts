@@ -71,6 +71,12 @@ const EVENT_LABELS: Readonly<Record<string, string>> = {
   provider_inspected: 'Provider checked',
   provider_inspection_failed: 'Provider check failed',
   provider_auth_required: 'Sign-in required',
+  provider_auth_started: 'Provider sign-in started',
+  provider_auth_awaiting_user: 'Provider authorization needed',
+  provider_auth_succeeded: 'Provider connected',
+  provider_auth_failed: 'Provider sign-in failed',
+  provider_auth_timed_out: 'Provider sign-in expired',
+  provider_auth_canceled: 'Provider sign-in canceled',
   schedule_missed: 'Scheduled time missed',
   schedule_policy_updated: 'Schedule updated',
   scheduler_noop: 'Scheduling update',
@@ -101,6 +107,13 @@ const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
   manual_trigger_rejected: 'A manual start was not sent because its safety checks did not pass.',
   manual_trigger_requested: 'A manual request to start a new window was received.',
   provider_auth_required: 'Sign in with the provider’s official app to resume updates.',
+  provider_auth_started: 'The official provider sign-in flow was started.',
+  provider_auth_awaiting_user: 'Continue sign-in using the provider’s official authorization page.',
+  provider_auth_succeeded: 'The official provider client verified sign-in.',
+  provider_auth_failed:
+    'The provider sign-in could not be verified. Review the safe reason shown here.',
+  provider_auth_timed_out: 'The sign-in session expired before verification completed.',
+  provider_auth_canceled: 'The sign-in session was canceled.',
   provider_inspection_failed:
     'The latest usage check failed. The last saved reading is kept until a fresh check succeeds.',
   provider_settings_updated: 'Your provider settings were saved.',
@@ -140,6 +153,18 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   ACTIVE_HOURS_TOO_SHORT: 'There is not enough active time left to start a full window.',
   AUTO_WINDOW_AVAILABLE: 'The provider is ready for an automatic activation.',
   INVALID_ACTIVATION_POLICY: 'The saved activation policy needs attention.',
+  ALREADY_AUTHENTICATED: 'An existing provider sign-in was detected and left unchanged.',
+  AUTH_REQUIRED: 'Sign in with the provider’s official client.',
+  AUTH_STATUS_UNAVAILABLE:
+    'The app could not safely check whether the provider is already signed in.',
+  AUTH_START_FAILED: 'The official provider sign-in could not be started.',
+  AUTH_PROCESS_FAILED: 'The official provider sign-in process ended unexpectedly.',
+  AUTH_SESSION_EXPIRED: 'The provider sign-in session expired before it was completed.',
+  AUTH_CANCELED: 'The provider sign-in session was canceled.',
+  AUTH_OUTPUT_LIMIT: 'The provider sign-in process returned too much output and was stopped.',
+  AUTH_VERIFICATION_FAILED: 'The official provider client could not verify sign-in.',
+  AUTH_CODE_REJECTED: 'The provider did not accept the submitted sign-in code.',
+  AUTH_PROVIDER_UNAVAILABLE: 'Sign-in is not available for this provider right now.',
 };
 
 const ERROR_LABELS: Readonly<Record<string, string>> = {
@@ -147,6 +172,14 @@ const ERROR_LABELS: Readonly<Record<string, string>> = {
   PROVIDER_UNAVAILABLE: 'The provider is temporarily unavailable.',
   INSPECTION_FAILED: 'The latest provider check failed.',
   INVALID_PROVIDER_RESPONSE: 'The provider returned data that could not be verified.',
+  AGY_AUTH_REQUIRED: 'Sign in with the official Antigravity client to resume usage checks.',
+  AGY_KEYRING_LOCKED: 'The secure Antigravity sign-in store is locked.',
+  AGY_SECRET_SERVICE_UNAVAILABLE: 'The secure sign-in storage service is unavailable.',
+  AGY_DBUS_UNAVAILABLE: 'The secure sign-in service could not start.',
+  AGY_EXECUTABLE_UNAVAILABLE: 'The official Antigravity CLI is not installed.',
+  AGY_PROVIDER_TIMEOUT: 'The Antigravity CLI did not respond in time.',
+  AGY_PROVIDER_OUTPUT_INVALID: 'The Antigravity CLI returned data the app could not verify.',
+  AGY_PROVIDER_UNAVAILABLE: 'The Antigravity CLI is temporarily unavailable.',
 };
 
 export function providerDisplayName(id: string, kind?: string): string {

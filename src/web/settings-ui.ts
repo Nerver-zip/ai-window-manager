@@ -16,6 +16,7 @@ import {
 import { localTimeMinutes, type TimezoneSetting } from '../scheduler/policy.js';
 import type { ProviderMode } from '../storage/repositories.js';
 import { renderAppShell } from './ui/layout.js';
+import { renderAuthOnboarding, type AuthOnboardingInput } from './ui/auth-onboarding.js';
 import {
   capabilityLabel,
   durationLabel,
@@ -99,6 +100,7 @@ export interface SettingsProviderView {
 export interface SettingsPageInput {
   csrfToken: string;
   providers: readonly SettingsProviderView[];
+  authProviders?: readonly AuthOnboardingInput[];
   timezone?: TimezoneSetting;
   referenceInstant?: Date;
   notice?: string;
@@ -615,6 +617,10 @@ export function renderSettingsPage(input: SettingsPageInput): string {
         'No providers configured',
         'Add a provider through service configuration before changing runtime settings.',
       );
+  const authPanels = input.authProviders?.map(renderAuthOnboarding).join('') ?? '';
+  const authSection = authPanels
+    ? `<section aria-labelledby="provider-auth-title"><div class="section-heading"><div class="heading-copy"><p class="eyebrow">Official sign-in</p><h2 id="provider-auth-title">Provider accounts</h2></div><p class="muted">Sign in with the provider’s own client. The app never asks for passwords or tokens.</p></div><div class="settings-stack">${authPanels}</div></section>`
+    : '';
 
   return renderAppShell({
     page: 'settings',
@@ -626,6 +632,7 @@ export function renderSettingsPage(input: SettingsPageInput): string {
         <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Provider connection</p><h2 id="provider-settings-title">Connection and monitoring</h2></div><p class="muted">Only non-secret settings are editable here. Sign-in stays with the official provider client.</p></div>
         <div class="settings-stack">${providerSections}</div>
       </section>
+      ${authSection}
     </div>`,
   });
 }

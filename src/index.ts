@@ -2,7 +2,10 @@ import { loadConfig } from './config.js';
 import type { ProviderAdapter } from './providers/provider.js';
 import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
+import { AntigravityProvider } from './providers/antigravity/index.js';
 import { filterVisibleProviders } from './providers/visibility.js';
+import { AuthSessionManager } from './auth/session-manager.js';
+import { createProviderAuthDrivers } from './auth/provider-drivers.js';
 import {
   recordInspection,
   recordObservation,
@@ -30,6 +33,7 @@ const adapters = new Map<string, ProviderAdapter>();
 
 registerFakeProvider();
 registerCodexProvider();
+registerAntigravityProvider();
 hydrateMetricsFromState();
 
 const reconciler = new Reconciler({
@@ -52,12 +56,41 @@ const executor = new ActionExecutor({
 });
 
 let reconcileRequested = false;
+const authSessions = new AuthSessionManager({
+  clock,
+  drivers: createProviderAuthDrivers({
+    adapters,
+    codexHome: config.AWM_CODEX_HOME,
+    codexExecutable: config.AWM_CODEX_EXECUTABLE,
+    antigravityHome: config.AWM_ANTIGRAVITY_HOME,
+    antigravityExecutable: config.AWM_ANTIGRAVITY_EXECUTABLE,
+  }),
+  sessionTimeoutMs: config.AWM_AUTH_SESSION_TIMEOUT_SECONDS * 1000,
+  onEvent: (event) => {
+    const occurredAtMs = clock.now().getTime();
+    repositories.events.append({
+      occurredAtMs,
+      providerId: event.providerId,
+      type: event.type,
+      severity:
+        event.type === 'provider_auth_failed' || event.type === 'provider_auth_timed_out'
+          ? 'warn'
+          : 'info',
+      reasonCode: event.reasonCode,
+      data: {},
+    });
+  },
+  requestReconcile: () => {
+    reconcileRequested = true;
+  },
+});
 const app = buildServer({
   config,
   db,
   repositories,
   adapters,
   clock,
+  authSessions,
   requestReconcile: () => {
     reconcileRequested = true;
   },
@@ -137,6 +170,7 @@ async function shutdown(signal: string): Promise<void> {
   if (usageAggregationTimer.current) clearInterval(usageAggregationTimer.current);
   if (reconcileInFlight) await reconcileInFlight;
   if (executorInFlight) await executorInFlight;
+  await authSessions.shutdown();
   await app.close();
   db.close();
 }
@@ -182,9 +216,30 @@ function registerCodexProvider(): void {
   });
 }
 
-function seedProvider(input: { id: string; kind: string; config: unknown }): void {
+function registerAntigravityProvider(): void {
+  if (!config.AWM_ANTIGRAVITY_ENABLED) return;
+  const provider = new AntigravityProvider({
+    executable: config.AWM_ANTIGRAVITY_EXECUTABLE,
+    cwd: config.AWM_ANTIGRAVITY_HOME,
+  });
+  adapters.set(provider.id, provider);
+  seedProvider(
+    {
+      id: provider.id,
+      kind: 'antigravity',
+      config: { home: config.AWM_ANTIGRAVITY_HOME },
+    },
+    'monitor_only',
+  );
+}
+
+function seedProvider(
+  input: { id: string; kind: string; config: unknown },
+  requiredMode?: 'monitor_only',
+): void {
   const nowMs = clock.now().getTime();
-  if (!repositories.providers.get(input.id)) {
+  const existing = repositories.providers.get(input.id);
+  if (!existing) {
     repositories.providers.upsert({
       id: input.id,
       kind: input.kind,
@@ -196,6 +251,8 @@ function seedProvider(input: { id: string; kind: string; config: unknown }): voi
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
     });
+  } else if (requiredMode && existing.mode !== requiredMode) {
+    repositories.providers.upsert({ ...existing, mode: requiredMode, updatedAtMs: nowMs });
   }
   if (repositories.schedulePolicies.list(input.id).length === 0) {
     const policy: SchedulePolicyRecord = {

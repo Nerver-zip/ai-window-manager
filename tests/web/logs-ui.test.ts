@@ -105,6 +105,26 @@ describe('history UI helpers', () => {
       { type: 'action_uncertain', severity: 'warn' as const, tags: ['trigger', 'alert'] },
       { type: 'unexpected_reset_detected', severity: 'info' as const, tags: ['reset'] },
       { type: 'provider_inspection_failed', severity: 'warn' as const, tags: ['sync', 'alert'] },
+      {
+        type: 'provider_auth_started',
+        severity: 'info' as const,
+        tags: ['sync', 'config', 'manual'],
+      },
+      {
+        type: 'provider_auth_awaiting_user',
+        severity: 'info' as const,
+        tags: ['sync', 'config', 'manual'],
+      },
+      {
+        type: 'provider_auth_succeeded',
+        severity: 'info' as const,
+        tags: ['sync', 'config'],
+      },
+      {
+        type: 'provider_auth_timed_out',
+        severity: 'warn' as const,
+        tags: ['sync', 'config', 'alert'],
+      },
       { type: 'schedule_policy_updated', severity: 'info' as const, tags: ['config'] },
       {
         type: 'manual_trigger_rejected',

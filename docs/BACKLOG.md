@@ -23,10 +23,36 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 
 ## SPIKE-003 — Prove safe Antigravity auth persistence in Linux container
 
+**Historical result**: `NO_SUPPORTED_CONTAINER_PATH` at research time; see
+`docs/research/spikes/SPIKE-003-antigravity-auth.md`. Its implementation
+recommendation is superseded by the explicit project decision recorded in the
+Provider Onboarding milestone below; its evidence is preserved.
+
 **Context**: CLI uses OS keyring/DBus.  
 **Scope**: determine documented/secure way to persist official CLI auth across container restarts without mounting full host home or extracting tokens.  
 **Acceptance**: reproducible secure procedure or explicit decision that real Antigravity adapter cannot run in base container yet.  
 **Dependencies**: none.
+
+## Provider onboarding milestone — current implementation status
+
+The following slices are implemented with offline/unit coverage. Live
+Web-assisted login and restart reuse for Codex and Antigravity still require an
+operator in the intended deployment; no live auth acceptance was run in this
+implementation pass.
+
+- **AUTH-001 / CODEX-AUTH-001 / AGY-AUTH-001**: in-memory supervised login
+  sessions through official clients, bounded safe status DTOs, code forwarding
+  only to the active official process, and provider-read verification. Mutations
+  use Origin + CSRF checks.
+- **OPS-003**: pinned `agy` runtime with separate CLI/keyring volumes, private
+  D-Bus/Secret Service, non-root execution, optional mounted unlock-file secret,
+  and Antigravity disabled by default.
+- **AGY-001**: official headless `/usage` read-only adapter with strict
+  normalization and `windowTrigger.supported=false`.
+- **WEB-004 / TEST-004**: Settings onboarding UI and offline lifecycle/runtime
+  test coverage.
+
+No Antigravity action/trigger work is included or authorized by this milestone.
 
 ## CORE-001 — Finalize evidence/window domain types
 
@@ -109,6 +135,8 @@ Each item is intentionally small enough for one agent. Dependencies are explicit
 **Dependencies**: CODEX-001, SCHED-003, explicit operator enablement and live acceptance.
 
 ## ANT-001 — Implement Antigravity read-only adapter if spikes pass
+
+**Status: adapter/runtime implementation present; offline tests pass; live authenticated restart acceptance pending.**
 
 **Scope**: official `agy` CLI only; parser based on documented/proven output; no extracted tokens.  
 **Acceptance**: health/auth states clear, parser fails closed, monitor-only.  

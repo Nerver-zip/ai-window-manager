@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: MVP release-candidate monitor slice with an explicit, disabled-by-default Codex action path. FakeProvider remains the normal test provider.
+> Status: self-hosted monitor and scheduler with supervised official-client onboarding. Codex actions remain explicit opt-in; Antigravity is read-only and disabled by default.
 
 ## Product boundary
 
@@ -53,7 +53,7 @@ One application process owns state and scheduling. Official provider CLIs/app-se
 - Node.js 24 target + TypeScript.
 - Fastify for the small HTTP surface.
 - Server-rendered HTML + tiny browser JS; no SPA framework.
-- SQLite at `/data/window-manager.db`; the optional official Codex state is a separate `/codex-state` volume.
+- SQLite at `/data/window-manager.db`; Codex state, Antigravity CLI state, and Antigravity keyring data use separate provider-owned volumes.
 - `better-sqlite3` for a deliberately synchronous, local DB API.
 - Zod for boundary/config validation.
 - Prometheus text exposition through `prom-client`.
@@ -111,14 +111,20 @@ Included now:
 - bounded retention maintenance for samples, events and terminal intent history;
 - official Codex app-server adapter with offline protocol fixtures and an opt-in
   fixed `Hi!` turn;
-- Docker/Compose hardening baseline with the official Codex CLI `0.155.1` packaged and trigger execution disabled by default;
+- supervised, in-memory Codex and Antigravity login sessions through their
+  official clients, with same-origin/CSRF-protected onboarding in Settings;
+- read-only Antigravity usage adapter using the pinned official `agy` CLI;
+- Docker/Compose hardening with pinned Codex and Antigravity clients, isolated
+  state/keyring volumes, and Antigravity disabled by default;
 - CI/validation scaffolding;
 - provider research and compliance classification;
 - ADRs, roadmap, backlog and agent skills.
 
 Intentionally **not** implemented yet:
 
-- Antigravity real adapter;
+- Antigravity trigger/window-start automation;
+- live Web-assisted login and restart acceptance for Codex and Antigravity in
+  an operator-authorized account/container;
 - broad production enablement of the quota-consuming gate; one operator-authorized live `Hi!` heartbeat has been validated, but the action remains opt-in and the bounded timeout/confirmation boundary remains subject to provider-latency review;
 - aggregate statistics and richer charting.
 

@@ -19,6 +19,10 @@ GET  /api/v1/history?provider=&type=&from=&to=&limit=
 GET  /api/v1/usage?provider=&window=&day=&chartRange=
 GET  /api/v1/settings
 GET  /api/v1/scheduling
+GET  /api/v1/providers/:id/auth/status
+POST /api/v1/providers/:id/auth/start
+POST /api/v1/providers/:id/auth/submit
+POST /api/v1/providers/:id/auth/cancel
 POST /api/v1/providers/:id/trigger
 POST /api/v1/providers/:id/inspect
 POST /api/v1/settings/timezone
@@ -70,3 +74,11 @@ an error status without calling a provider.
 
 History and settings responses are bounded/allowlisted. No endpoint returns
 provider credentials, raw provider payloads, tokens, or secret configuration.
+
+Provider auth status returns a bounded DTO containing lifecycle state, expiry,
+an allowlisted official sign-in URL, a one-time display code when provided by
+the official client, and a bounded reason code. The start/submit/cancel routes
+are same-origin and CSRF protected. Submitted codes are forwarded only to the
+already-running official provider process and removed from the in-memory
+session immediately; they are not persisted or logged. The status read path
+does not start a provider process or inspect quota.

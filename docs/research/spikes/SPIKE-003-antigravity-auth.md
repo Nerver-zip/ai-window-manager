@@ -1,6 +1,8 @@
 # SPIKE-003 — Antigravity auth persistence in a Linux container
 
-Status: research-only; no provider integration or Docker changes were made.
+Status: completed historical research. Its implementation recommendation is
+superseded by the later Provider Onboarding milestone's explicit project-level
+decision; the evidence and original conclusion below are preserved unchanged.
 
 Conclusion: **NO_SUPPORTED_CONTAINER_PATH**
 

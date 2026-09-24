@@ -87,6 +87,14 @@ auth state are never editable or rendered.
 - a collapsed, plain-language summary of provider capabilities and quota impact;
 - “inspect now”.
 
+Provider settings also contain an inline account-connection panel for Codex and
+Antigravity when their adapters are configured. It starts the official client,
+shows only a provider-approved HTTPS sign-in URL and bounded one-time code when
+the client emits them, and verifies completion with a fresh official read.
+Auth-session state is held in memory only; event history contains lifecycle and
+bounded reason codes, never process output or submitted codes. The `Connected`
+indicator is a live-status dot; it honors reduced-motion preferences.
+
 ## Usage
 
 The server-rendered `/usage` page and `GET /api/v1/usage` read only persisted
