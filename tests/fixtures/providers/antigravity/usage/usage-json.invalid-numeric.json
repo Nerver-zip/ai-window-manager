@@ -1,0 +1,21 @@
+{
+  "status": "SUCCESS",
+  "command": {
+    "name": "usage",
+    "data": {
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "buckets": [
+            {
+              "id": "synthetic-invalid-numeric",
+              "window": "weekly",
+              "remaining_fraction": 1.5,
+              "reset_time": "2030-01-03T12:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

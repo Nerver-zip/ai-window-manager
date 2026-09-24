@@ -1,0 +1,32 @@
+{
+  "status": "SUCCESS",
+  "future_envelope_field": "ignored safely",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "new_counter": 1
+  },
+  "command": {
+    "name": "usage",
+    "future_command_field": { "version": 2 },
+    "data": {
+      "description": "Synthetic additive-field fixture.",
+      "future_data_field": true,
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "future_group_field": ["ignored"],
+          "buckets": [
+            {
+              "id": "synthetic-additive-weekly",
+              "window": "weekly",
+              "remaining_fraction": 0.8,
+              "reset_time": "2030-01-03T12:00:00Z",
+              "future_bucket_field": "ignored"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

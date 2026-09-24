@@ -121,14 +121,18 @@ blindly retried.
 - The exact event that starts an Antigravity five-hour window after inactivity.
 - Whether the nested quota payload remains stable across CLI releases.
 - Whether `agy -p /usage` consistently yields the same parseable non-interactive quota output in every future release/configuration.
-- The simplest secure Linux-container strategy for persisting the official CLI keyring without introducing a desktop/keyring daemon burden.
+- Live authenticated container restart acceptance for the project's isolated official-CLI keyring runtime.
 - Whether any automated quota-positioning request is acceptable under Antigravity terms beyond ordinary documented CLI automation.
 
 ### Risk / policy
 
-The official Antigravity FAQ explicitly says using third-party software/tools/services to access Antigravity with an Antigravity login violates their Terms and may lead to suspension/termination. AI Window Manager therefore **must not** extract login tokens, reproduce internal backend calls, or impersonate the client.
-
-The only integration path considered is invoking the **official `agy` CLI itself**. Even that should remain behind a compliance/behavior spike for this product's specific use case. If safe auth/inspection is not feasible, the adapter remains monitor-only/unavailable rather than adding hacks.
+The project-level compliance decision for this milestone accepts a self-hosted,
+single-operator integration that invokes the **official `agy` CLI itself**. This
+does not relax the technical boundary: never extract/replay login tokens,
+reproduce internal backend calls, or impersonate the client. The integration is
+read-only and remains disabled by default. The official CLI owns login and its
+Secret Service credentials; AWM only supervises the CLI and validates its
+bounded usage output.
 
 **MVP capability proposal**
 
@@ -140,12 +144,17 @@ trigger_consumes_quota= true if ever enabled
 public_usage_api      = false / none found
 ```
 
-SPIKE-002 concludes `VIABLE_OFFICIAL_READ_PATH` for a monitor-only adapter,
-provided it pins the CLI version, validates the JSON/NDJSON boundary strictly,
-and fails closed on schema changes. SPIKE-003 concludes
-`NO_SUPPORTED_CONTAINER_PATH` for safely persisting Antigravity account auth in
-the current container model, so this finding does not unblock a deployable
-Antigravity adapter by itself.
+SPIKE-002 concludes `VIABLE_OFFICIAL_READ_PATH`; the monitor-only adapter now
+uses pinned `agy -p /usage --output-format json` and fails closed on schema
+changes. SPIKE-003's original `NO_SUPPORTED_CONTAINER_PATH` conclusion remains
+the accurate result of that research-only investigation. This milestone
+supersedes its implementation recommendation with an isolated, opt-in
+in-container D-Bus/Secret-Service/keyring design and a file-mounted unlock
+secret. That runtime has offline packaging/probe coverage, but authenticated
+login reuse after restart still requires explicit operator acceptance.
+
+The production capability remains `windowTrigger.supported = false`; no
+Antigravity prompt or quota-consuming action is implemented.
 
 ## Provider contract change detection
 

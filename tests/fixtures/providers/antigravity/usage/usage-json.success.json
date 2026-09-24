@@ -33,6 +33,26 @@
               "reset_time": "2029-12-31T17:00:00Z"
             }
           ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "description": "Synthetic model group.",
+          "buckets": [
+            {
+              "id": "synthetic-claude-gpt-weekly",
+              "name": "Weekly Limit Remaining",
+              "window": "weekly",
+              "remaining_fraction": 0.5,
+              "reset_time": "2030-01-04T12:00:00Z"
+            },
+            {
+              "id": "synthetic-claude-gpt-5h",
+              "name": "Five Hour Limit Remaining",
+              "window": "5h",
+              "remaining_fraction": 0.9,
+              "reset_time": "2030-01-01T12:00:00Z"
+            }
+          ]
         }
       ]
     }

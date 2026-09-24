@@ -26,6 +26,13 @@ const envSchema = z.object({
   AWM_CODEX_HOME: z.string().default('./data/codex'),
   AWM_CODEX_EXECUTABLE: z.string().default('codex'),
   AWM_CODEX_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(30),
+  AWM_AUTH_SESSION_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(1800).default(900),
+  AWM_ANTIGRAVITY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  AWM_ANTIGRAVITY_HOME: z.string().default('./data/antigravity'),
+  AWM_ANTIGRAVITY_EXECUTABLE: z.string().default('agy'),
   AWM_RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
   AWM_EXECUTOR_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(5),
   AWM_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(60).max(604800).default(86400),

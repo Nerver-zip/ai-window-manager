@@ -1,0 +1,31 @@
+{
+  "status": "SUCCESS",
+  "command": {
+    "name": "usage",
+    "data": {
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "buckets": [
+            {
+              "id": "synthetic-gemini-5h-partial",
+              "window": "5h",
+              "remaining_fraction": 1,
+              "reset_time": null
+            }
+          ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "buckets": [
+            {
+              "id": "synthetic-claude-gpt-weekly-partial",
+              "window": "weekly",
+              "remaining_fraction": 0.42
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

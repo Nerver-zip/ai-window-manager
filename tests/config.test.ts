@@ -13,6 +13,10 @@ describe('loadConfig', () => {
     expect(config.AWM_CODEX_TRIGGER_ENABLED).toBe(false);
     expect(config.AWM_CODEX_HOME).toBe('./data/codex');
     expect(config.AWM_CODEX_ACTION_TIMEOUT_SECONDS).toBe(30);
+    expect(config.AWM_AUTH_SESSION_TIMEOUT_SECONDS).toBe(900);
+    expect(config.AWM_ANTIGRAVITY_ENABLED).toBe(false);
+    expect(config.AWM_ANTIGRAVITY_HOME).toBe('./data/antigravity');
+    expect(config.AWM_ANTIGRAVITY_EXECUTABLE).toBe('agy');
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
     expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);
     expect(config.AWM_RETENTION_INTERVAL_SECONDS).toBe(86400);
@@ -28,5 +32,17 @@ describe('loadConfig', () => {
     ).toBe(45);
     expect(() => loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '4' })).toThrow();
     expect(() => loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
+  });
+
+  it('bounds auth sessions and keeps Antigravity opt-in', () => {
+    expect(
+      loadConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '1200', AWM_ANTIGRAVITY_ENABLED: 'true' }),
+    ).toMatchObject({
+      AWM_AUTH_SESSION_TIMEOUT_SECONDS: 1200,
+      AWM_ANTIGRAVITY_ENABLED: true,
+    });
+    expect(() => loadConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '59' })).toThrow();
+    expect(() => loadConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '1801' })).toThrow();
+    expect(() => loadConfig({ AWM_ANTIGRAVITY_ENABLED: 'yes' })).toThrow();
   });
 });
