@@ -1,7 +1,12 @@
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { AuthCommandRunner, AuthProcessFactory } from './process.js';
 import { captureAuthCommand, providerProcessEnvironment, spawnAuthProcess } from './process.js';
-import type { AuthOutputStream, AuthOutputUpdate, ProviderAuthDriver } from './session-manager.js';
+import type {
+  AuthManagedProcess,
+  AuthOutputStream,
+  AuthOutputUpdate,
+  ProviderAuthDriver,
+} from './session-manager.js';
 
 export interface ProviderAuthDriverOptions {
   adapters: ReadonlyMap<string, ProviderAdapter>;
@@ -52,6 +57,7 @@ class CodexAuthDriver implements ProviderAuthDriver {
           ...providerProcessEnvironment({ home: this.options.codexHome }),
           CODEX_HOME: this.options.codexHome,
         },
+        interactive: true,
       },
     );
   }
@@ -61,14 +67,24 @@ class CodexAuthDriver implements ProviderAuthDriver {
     if (url) this.authorizationUrl = url;
     if (!this.authorizationUrl) return undefined;
 
-    const labeledCode =
-      /(?:user|device|one[- ]time)?\s*code\s*[:：]\s*([A-Za-z0-9-]{4,64})\b/i.exec(line)?.[1];
-    const standaloneCode = /^[A-Z0-9-]{4,32}$/.exec(line.trim())?.[0];
-    const userCode = labeledCode ?? standaloneCode;
+    const userCode = extractCodexDeviceCode(line);
+    if (!url && !userCode) return undefined;
     return {
       awaitingUserAction: true,
       authorizationUrl: this.authorizationUrl,
       ...(userCode ? { userCode } : {}),
+      requiresCodeSubmission: false,
+    };
+  }
+
+  parseOutputFragment(_stream: AuthOutputStream, fragment: string): AuthOutputUpdate | undefined {
+    if (!this.authorizationUrl) return undefined;
+    const userCode = extractCodexDeviceCode(fragment);
+    if (!userCode) return undefined;
+    return {
+      awaitingUserAction: true,
+      authorizationUrl: this.authorizationUrl,
+      userCode,
       requiresCodeSubmission: false,
     };
   }
@@ -83,9 +99,23 @@ class CodexAuthDriver implements ProviderAuthDriver {
   }
 }
 
+function extractCodexDeviceCode(text: string): string | undefined {
+  const labeledCode =
+    /(?:user|device|one[- ]time)?\s*code\s*[:：]\s*([A-Z0-9]{4}-[A-Z0-9]{5})(?![A-Z0-9-])/i.exec(
+      text,
+    )?.[1];
+  const standaloneCode = /^\s*([A-Z0-9]{4}-[A-Z0-9]{5})\s*$/i.exec(text)?.[1];
+  return labeledCode ?? standaloneCode;
+}
+
 class AntigravityAuthDriver implements ProviderAuthDriver {
   readonly providerId = 'antigravity' as const;
   private authorizationUrl: string | undefined;
+  private loginMethodPromptLinesRemaining = 0;
+  private googleOAuthSelectionSent = false;
+  private pendingAuthorizationUrl: string | undefined;
+
+  private static readonly MAX_PENDING_AUTHORIZATION_URL_BYTES = 4096;
 
   constructor(
     private readonly options: ProviderAuthDriverOptions,
@@ -101,6 +131,9 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
 
   launch() {
     this.authorizationUrl = undefined;
+    this.loginMethodPromptLinesRemaining = 0;
+    this.googleOAuthSelectionSent = false;
+    this.pendingAuthorizationUrl = undefined;
     return (this.options.spawnProcess ?? spawnAuthProcess)(this.options.antigravityExecutable, [], {
       cwd: this.options.antigravityHome,
       env: providerProcessEnvironment({
@@ -110,6 +143,24 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
       }),
       interactive: true,
     });
+  }
+
+  onOutputLine(process: AuthManagedProcess, _stream: AuthOutputStream, line: string): void {
+    if (/select login method:/i.test(line)) this.loginMethodPromptLinesRemaining = 12;
+    if (this.loginMethodPromptLinesRemaining <= 0 || this.googleOAuthSelectionSent) return;
+
+    if (/^\s*>\s*1\.\s*Google OAuth\s*$/i.test(line)) {
+      this.googleOAuthSelectionSent = true;
+      this.loginMethodPromptLinesRemaining = 0;
+      process.writeInput('\r');
+      return;
+    }
+
+    if (/^\s*>\s*2\.\s*Use a Google Cloud project\b/i.test(line)) {
+      this.loginMethodPromptLinesRemaining = 0;
+      return;
+    }
+    this.loginMethodPromptLinesRemaining -= 1;
   }
 
   parseOutput(_stream: AuthOutputStream, line: string): AuthOutputUpdate | undefined {
@@ -125,12 +176,52 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
       };
     }
 
-    const url = extractUrl(line, 'accounts.google.com');
+    const authorizationPrompt = /copy and paste the URL|click here to authenticate/i.test(line);
+    const urlText = /https:\/\/accounts\.google\.com\/[^\s<>"']+/i.exec(line)?.[0];
+    if (urlText) this.pendingAuthorizationUrl = urlText.replace(/[),.;]+$/, '');
+
+    if (this.pendingAuthorizationUrl) {
+      if (authorizationPrompt) return this.publishPendingAuthorizationUrl();
+
+      const continuation = line.trim();
+      if (!urlText && continuation && isAuthorizationUrlContinuation(continuation)) {
+        const combined = `${this.pendingAuthorizationUrl}${continuation}`;
+        if (
+          Buffer.byteLength(combined) > AntigravityAuthDriver.MAX_PENDING_AUTHORIZATION_URL_BYTES
+        ) {
+          this.pendingAuthorizationUrl = undefined;
+        } else {
+          this.pendingAuthorizationUrl = combined;
+        }
+      }
+      return undefined;
+    }
+
+    return undefined;
+  }
+
+  parseOutputFragment(stream: AuthOutputStream, fragment: string): AuthOutputUpdate | undefined {
+    if (
+      /copy and paste the URL|click here to authenticate/i.test(fragment) ||
+      (this.authorizationUrl &&
+        /(?:invalid|expired|incorrect).{0,40}(?:code|authori[sz])/i.test(fragment))
+    ) {
+      return this.parseOutput(stream, fragment);
+    }
+    return undefined;
+  }
+
+  private publishPendingAuthorizationUrl(): AuthOutputUpdate | undefined {
+    const candidate = this.pendingAuthorizationUrl;
+    this.pendingAuthorizationUrl = undefined;
+    if (!candidate) return undefined;
+    const url = extractUrl(candidate, 'accounts.google.com');
     if (!url) return undefined;
+
     this.authorizationUrl = url;
     return {
       awaitingUserAction: true,
-      authorizationUrl: url,
+      authorizationUrl: this.authorizationUrl,
       requiresCodeSubmission: true,
     };
   }
@@ -143,6 +234,10 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
     const observation = await this.adapter.inspect({ signal });
     return observation.health === 'UP' || observation.health === 'DEGRADED';
   }
+}
+
+function isAuthorizationUrlContinuation(line: string): boolean {
+  return /^[A-Za-z0-9._~:/?&=%+-]+$/.test(line);
 }
 
 export function createProviderAuthDrivers(

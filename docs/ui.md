@@ -15,7 +15,11 @@ The overview should answer at a glance:
 
 ## Overview
 
-One provider card per configured provider:
+When more than one provider is available, compact logo cards select which
+provider to inspect. Only the selected provider's full overview is shown, so
+usage windows and policy details stay focused instead of competing side by
+side. The same selector indicates connection status; providers that still need
+setup appear muted. With one provider, the selector is omitted.
 
 ```text
 Codex                         Connected
@@ -87,13 +91,14 @@ auth state are never editable or rendered.
 - a collapsed, plain-language summary of provider capabilities and quota impact;
 - “inspect now”.
 
-Provider settings also contain an inline account-connection panel for Codex and
-Antigravity when their adapters are configured. It starts the official client,
-shows only a provider-approved HTTPS sign-in URL and bounded one-time code when
-the client emits them, and verifies completion with a fresh official read.
-Auth-session state is held in memory only; event history contains lifecycle and
-bounded reason codes, never process output or submitted codes. The `Connected`
-indicator is a live-status dot; it honors reduced-motion preferences.
+Each provider is shown in one connection-first settings card. Sign-in for
+Codex and Antigravity lives in that card; disconnected accounts get a primary
+connect action, while monitoring controls stay hidden until connection succeeds.
+Connected accounts show their settings and keep reconnect options secondary.
+Sign-in links and device codes can be copied from the inline flow. Auth-session
+state is held in memory only; event history contains lifecycle and bounded reason
+codes, never process output or submitted codes. The `Connected` indicator is a
+live-status dot and honors reduced-motion preferences.
 
 ## Usage
 

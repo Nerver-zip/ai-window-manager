@@ -29,6 +29,7 @@ export interface AuthOnboardingInput {
   providerId: AuthProviderId;
   status?: AuthOnboardingStatus | null;
   configured?: boolean;
+  reconnect?: boolean;
 }
 
 const PROVIDER_LABELS: Readonly<Record<AuthProviderId, string>> = {
@@ -36,44 +37,35 @@ const PROVIDER_LABELS: Readonly<Record<AuthProviderId, string>> = {
   antigravity: 'Antigravity',
 };
 
-const STATE_LABELS: Readonly<Record<AuthSessionState, string>> = {
-  IDLE: 'Not connected',
-  STARTING: 'Starting sign-in',
-  AWAITING_USER_ACTION: 'Action needed',
-  VERIFYING: 'Checking sign-in',
-  SUCCEEDED: 'Connected',
-  FAILED: 'Sign-in failed',
-  TIMED_OUT: 'Sign-in expired',
-  CANCELED: 'Sign-in canceled',
-};
-
 const STATE_DETAILS: Readonly<Record<AuthSessionState, string>> = {
-  IDLE: 'Start the official sign-in flow to connect this provider.',
-  STARTING: 'The official provider client is preparing a sign-in request.',
-  AWAITING_USER_ACTION: 'Continue in the official provider sign-in page.',
-  VERIFYING: 'The provider client is checking that sign-in completed.',
-  SUCCEEDED: 'This provider is connected and ready for usage checks.',
-  FAILED: 'The official sign-in could not be completed. You can try again.',
-  TIMED_OUT: 'The sign-in window expired before it was completed. Start again.',
-  CANCELED: 'The sign-in request was canceled. You can start again.',
+  IDLE: '',
+  STARTING: 'Opening sign-in…',
+  AWAITING_USER_ACTION: '',
+  VERIFYING: 'Checking your account…',
+  SUCCEEDED: 'Connected. Usage checks are ready.',
+  FAILED: '',
+  TIMED_OUT: '',
+  CANCELED: '',
 };
 
 const REASON_DETAILS: Readonly<Record<string, string>> = {
-  ALREADY_AUTHENTICATED:
-    'This provider is already signed in. The existing sign-in was left unchanged.',
-  AUTH_STATUS_UNAVAILABLE:
-    'The app could not safely check the current sign-in state. The existing sign-in was left unchanged.',
-  AUTH_REQUIRED: 'The provider needs you to sign in with its official client.',
-  AUTH_START_FAILED: 'The official client could not start sign-in.',
-  AUTH_START_TIMEOUT: 'The official sign-in process did not respond in time. Try again.',
-  AUTH_PROCESS_FAILED: 'The official client ended before sign-in could be verified.',
-  AUTH_VERIFICATION_FAILED: 'Sign-in finished, but the provider could not verify it.',
-  AUTH_SESSION_EXPIRED: 'The sign-in window expired before it was completed.',
-  AUTH_CANCELED: 'The sign-in request was canceled.',
-  AUTH_OUTPUT_LIMIT:
-    'The provider returned too much sign-in output. The session was stopped safely.',
-  AUTH_CODE_REJECTED: 'The provider did not accept that sign-in code. Check it and try again.',
-  AUTH_PROVIDER_UNAVAILABLE: 'The official provider client is not available right now.',
+  ALREADY_AUTHENTICATED: 'You’re already signed in. Your account was left unchanged.',
+  AUTH_STATUS_UNAVAILABLE: 'We couldn’t check your sign-in status. Try again.',
+  AUTH_REQUIRED: 'Sign in to connect your account.',
+  AUTH_START_FAILED: 'Couldn’t start sign-in. Try again.',
+  AUTH_START_TIMEOUT: 'Sign-in timed out. Try again.',
+  AUTH_PROCESS_FAILED: 'Sign-in closed before it could be confirmed. Try again.',
+  AUTH_VERIFICATION_FAILED: 'We couldn’t confirm sign-in. Try again.',
+  AUTH_SESSION_EXPIRED: 'Sign-in timed out. Try again.',
+  AUTH_CANCELED: 'Sign-in canceled. Try again.',
+  AUTH_OUTPUT_LIMIT: 'We couldn’t complete sign-in. Try again.',
+  AUTH_CODE_REJECTED: 'Sign-in code was not accepted. Please check the code and try again.',
+  AUTH_PROVIDER_UNAVAILABLE: 'Sign-in is temporarily unavailable. Try again later.',
+};
+
+const PROVIDER_SIGN_IN_COPY: Readonly<Record<AuthProviderId, string>> = {
+  codex: 'Sign in with OpenAI to start tracking your usage windows.',
+  antigravity: 'Sign in with Google to start tracking your usage windows.',
 };
 
 const ACTIVE_STATES = new Set<AuthSessionState>(['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING']);
@@ -97,8 +89,7 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
       submitUrl,
       cancelUrl,
       state: 'empty',
-      statusLabel: 'Not configured',
-      detail: 'Authentication is not configured for this provider.',
+      detail: 'Sign-in is not available for this provider yet.',
       startHidden: true,
       cancelHidden: true,
       awaitingHidden: true,
@@ -115,8 +106,7 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
       submitUrl,
       cancelUrl,
       state: 'loading',
-      statusLabel: 'Checking sign-in status',
-      detail: 'Loading the provider connection status.',
+      detail: 'Checking your connection…',
       startHidden: true,
       cancelHidden: true,
       awaitingHidden: true,
@@ -133,12 +123,10 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
       submitUrl,
       cancelUrl,
       state: 'error',
-      statusLabel: 'Status unavailable',
       detail: 'The provider connection status could not be loaded. Try again.',
       startHidden: false,
       cancelHidden: true,
       awaitingHidden: true,
-      errorMessage: 'The status check failed. Starting sign-in will try again.',
     });
   }
 
@@ -157,9 +145,8 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
     submitUrl,
     cancelUrl,
     state: status.state,
-    statusLabel: STATE_LABELS[status.state],
     detail: STATE_DETAILS[status.state],
-    startHidden: active || status.state === 'SUCCEEDED',
+    startHidden: active || (status.state === 'SUCCEEDED' && !input.reconnect),
     cancelHidden: !active,
     awaitingHidden: !awaiting,
     authorizationUrl,
@@ -167,7 +154,12 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
     requiresCodeSubmission: awaiting && status.requiresCodeSubmission,
     errorMessage:
       status.state === 'FAILED' || status.state === 'TIMED_OUT' || status.state === 'CANCELED'
-        ? (reasonDetail ?? STATE_DETAILS[status.state])
+        ? reasonDetail ||
+          (status.state === 'FAILED'
+            ? 'We couldn’t complete sign-in. Try again.'
+            : status.state === 'TIMED_OUT'
+              ? 'Sign-in timed out. Try again.'
+              : 'Sign-in canceled. Try again.')
         : undefined,
     expiresAt: active ? status.expiresAt : null,
   });
@@ -182,7 +174,6 @@ interface RenderPanelInput {
   submitUrl: string;
   cancelUrl: string;
   state: AuthSessionState | 'empty' | 'loading' | 'error';
-  statusLabel: string;
   detail: string;
   startHidden: boolean;
   cancelHidden: boolean;
@@ -208,42 +199,46 @@ function renderPanel(input: RenderPanelInput): string {
   const expiresAt = input.expiresAt ? escapeHtml(input.expiresAt) : null;
   const errorMessage = input.errorMessage ? escapeHtml(input.errorMessage) : '';
 
-  return `<section class="auth-onboarding" data-auth-onboarding data-auth-state="${state}" data-auth-provider-id="${escapeHtml(input.input.providerId)}" data-auth-status-url="${statusUrl}" data-auth-start-url="${startUrl}" data-auth-submit-url="${submitUrl}" data-auth-cancel-url="${cancelUrl}" aria-labelledby="${panelId}-title">
-  <div class="auth-onboarding__header">
-    <div>
-      <p class="eyebrow">Account connection</p>
-      <h2 id="${panelId}-title">Connect ${providerLabel}</h2>
-      <p class="auth-onboarding__intro">Sign in through the provider’s official client. AI Window Manager never asks for your password or tokens.</p>
-    </div>
-    <span class="auth-onboarding__status" data-auth-status-badge data-auth-state="${state}"><span class="auth-onboarding__status-dot" aria-hidden="true"></span><span data-auth-status-label>${escapeHtml(input.statusLabel)}</span></span>
-  </div>
+  const providerCopy = input.input.reconnect
+    ? `Reconnect your ${providerLabel} account to resume usage tracking.`
+    : PROVIDER_SIGN_IN_COPY[input.input.providerId];
+  const actionLabel = input.input.reconnect
+    ? `Reconnect ${providerLabel}`
+    : `Connect ${providerLabel}`;
+  return `<section class="auth-onboarding" data-auth-onboarding data-auth-role="${input.input.reconnect ? 'reconnect' : 'connect'}" data-auth-state="${state}" data-auth-provider-id="${escapeHtml(input.input.providerId)}" data-auth-status-url="${statusUrl}" data-auth-start-url="${startUrl}" data-auth-submit-url="${submitUrl}" data-auth-cancel-url="${cancelUrl}" aria-label="${escapeHtml(providerLabel)} account sign-in">
   <div class="auth-onboarding__body">
-    <p class="auth-onboarding__detail" data-auth-status-detail aria-live="polite">${escapeHtml(input.detail)}</p>
+    <p class="auth-onboarding__intro">${escapeHtml(providerCopy)}</p>
+    <p class="auth-onboarding__detail" data-auth-status-detail aria-live="polite"${input.detail ? '' : ' hidden'}>${escapeHtml(input.detail)}</p>
     <p class="auth-onboarding__expiry" data-auth-expiry${expiresAt ? '' : ' hidden'}>${expiresAt ? `This sign-in expires at <time datetime="${expiresAt}">${expiresAt}</time>.` : ''}</p>
     <p class="auth-onboarding__error" data-auth-error role="alert"${errorMessage ? '' : ' hidden'}>${errorMessage}</p>
     <div class="auth-onboarding__actions" data-auth-actions>
-      <button class="button button-primary" type="button" data-auth-start${input.startHidden ? ' hidden' : ''}>Start official sign-in</button>
+      <button class="button button-primary" type="button" data-auth-start${input.startHidden ? ' hidden' : ''}>${escapeHtml(actionLabel)}</button>
       <button class="button button-secondary" type="button" data-auth-cancel${input.cancelHidden ? ' hidden' : ''}>Cancel</button>
     </div>
     <div class="auth-onboarding__awaiting" data-auth-awaiting${input.awaitingHidden ? ' hidden' : ''}>
       <div class="auth-onboarding__next-step">
         <span class="field-label">Next step</span>
-        <p>Open the official sign-in page and finish the request there.</p>
-        <a class="button button-secondary" data-auth-authorization${link ? '' : ' hidden'}${link ? ` href="${escapeHtml(link)}"` : ''} target="_blank" rel="noopener noreferrer">Open official sign-in</a>
+        <p>Open the sign-in page and finish the request there.</p>
+        <div class="auth-onboarding__link-actions"><a class="button button-secondary" data-auth-authorization${link ? '' : ' hidden'}${link ? ` href="${escapeHtml(link)}"` : ''} target="_blank" rel="noopener noreferrer">Open sign-in</a><button class="auth-copy-button" type="button" data-auth-copy-url${link ? '' : ' hidden'} aria-label="Copy sign-in link"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="11" rx="2"/><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>Copy link</span></button></div>
+      </div>
+      <div class="auth-onboarding__device-code" data-auth-device-code${code ? '' : ' hidden'} aria-live="polite">
+        <span class="field-label">Sign-in code</span>
+        <p class="auth-onboarding__code-hint">Enter this code on the sign-in page.</p>
+        <div class="auth-onboarding__code-copy-row"><p class="auth-onboarding__user-code" data-auth-user-code${code ? '' : ' hidden'}>${code ? escapeHtml(code) : ''}</p><button class="auth-copy-button" type="button" data-auth-copy-code${code ? '' : ' hidden'} aria-label="Copy sign-in code"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="11" rx="2"/><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>Copy code</span></button></div>
       </div>
       <div class="auth-onboarding__code" data-auth-code-section${input.requiresCodeSubmission ? '' : ' hidden'}>
-        <label class="field-label" for="${panelId}-code">One-time code</label>
-        <p class="auth-onboarding__code-hint">Use the code shown by the official provider sign-in flow.</p>
-        <p class="auth-onboarding__user-code" data-auth-user-code${code ? '' : ' hidden'}>${code ? escapeHtml(code) : ''}</p>
+        <label class="field-label" for="${panelId}-code">Sign-in code</label>
+        <p class="auth-onboarding__code-hint">Enter the code shown by the provider.</p>
         <div class="auth-onboarding__code-row">
         <input id="${panelId}-code" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" maxlength="128" data-auth-code-input aria-describedby="${panelId}-code-hint">
           <button class="button button-primary" type="button" data-auth-submit>Continue</button>
         </div>
-        <p id="${panelId}-code-hint" class="field-help">The code is used once and is cleared immediately after submission.</p>
+        <p id="${panelId}-code-hint" class="field-help">The code is cleared after submission.</p>
       </div>
     </div>
+    <p class="auth-onboarding__copy-status" data-auth-copy-status role="status" aria-live="polite"></p>
   </div>
-  <noscript><p class="auth-onboarding__noscript">JavaScript is required to start and verify provider sign-in.</p></noscript>
+  <noscript><p class="auth-onboarding__noscript">JavaScript is required to connect an account.</p></noscript>
 </section>`;
 }
 

@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Research date: **2026-09-20**.
+Research date: **2026-09-24**.
 
 ## Normalized adapter contract
 
@@ -111,6 +111,11 @@ blindly retried.
   and the observed nested usage payload are parseable, but the nested payload
   remains an official-client output contract with version-drift risk.
 - Community/runtime observations can show model-specific five-hour/weekly countdowns, but those formats must not become domain contracts.
+- In the pinned CLI 1.2.9 sign-in transcript observed on 2026-09-24, `agy`
+  first presents a login-method selector and then prints a wrapped Google OAuth
+  URL. AWM advances only when the official screen explicitly marks option 1
+  (Google OAuth) as selected, then exposes the complete URL and forwards only
+  the operator-entered browser code to the waiting CLI.
 
 ### Inferred
 
@@ -154,7 +159,7 @@ secret. That runtime has offline packaging/probe coverage, but authenticated
 login reuse after restart still requires explicit operator acceptance.
 
 The production capability remains `windowTrigger.supported = false`; no
-Antigravity prompt or quota-consuming action is implemented.
+quota-positioning prompt or quota-consuming action is implemented.
 
 ## Provider contract change detection
 

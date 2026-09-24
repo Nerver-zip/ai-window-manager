@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
 import { renderAppShell } from './ui/layout.js';
+import { renderProviderPicker } from './ui/provider-picker.js';
 import { APP_CSS } from './ui/styles.js';
 import { APP_JS } from './ui/chart-interactions.js';
 import { AUTH_ONBOARDING_CSS } from './ui/auth-onboarding-styles.js';
@@ -82,6 +83,7 @@ import {
   providerDisplayName,
   providerLogoUrl,
   timeZoneDisplayName,
+  windowGroupDisplayName,
   windowDisplayName,
 } from './ui/presentation.js';
 
@@ -409,7 +411,9 @@ export function buildServer(input: BuildServerInput) {
       },
       providers: providers.map((provider) => ({
         id: provider.id,
-        label: providerDisplayName(provider.id),
+        label: providerDisplayName(provider.id, provider.kind),
+        kind: provider.kind,
+        ...providerConnectionPresentation(input.repositories.providerState.get(provider.id)),
       })),
       events: logPage.events,
       samples: samples.map(historyUsageSample),
@@ -615,17 +619,21 @@ export function buildServer(input: BuildServerInput) {
     return reply.code(result.statusCode).send(result.body);
   });
 
-  app.get('/', async (_request, reply) => {
+  app.get('/', async (request, reply) => {
     const providers = readProviders(input);
     reply.type('text/html; charset=utf-8');
-    const csrf = ensureCsrfToken(_request.headers.cookie, {
-      secure: _request.protocol === 'https',
+    const csrf = ensureCsrfToken(request.headers.cookie, {
+      secure: request.protocol === 'https',
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     const timezone =
       readTimezoneSetting({ repositories: input.repositories })?.timezone ??
       input.config.AWM_TIMEZONE;
-    return renderOverview(providers, input.clock.now(), timezone);
+    const requestedProviderId = stringValue(asRecord(request.query).provider) ?? undefined;
+    const selectedProviderId = providers.some((provider) => provider.id === requestedProviderId)
+      ? requestedProviderId
+      : providers[0]?.id;
+    return renderOverview(providers, input.clock.now(), timezone, selectedProviderId);
   });
 
   return app;
@@ -981,6 +989,8 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
   ).map((provider) => {
     const adapter = input.adapters.get(provider.id);
     const capabilities = adapter ? safeCapabilities(adapter) : undefined;
+    const state = input.repositories.providerState.get(provider.id);
+    const connection = providerConnectionPresentation(state);
     return {
       id: provider.id,
       kind: provider.kind,
@@ -988,11 +998,34 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
       mode: provider.mode,
       pollIntervalSeconds: provider.pollIntervalSeconds,
       ...(capabilities ? { capabilities } : {}),
-      windows: input.repositories.providerState.get(provider.id)?.observation?.windows ?? [],
-      staleAfterSeconds: input.repositories.providerState.get(provider.id)?.observation
-        ?.staleAfterSeconds,
+      windows: state?.observation?.windows ?? [],
+      staleAfterSeconds: state?.observation?.staleAfterSeconds,
+      configured: connection.configured,
+      connectionLabel: connection.statusLabel,
     };
   });
+}
+
+function providerConnectionPresentation(
+  state: Pick<ProviderRead, 'health' | 'observation'> | null | undefined,
+): {
+  configured: boolean;
+  statusLabel: string;
+} {
+  const health = state?.health;
+  return {
+    configured: health === 'UP' || health === 'DEGRADED' || Boolean(state?.observation),
+    statusLabel:
+      health === 'UP'
+        ? 'Connected'
+        : health === 'DEGRADED'
+          ? 'Needs attention'
+          : health === 'AUTH_REQUIRED'
+            ? 'Sign in to connect'
+            : state?.observation
+              ? 'Check connection'
+              : 'Set up in Settings',
+  };
 }
 
 function readProviders(input: BuildServerInput): ProviderRead[] {
@@ -1104,7 +1137,9 @@ function resolveUsageView(input: BuildServerInput, query: Record<string, unknown
     visibleProviderIds: new Set(providers.map((provider) => provider.id)),
     providers: providers.map((provider) => ({
       id: provider.id,
-      label: providerDisplayName(provider.id),
+      label: providerDisplayName(provider.id, provider.kind),
+      kind: provider.kind,
+      ...providerConnectionPresentation(input.repositories.providerState.get(provider.id)),
     })),
   });
 
@@ -1168,15 +1203,37 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function renderOverview(providers: ProviderRead[], now: Date, timezone: string): string {
-  const cards = providers.map((provider) => renderProviderCard(provider, now, timezone)).join('');
+function renderOverview(
+  providers: ProviderRead[],
+  now: Date,
+  timezone: string,
+  selectedProviderId: string | undefined,
+): string {
+  const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
+  const selector =
+    providers.length > 1
+      ? `<form class="overview-provider-switcher" method="get" action="/" data-provider-picker-auto-submit aria-label="Choose provider">${renderProviderPicker(
+          {
+            name: 'provider',
+            legend: 'Provider',
+            options: providers.map((provider) => ({
+              value: provider.id,
+              label: providerDisplayName(provider.id, provider.kind),
+              kind: provider.kind,
+              ...providerConnectionPresentation(provider),
+            })),
+            selectedValue: selectedProviderId ?? null,
+          },
+        )}<noscript><button type="submit">Show provider</button></noscript></form>`
+      : '';
+  const card = selectedProvider ? renderProviderCard(selectedProvider, now, timezone) : '';
   return renderAppShell({
     page: 'overview',
     title: 'Overview',
     description: 'Your usage windows, remaining allowance, and selected start policies.',
-    content:
-      cards ||
-      '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>',
+    content: card
+      ? `${selector}${card}`
+      : '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>',
   });
 }
 
@@ -1210,10 +1267,7 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
         ? 'Waiting for the first update'
         : 'Monitoring is paused'
       : `Last checked ${formatAge(provider.freshness.ageSeconds)} ago`;
-  const windows =
-    provider.windows.length > 0
-      ? `<div class="window-grid">${provider.windows.map((window) => renderWindow(provider.id, window, now, timezone)).join('')}</div>`
-      : '<div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div>';
+  const windows = renderProviderWindows(provider, now, timezone);
 
   const displayName = providerDisplayName(provider.id, provider.kind);
   const connectionState = !provider.enabled
@@ -1256,6 +1310,30 @@ function renderProviderCard(provider: ProviderRead, now: Date, timezone: string)
   const selectedPolicy = renderSelectedPolicy(provider);
   const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
   return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${selectedPolicy}${windows}${details}</article>`;
+}
+
+function renderProviderWindows(provider: ProviderRead, now: Date, timezone: string): string {
+  if (provider.windows.length === 0) {
+    return '<div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div>';
+  }
+
+  const groups = new Map<string | null, WindowSnapshot[]>();
+  for (const window of provider.windows) {
+    const label = windowGroupDisplayName(window.windowKind);
+    const windows = groups.get(label) ?? [];
+    windows.push(window);
+    groups.set(label, windows);
+  }
+
+  if (groups.size === 1 && groups.has(null)) {
+    return `<div class="window-grid">${provider.windows.map((window) => renderWindow(provider.id, window, now, timezone)).join('')}</div>`;
+  }
+
+  return `<div class="window-families">${Array.from(groups, ([label, windows]) =>
+    label
+      ? `<section class="window-family" aria-label="${escapeHtml(label)}"><h3>${escapeHtml(label)}</h3><div class="window-grid">${windows.map((window) => renderWindow(provider.id, window, now, timezone, 'h4')).join('')}</div></section>`
+      : `<div class="window-grid">${windows.map((window) => renderWindow(provider.id, window, now, timezone)).join('')}</div>`,
+  ).join('')}</div>`;
 }
 
 function renderSelectedPolicy(provider: ProviderRead): string {
@@ -1371,6 +1449,7 @@ function renderWindow(
   window: WindowSnapshot,
   now: Date,
   timezone: string,
+  headingTag: 'h3' | 'h4' = 'h3',
 ): string {
   const usage = window.usageRatio;
   const label = windowDisplayName(providerId, window.windowKind, window.durationSeconds?.value);
@@ -1386,7 +1465,7 @@ function renderWindow(
   const reset = window.resetAt
     ? `<div class="window-reset"><span class="field-label">Resets</span><strong>${isEstimatedSource(window.resetAt.source) ? 'About ' : ''}${escapeHtml(formatLocalInstant(window.resetAt.value, timezone))}</strong><span class="reset-relative">${escapeHtml(approximateResetText(window.resetAt, now))}</span><small>${escapeHtml(timeZoneDisplayName(timezone))} · local</small><small>${escapeHtml(formatUtc(window.resetAt.value))}</small></div>`
     : `<div class="window-reset"><span class="field-label">Reset time</span><strong class="unknown">Not available yet</strong></div>`;
-  return `<section class="window-card"><div class="window-header"><h3>${escapeHtml(label)}</h3>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}</section>`;
+  return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}</section>`;
 }
 
 function windowPhaseLabel(window: WindowSnapshot): string | null {

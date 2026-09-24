@@ -65,6 +65,9 @@ export function processUsageAggregationBatch(
 export interface UsageProviderOption {
   id: string;
   label: string;
+  kind?: string;
+  configured?: boolean;
+  statusLabel?: string;
 }
 
 export interface UsageSeriesOption {

@@ -213,11 +213,21 @@ export function windowDisplayName(
       ? 'five_hour'
       : providerId === 'codex' && windowKind.endsWith('_secondary')
         ? 'weekly'
-        : windowKind;
+        : windowKind.startsWith('antigravity_') && windowKind.endsWith('_five_hour')
+          ? 'five_hour'
+          : windowKind.startsWith('antigravity_') && windowKind.endsWith('_weekly')
+            ? 'weekly'
+            : windowKind;
   if (WINDOW_LABELS[providerWindow]) return WINDOW_LABELS[providerWindow];
   if (durationSeconds === 18_000) return '5-hour window';
   if (durationSeconds === 604_800) return 'Weekly window';
   return 'Usage window';
+}
+
+export function windowGroupDisplayName(windowKind: string): string | null {
+  if (windowKind.startsWith('antigravity_gemini_')) return 'Gemini Models';
+  if (windowKind.startsWith('antigravity_claude_gpt_')) return 'Claude and GPT Models';
+  return null;
 }
 
 export function evidenceLabel(source: string): string {

@@ -10,6 +10,7 @@ import {
 } from './logs-ui.js';
 import { escapeHtml, renderAppShell } from './ui/layout.js';
 import { providerDisplayName, timeZoneDisplayName, windowDisplayName } from './ui/presentation.js';
+import { renderProviderPicker } from './ui/provider-picker.js';
 
 export interface UsagePageInput {
   data: UsagePageData;
@@ -38,10 +39,6 @@ export function renderUsagePage(input: UsagePageInput): string {
     selectedDayIndex >= 0
       ? selectedDayIndex
       : data.days.findIndex((day) => day.localDate === data.today);
-  const providerFields =
-    providerId && data.providers.length === 1
-      ? `<input type="hidden" name="provider" value="${escapeHtml(providerId)}">`
-      : '';
   const selectedDayField = selectedDay
     ? `<input type="hidden" name="day" value="${escapeHtml(selectedDay.localDate)}">`
     : '';
@@ -51,12 +48,20 @@ export function renderUsagePage(input: UsagePageInput): string {
       return `<option value="${escapeHtml(window.windowKind)}"${window.windowKind === selectedWindow ? ' selected' : ''}>${escapeHtml(label)}</option>`;
     })
     .join('');
-  const providerOptions = data.providers
-    .map(
-      (provider) =>
-        `<option value="${escapeHtml(provider.id)}"${provider.id === providerId ? ' selected' : ''}>${escapeHtml(providerDisplayName(provider.id))}</option>`,
-    )
-    .join('');
+  const providerPicker = renderProviderPicker({
+    name: 'provider',
+    legend: 'Provider',
+    options: data.providers.map((provider) => ({
+      value: provider.id,
+      label: provider.label || providerDisplayName(provider.id, provider.kind),
+      ...(provider.kind ? { kind: provider.kind } : {}),
+      ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
+      ...(provider.statusLabel !== undefined ? { statusLabel: provider.statusLabel } : {}),
+    })),
+    selectedValue: providerId,
+    required: data.providers.length > 0,
+    emptyText: 'No providers available.',
+  });
   const preservedRanges = chartSeries
     .map((series) => {
       const range =
@@ -102,8 +107,8 @@ export function renderUsagePage(input: UsagePageInput): string {
     <section class="usage-controls" aria-label="Usage filters">
       <div class="usage-controls-copy"><span class="eyebrow">Your activity</span><h2>Usage by day</h2><p>Weekly allowance used, based on saved provider updates.</p><p class="usage-timezone">Calendar dates use ${escapeHtml(timeZoneDisplayName(data.timezone))} · <a href="/settings">Change in Settings</a></p></div>
       <form method="get" action="/usage" class="usage-filter-form" aria-label="Usage filters">
-        ${preservedRanges}${selectedDayField}${providerFields}
-        <label class="field"><span class="field-label">Provider</span><select name="provider"${data.providers.length <= 1 ? ' disabled' : ''}>${providerOptions}</select></label>
+        ${preservedRanges}${selectedDayField}
+        ${providerPicker}
         ${data.windows.length > 1 ? `<label class="field"><span class="field-label">Usage window</span><select name="window">${windowOptions}</select></label>` : selectedWindow ? `<input type="hidden" name="window" value="${escapeHtml(selectedWindow)}">` : ''}
         <button class="button button-secondary" type="submit">Update view</button>
       </form>

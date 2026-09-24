@@ -173,8 +173,9 @@ describe('Usage page', () => {
     expect(html).toContain('outside the available range');
     expect(html).toContain('name="window"><option value="weekly" selected>');
     expect(html).toContain('option value="five_hour"');
-    expect(html).toContain('name="provider"><option value="codex" selected>');
-    expect(html).toContain('option value="antigravity"');
+    expect(html).toContain('name="provider" value="codex" checked');
+    expect(html).toContain('value="antigravity"');
+    expect(html).toContain('class="provider-picker"');
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('<option value="codex|five_hour|3h" selected>3h</option>');
   });

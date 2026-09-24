@@ -48,8 +48,10 @@ The image also packages the official Antigravity CLI `1.2.9` with
 architecture-specific SHA-256 verification. `AWM_ANTIGRAVITY_ENABLED=false` is
 the default. When enabled, the entrypoint starts a private D-Bus session and
 GNOME Secret Service as UID 10001, with `XDG_*` paths rooted in the dedicated
-provider volumes. It does not copy workstation login state. The login itself is
-performed by the official CLI through the Settings onboarding flow; normal
+provider volumes. It does not copy workstation login state. The Settings
+onboarding flow advances the official CLI only after its login-method prompt
+shows Google OAuth selected, then presents the CLI's complete authorization
+URL and forwards the operator-entered browser code back to that CLI. Normal
 inspection runs only the documented headless `/usage` command. Antigravity
 trigger capability is permanently false in this milestone.
 

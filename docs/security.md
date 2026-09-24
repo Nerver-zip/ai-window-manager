@@ -24,7 +24,10 @@ Manager talks to the official client protocol and does not copy a workstation
 auth file back and forth. This avoids shared refresh-token races and reduces
 coupling to raw token formats. Authentication processes must emit a recognized
 sign-in prompt within 60 seconds or are stopped; this is separate from the
-bounded overall interactive session deadline.
+bounded overall interactive session deadline. The web flow captures only the
+short-lived device code and official sign-in URL from the CLI's interactive
+terminal; it never reads, parses, or returns OAuth/access/refresh tokens. The
+official Codex CLI alone persists authentication in `/codex-state`.
 The Web-assisted login flow has offline process/UI coverage; completing it
 with an operator account and verifying the new session after container restart
 remain pending acceptance.
@@ -48,7 +51,13 @@ Antigravity CLI-state and keyring volumes under UID 10001; it does not mount the
 host home, host D-Bus socket, or host keyring. An optional operator-managed
 keyring unlock value is read from a mounted file under `/run/secrets`, never
 from an environment variable, image, database, browser response, log, or
-metric. Live authenticated login/restart acceptance remains pending; do not
+metric. On sign-in, AWM waits for the official CLI's `Select login method`
+screen and sends one Enter only when `1. Google OAuth` is explicitly selected;
+it never selects the Google Cloud project option. It then captures the
+complete official Google sign-in URL and forwards only the browser-issued code
+entered by the operator to the waiting CLI process. AWM never reads or returns
+Antigravity tokens. Live authenticated login/restart acceptance remains
+pending; do not
 represent offline keyring startup as proof that account authentication works.
 
 ## Network exposure

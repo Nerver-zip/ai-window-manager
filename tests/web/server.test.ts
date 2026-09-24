@@ -217,13 +217,17 @@ describe('web server persisted overview', () => {
       });
     });
 
-    const page = await app.inject('/');
-    expect(page.body).toContain(
+    const connectedPage = await app.inject('/?provider=fake');
+    expect(connectedPage.body).toContain(
       '<span class="badge badge-success"><span class="online-indicator" aria-hidden="true"></span>Connected</span>',
     );
-    expect(page.body).toContain('<span class="badge badge-warning">Monitoring paused</span>');
-    expect(page.body).toContain('<span class="badge badge-warning">Needs attention</span>');
-    expect(page.body.match(/class="online-indicator"/g)).toHaveLength(1);
+    expect(connectedPage.body.match(/class="online-indicator"/g)).toHaveLength(1);
+    expect((await app.inject('/?provider=paused')).body).toContain(
+      '<span class="badge badge-warning">Monitoring paused</span>',
+    );
+    expect((await app.inject('/?provider=failed')).body).toContain(
+      '<span class="badge badge-warning">Needs attention</span>',
+    );
 
     const css = await app.inject('/assets/app.css');
     expect(css.body).toContain('@keyframes online-pulse');
@@ -285,16 +289,42 @@ describe('web server persisted overview', () => {
     expect(traversal.statusCode).toBe(404);
   });
 
-  it('renders provider cards with provider logos when available', async () => {
+  it('shows provider choices while rendering only the selected overview card', async () => {
     const { app } = createApp((repositories) => {
       seedObservedProvider(repositories, 'fake', NOW, 'fake');
       seedObservedProvider(repositories, 'codex', NOW, 'codex');
     });
-    const page = await app.inject('/');
+    const defaultPage = await app.inject('/');
+    expect(defaultPage.statusCode).toBe(200);
+    expect(defaultPage.body).toContain('data-provider-picker-auto-submit');
+    expect(defaultPage.body.match(/<article class="provider(?: stale)?">/g)).toHaveLength(1);
+    expect(defaultPage.body.match(/name="provider" value="[^"]+" checked/g)).toHaveLength(1);
+
+    const page = await app.inject('/?provider=codex');
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain('/assets/images/providers/codex.png');
     expect(page.body).toContain('Test provider');
     expect(page.body).toContain('Codex');
+    expect(page.body).toContain('data-provider-picker-auto-submit');
+    expect(page.body).toContain('name="provider" value="codex" checked');
+    expect(page.body.match(/<article class="provider(?: stale)?">/g)).toHaveLength(1);
+    const selectedCard = page.body.match(
+      /<article class="provider(?: stale)?">[\s\S]*?<\/article>/,
+    )?.[0];
+    expect(selectedCard).toContain('Codex');
+    expect(selectedCard).not.toContain('Test provider');
+
+    const otherProvider = await app.inject('/?provider=fake');
+    expect(otherProvider.body).toContain('name="provider" value="fake" checked');
+    const fakeCard = otherProvider.body.match(
+      /<article class="provider(?: stale)?">[\s\S]*?<\/article>/,
+    )?.[0];
+    expect(fakeCard).toContain('Test provider');
+    expect(fakeCard).not.toContain('Codex');
+
+    const invalidSelection = await app.inject('/?provider=unknown');
+    expect(invalidSelection.body.match(/<article class="provider(?: stale)?">/g)).toHaveLength(1);
+    expect(invalidSelection.body.match(/name="provider" value="[^"]+" checked/g)).toHaveLength(1);
   });
 
   it.each([
@@ -436,11 +466,11 @@ describe('web server persisted overview', () => {
       );
     });
 
-    const overview = await app.inject('/');
+    const overview = await app.inject('/?provider=codex');
     expect(overview.body).toContain('href="/schedule?providerId=codex">Change</a>');
     const schedule = await app.inject('/schedule?providerId=codex');
     expect(schedule.statusCode).toBe(200);
-    expect(schedule.body).toContain('<option value="codex" selected>Codex</option>');
+    expect(schedule.body).toContain('name="providerId" value="codex" checked required');
     expect(schedule.body).toContain('value="17:00"');
   });
 
@@ -493,6 +523,33 @@ describe('web server persisted overview', () => {
     const schedule = await app.inject('/schedule?providerId=fake');
     expect(schedule.statusCode).toBe(200);
     expect(schedule.body).toContain('What happens next');
+  });
+
+  it('separates Antigravity usage windows by model family', async () => {
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories, 'antigravity', NOW, 'antigravity');
+      const state = repositories.providerState.get('antigravity');
+      const baseWindow = state?.observation?.windows[0];
+      if (!state?.observation || !baseWindow) throw new Error('missing Antigravity observation');
+      state.observation.windows = [
+        'antigravity_gemini_weekly',
+        'antigravity_gemini_five_hour',
+        'antigravity_claude_gpt_weekly',
+        'antigravity_claude_gpt_five_hour',
+      ].map((windowKind) => ({ ...baseWindow, windowKind }));
+      repositories.providerState.upsert(state);
+    });
+
+    const page = await app.inject('/');
+
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('aria-label="Gemini Models"');
+    expect(page.body).toContain('aria-label="Claude and GPT Models"');
+    expect(page.body).toContain('<h4>Weekly window</h4>');
+    expect(page.body).toContain('<h4>5-hour window</h4>');
+    expect(page.body).not.toContain('>Usage window<');
+    expect(page.body).not.toContain('antigravity_gemini');
+    expect(page.body).not.toContain('antigravity_claude_gpt');
   });
 
   it.each(['AUTH_REQUIRED', 'UNAVAILABLE'] as const)(
@@ -740,8 +797,10 @@ describe('web server persisted overview', () => {
       ],
     });
 
-    const page = await app.inject('/');
-    expect(page.body).toContain('out of date');
+    const stalePage = await app.inject('/?provider=fake');
+    expect(stalePage.body).toContain('out of date');
+
+    const page = await app.inject('/?provider=missing');
     expect(page.body).toContain('Waiting for the first update');
     expect(page.body).toContain('Waiting for first observation');
     expect(page.body).not.toContain('&lt;unsafe-kind&gt;');
@@ -985,11 +1044,11 @@ describe('web server persisted overview', () => {
     expect(settings.body).not.toContain('provider-fake');
     expect(settings.body).not.toContain('Test provider');
     const schedule = await app.inject('/schedule');
-    expect(schedule.body).not.toContain('option value="fake"');
+    expect(schedule.body).not.toContain('value="fake"');
     expect(schedule.body).not.toContain('Test provider');
     const historyPage = await app.inject('/logs');
     expect(historyPage.body).not.toContain('fake / five_hour');
-    expect(historyPage.body).not.toContain('option value="fake"');
+    expect(historyPage.body).not.toContain('value="fake"');
     expect((await app.inject('/logs?provider=fake')).statusCode).toBe(404);
     const usagePage = await app.inject('/usage');
     expect(usagePage.statusCode).toBe(200);

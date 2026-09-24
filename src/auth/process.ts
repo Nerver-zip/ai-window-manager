@@ -92,21 +92,65 @@ class ChildAuthProcess implements AuthManagedProcess {
   }
 }
 
-class PtyAuthProcess implements AuthManagedProcess {
+const MAX_BUFFERED_PTY_OUTPUT_BYTES = 2 * 1024 * 1024;
+
+export class PtyAuthProcess implements AuthManagedProcess {
   private exited = false;
+  private exitCode: number | null = null;
+  private outputListener: ((stream: AuthOutputStream, chunk: string | Buffer) => void) | undefined;
+  private bufferedOutput: string[] = [];
+  private bufferedOutputBytes = 0;
+  private outputOverflow = false;
+  private readonly outputSubscription: pty.IDisposable;
 
   constructor(private readonly child: pty.IPty) {
-    child.onExit(() => {
+    this.outputSubscription = child.onData((chunk) => {
+      if (this.outputListener) {
+        this.outputListener('stdout', chunk);
+        return;
+      }
+      if (this.outputOverflow) return;
+
+      const chunkBytes = Buffer.byteLength(chunk);
+      if (this.bufferedOutputBytes + chunkBytes > MAX_BUFFERED_PTY_OUTPUT_BYTES) {
+        this.bufferedOutput = [];
+        this.bufferedOutputBytes = 0;
+        this.outputOverflow = true;
+        return;
+      }
+      this.bufferedOutput.push(chunk);
+      this.bufferedOutputBytes += chunkBytes;
+    });
+    child.onExit((event) => {
       this.exited = true;
+      this.exitCode = event.exitCode;
+      this.outputSubscription.dispose();
     });
   }
 
   onOutput(listener: (stream: AuthOutputStream, chunk: string | Buffer) => void): () => void {
-    const subscription = this.child.onData((chunk) => listener('stdout', chunk));
-    return () => subscription.dispose();
+    this.outputListener = listener;
+    for (const chunk of this.bufferedOutput) listener('stdout', chunk);
+    this.bufferedOutput = [];
+    this.bufferedOutputBytes = 0;
+    if (this.outputOverflow) {
+      this.outputOverflow = false;
+      listener('stdout', Buffer.alloc(MAX_BUFFERED_PTY_OUTPUT_BYTES + 1));
+    }
+    return () => {
+      if (this.outputListener !== listener) return;
+      this.outputListener = undefined;
+      this.outputSubscription.dispose();
+      this.bufferedOutput = [];
+      this.bufferedOutputBytes = 0;
+    };
   }
 
   onExit(listener: (code: number | null, signal: string | null) => void): () => void {
+    if (this.exited) {
+      queueMicrotask(() => listener(this.exitCode, null));
+      return () => {};
+    }
     const subscription = this.child.onExit((event) => listener(event.exitCode, null));
     return () => subscription.dispose();
   }

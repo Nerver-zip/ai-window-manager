@@ -56,6 +56,9 @@ describe('shared application shell', () => {
     expect(APP_CSS).toContain('prefers-reduced-motion');
     expect(APP_CSS).toContain('.log-tag-filters');
     expect(APP_CSS).toContain('.online-indicator');
+    expect(APP_CSS).toContain('.provider-picker-option.is-unconfigured');
+    expect(APP_CSS).toContain('.provider-picker-input:focus-visible + .provider-picker-card');
+    expect(APP_CSS).toContain('.provider-picker-options { display: grid;');
     expect(APP_CSS).toContain('@keyframes online-pulse');
     expect(APP_CSS).not.toMatch(/@import|https?:/);
   });

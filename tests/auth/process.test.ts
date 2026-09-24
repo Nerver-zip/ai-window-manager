@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { IPty } from 'node-pty';
 import {
   captureAuthCommandWithRuntime,
+  PtyAuthProcess,
   providerProcessEnvironment,
 } from '../../src/auth/process.js';
 
@@ -39,7 +41,78 @@ function fakeChild(): StubChild {
   return new StubChild();
 }
 
+function fakePty() {
+  const outputListeners = new Set<(chunk: string) => void>();
+  const exitListeners = new Set<(event: { exitCode: number }) => void>();
+  const child = {
+    onData(listener: (chunk: string) => void) {
+      outputListeners.add(listener);
+      return { dispose: () => outputListeners.delete(listener) };
+    },
+    onExit(listener: (event: { exitCode: number }) => void) {
+      exitListeners.add(listener);
+      return { dispose: () => exitListeners.delete(listener) };
+    },
+    write: vi.fn(),
+    kill: vi.fn(),
+  } as unknown as IPty;
+  return {
+    child,
+    output(chunk: string) {
+      for (const listener of outputListeners) listener(chunk);
+    },
+    exit(exitCode = 0) {
+      for (const listener of exitListeners) listener({ exitCode });
+    },
+  };
+}
+
 describe('provider auth process helpers', () => {
+  it('buffers PTY output emitted before the auth session subscribes', () => {
+    const pty = fakePty();
+    const process = new PtyAuthProcess(pty.child);
+    const authorizationPrompt = 'https://accounts.google.com/o/oauth2/auth?state=synthetic';
+    pty.output(authorizationPrompt);
+
+    const received: Array<[string, string | Buffer]> = [];
+    const unsubscribe = process.onOutput((stream, chunk) => received.push([stream, chunk]));
+
+    expect(received).toEqual([['stdout', authorizationPrompt]]);
+    unsubscribe();
+    pty.output('must not be retained after unsubscribe');
+    expect(received).toHaveLength(1);
+  });
+
+  it('preserves buffered output and exit status when the PTY exits before subscriptions', async () => {
+    const pty = fakePty();
+    const process = new PtyAuthProcess(pty.child);
+    pty.output('official sign-in link');
+    pty.exit(7);
+
+    const receivedOutput: Array<string | Buffer> = [];
+    const receivedExit: Array<number | null> = [];
+    process.onOutput((_stream, chunk) => receivedOutput.push(chunk));
+    process.onExit((code) => receivedExit.push(code));
+    await Promise.resolve();
+
+    expect(receivedOutput).toEqual(['official sign-in link']);
+    expect(receivedExit).toEqual([7]);
+    await expect(process.waitForExit(100)).resolves.toBe(true);
+  });
+
+  it('fails closed when PTY output before subscription exceeds the bounded buffer', () => {
+    const pty = fakePty();
+    const process = new PtyAuthProcess(pty.child);
+    pty.output('x'.repeat(2 * 1024 * 1024 + 1));
+
+    const received: Array<string | Buffer> = [];
+    process.onOutput((_stream, chunk) => received.push(chunk));
+
+    expect(received).toHaveLength(1);
+    expect(Buffer.isBuffer(received[0])).toBe(true);
+    expect(Buffer.byteLength(received[0]!)).toBe(2 * 1024 * 1024 + 1);
+  });
+
   it('keeps provider process environments minimal and scopes optional integration variables', () => {
     vi.stubEnv('PATH', '/usr/bin');
     vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/tmp/synthetic-dbus');

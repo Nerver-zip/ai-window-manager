@@ -10,6 +10,7 @@ import {
 } from '../../src/web/settings-ui.js';
 import { APP_JS } from '../../src/web/ui/chart-interactions.js';
 import type { ProviderCapabilities, WindowSnapshot } from '../../src/domain/types.js';
+import type { AuthOnboardingStatus } from '../../src/web/ui/auth-onboarding.js';
 
 const csrfToken = 'csrf-token-for-test';
 const provider = {
@@ -36,6 +37,26 @@ function windowWithDuration(
     observedAt,
     phase: { value: 'INACTIVE', source: 'observed', confidence: 'exact', observedAt },
     durationSeconds: { value: 18_000, source: 'official_supported', confidence, observedAt },
+  };
+}
+
+function authProvider(
+  providerId: AuthOnboardingStatus['providerId'],
+  state: AuthOnboardingStatus['state'],
+  reasonCode: string | null = null,
+) {
+  return {
+    providerId,
+    status: {
+      providerId,
+      state,
+      startedAt: null,
+      expiresAt: null,
+      authorizationUrl: null,
+      userCode: null,
+      requiresCodeSubmission: false,
+      reasonCode,
+    } satisfies AuthOnboardingStatus,
   };
 }
 
@@ -79,18 +100,65 @@ describe('settings UI helpers', () => {
       ],
     });
 
-    expect(html).toContain('Automatic starts allowed');
-    expect(html).toContain('Automatic starts off');
+    expect(html).toContain('Off (monitoring only)');
+    expect(html).toContain('On (auto-start allowed)');
+    expect(html).toContain('Automatic window start');
     expect(html).toContain('May use provider quota when a window starts.');
     expect(html).not.toContain('Reported by provider');
     expect(html).not.toContain('official_supported');
     expect(html).not.toContain('consumesQuota');
   });
 
+  it('unifies provider connection and settings, gating controls until sign-in succeeds', () => {
+    const html = renderSettingsPage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          configured: false,
+          connectionLabel: 'Sign in to connect',
+        },
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          configured: true,
+          connectionLabel: 'Connected',
+        },
+      ],
+      authProviders: [
+        authProvider('codex', 'FAILED', 'AUTH_REQUIRED'),
+        authProvider('antigravity', 'SUCCEEDED'),
+      ],
+    });
+    const cards = html.match(/<article class="card provider-settings"[\s\S]*?<\/article>/g) ?? [];
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toContain('Sign-in required');
+    expect(cards[0]).toContain('Connect Codex');
+    expect(cards[0]).toContain('Sign in with OpenAI to start tracking your usage windows.');
+    expect(cards[0]).toContain('data-provider-settings-form hidden');
+    expect(cards[0]).toContain('data-provider-monitoring-note>Connect your account');
+    expect(cards[1]).toContain('Connected');
+    expect(cards[1]).toContain('Reconnect account');
+    expect(cards[1]).toContain('Reconnect Antigravity');
+    expect(cards[1]).toContain('data-provider-settings-form>');
+    expect(cards[1]).not.toContain('data-provider-settings-form hidden');
+    expect(html).toContain('Time Zone');
+    expect(html).toContain('Schedules and window resets are displayed in this time zone.');
+    expect(html).toContain('Manage connected accounts and update frequencies.');
+    expect(html).not.toContain('Provider accounts');
+    expect(html).not.toContain('Official sign-in');
+    expect(html).not.toContain('never asks for your password or tokens');
+    expect(html).not.toContain('Paused providers keep their saved history');
+  });
+
   it('renders accessible start-pattern cards and keeps inactive fields unavailable', () => {
     const html = renderActivationSchedulePage({
       csrfToken,
-      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      providers: [{ ...provider, configured: true, windows: [windowWithDuration('exact')] }],
       policy: {
         id: 'activation-fake',
         providerId: 'fake',
@@ -146,6 +214,7 @@ describe('settings UI helpers', () => {
     expect(APP_JS).not.toContain("method: 'POST'");
     expect(APP_JS).not.toContain('customTimezone');
     expect(APP_JS).toContain('[data-chart-range-select]');
+    expect(APP_JS).toContain('[data-provider-picker-auto-submit]');
     expect(APP_JS).toContain('form.requestSubmit()');
     expect(APP_JS).toContain('[data-refresh-preset]');
     expect(() => new Script(APP_JS)).not.toThrow();
@@ -198,14 +267,14 @@ describe('settings UI helpers', () => {
     });
 
     expect(html).toContain(
-      '<div class="section-heading"><div class="heading-copy"><p class="eyebrow">Provider connection</p><h2 id="provider-settings-title">Connection and monitoring</h2></div>',
+      '<div class="section-heading"><div class="heading-copy"><p class="eyebrow">Accounts</p><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>',
     );
   });
 
   it('explains missing or uncertain selected windows in human language', () => {
     const html = renderActivationSchedulePage({
       csrfToken,
-      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      providers: [{ ...provider, configured: true, windows: [windowWithDuration('exact')] }],
       policy: {
         id: 'activation-fake',
         providerId: 'fake',
@@ -279,7 +348,7 @@ describe('settings UI helpers', () => {
       providers: [{ ...provider, capabilities: unsupported }],
     });
     expect(html).toContain('value="automation" disabled');
-    expect(html).toContain('This provider cannot start a new window automatically.');
+    expect(html).toContain('Automatic starts are not available for this provider.');
 
     const unknown = renderSettingsPage({ csrfToken, providers: [provider] });
     expect(unknown).toContain('We could not check this provider yet');
@@ -432,7 +501,7 @@ describe('settings UI helpers', () => {
   it('renders paired active-hour controls and workday/evening presets', () => {
     const html = renderActivationSchedulePage({
       csrfToken,
-      providers: [{ ...provider, windows: [windowWithDuration('exact')] }],
+      providers: [{ ...provider, configured: true, windows: [windowWithDuration('exact')] }],
       policy: {
         id: 'activation-fake',
         providerId: 'fake',
@@ -452,11 +521,14 @@ describe('settings UI helpers', () => {
     expect(html).toContain('data-period-preset-start="13:00" data-period-preset-end="22:00"');
     expect(html).toContain('class="horizon-active-hours"');
     expect(html).toContain('Chosen active hours');
+    expect(html).toContain('name="providerId" value="fake" checked required');
+    expect(html).toContain('Connected');
   });
 
   it('renders a safe fallback without a provider or saved policy', () => {
     const html = renderActivationSchedulePage({ csrfToken, providers: [] });
     expect(html).toContain('No providers configured');
+    expect(html).toContain('class="provider-picker"');
     expect(html).toContain('Select a provider to see the current observed window.');
     expect(html).toContain('Choose a time zone in Settings before enabling a time-based policy.');
     expect(html).toContain('No automatic start is scheduled.');

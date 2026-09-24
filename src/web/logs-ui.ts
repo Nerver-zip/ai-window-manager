@@ -18,6 +18,7 @@ import {
   windowDisplayName,
 } from './ui/presentation.js';
 import { formatRatioPercent, renderChartEmptyState, renderTimeSeriesChart } from './ui/charts.js';
+import { renderProviderPicker } from './ui/provider-picker.js';
 
 export const HISTORY_RANGES = [
   { value: '1h', label: '1h', durationMs: 1 * 60 * 60 * 1000 },
@@ -51,6 +52,9 @@ export const MAX_USAGE_POINTS = 384;
 export interface HistoryProviderOption {
   id: string;
   label?: string;
+  kind?: string;
+  configured?: boolean;
+  statusLabel?: string;
 }
 
 /** The only event fields consumed by the renderer. Raw event data is excluded. */
@@ -333,15 +337,21 @@ export function renderLogsPage(input: HistoryPageInput): string {
     (range) =>
       `<option value="${range.value}"${range.value === view.range ? ' selected' : ''}>${range.label}</option>`,
   ).join('');
-  const providerOptions = [
-    '<option value="">All providers</option>',
-    ...providers.map(
-      (provider) =>
-        `<option value="${escapeAttribute(provider.id)}"${
-          provider.id === selectedProvider ? ' selected' : ''
-        }>${escapeHtml(provider.label)}</option>`,
-    ),
-  ].join('');
+  const providerPicker = renderProviderPicker({
+    name: 'provider',
+    legend: 'Provider',
+    options: [
+      { value: '', label: 'All providers', configured: null, statusLabel: null },
+      ...providers.map((provider) => ({
+        value: provider.id,
+        label: provider.label,
+        ...(provider.kind ? { kind: provider.kind } : {}),
+        ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
+        ...(provider.statusLabel !== undefined ? { statusLabel: provider.statusLabel } : {}),
+      })),
+    ],
+    selectedValue: selectedProvider,
+  });
   const usageNotice = input.usageChartsHref
     ? `<p class="usage-notice" role="status">Usage charts have moved to <a href="${escapeAttribute(input.usageChartsHref)}">Usage</a>. Your selected chart periods are preserved.</p>`
     : '';
@@ -371,13 +381,10 @@ export function renderLogsPage(input: HistoryPageInput): string {
         <span class="muted">Review saved provider updates and why decisions were made.</span>
       </div>
       <div class="history-toolbar-fields">
+        ${providerPicker}
         <label class="field">
           <span class="field-label">Timeline range</span>
           <select name="range">${rangeOptions}</select>
-        </label>
-        <label class="field">
-          <span class="field-label">Provider</span>
-          <select name="provider">${providerOptions}</select>
         </label>
         <button class="button button-primary" type="submit">Apply filters</button>
       </div>
@@ -696,16 +703,29 @@ function renderLogTagBadges(tags: readonly LogTag[]): string {
     .join('');
 }
 
-function safeProviderOptions(
-  providers: readonly HistoryProviderOption[],
-): Array<{ id: string; label: string }> {
+function safeProviderOptions(providers: readonly HistoryProviderOption[]): Array<{
+  id: string;
+  label: string;
+  kind?: string;
+  configured?: boolean;
+  statusLabel?: string;
+}> {
   const seen = new Set<string>();
   return providers.flatMap((provider) => {
     const id = safeProviderId(provider.id);
     if (id === null || seen.has(id)) return [];
     seen.add(id);
     const label = safeDisplayText(provider.label ?? providerDisplayName(id));
-    return [{ id, label: label || providerDisplayName(id) }];
+    const statusLabel = provider.statusLabel ? safeDisplayText(provider.statusLabel) : undefined;
+    return [
+      {
+        id,
+        label: label || providerDisplayName(id),
+        ...(provider.kind ? { kind: provider.kind } : {}),
+        ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
+        ...(statusLabel ? { statusLabel } : {}),
+      },
+    ];
   });
 }
 

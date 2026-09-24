@@ -21,6 +21,7 @@ import {
   reasonLabel,
   severityLabel,
   timeZoneDisplayName,
+  windowGroupDisplayName,
   windowDisplayName,
 } from '../../src/web/ui/presentation.js';
 
@@ -62,6 +63,8 @@ describe('human-facing presentation labels', () => {
   it.each([
     ['codex', 'codex_primary', undefined, '5-hour window'],
     ['codex', 'codex_secondary', undefined, 'Weekly window'],
+    ['antigravity', 'antigravity_gemini_five_hour', undefined, '5-hour window'],
+    ['antigravity', 'antigravity_claude_gpt_weekly', undefined, 'Weekly window'],
     ['fake', 'five_hour', undefined, '5-hour window'],
     ['fake', 'weekly', undefined, 'Weekly window'],
     ['fake', 'seven_day', undefined, 'Weekly window'],
@@ -70,6 +73,16 @@ describe('human-facing presentation labels', () => {
     ['custom', 'anything', 86_400, 'Usage window'],
   ])('labels window %s/%s as %s', (provider, kind, duration, expected) => {
     expect(windowDisplayName(provider, kind, duration)).toBe(expected);
+  });
+
+  it.each([
+    ['antigravity_gemini_weekly', 'Gemini Models'],
+    ['antigravity_gemini_five_hour', 'Gemini Models'],
+    ['antigravity_claude_gpt_weekly', 'Claude and GPT Models'],
+    ['antigravity_claude_gpt_five_hour', 'Claude and GPT Models'],
+    ['codex_primary', null],
+  ])('groups window %s under %s', (windowKind, expected) => {
+    expect(windowGroupDisplayName(windowKind)).toBe(expected);
   });
 
   it.each([

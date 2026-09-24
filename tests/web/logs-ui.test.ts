@@ -390,7 +390,7 @@ describe('history UI helpers', () => {
     });
 
     expect(html).toContain('value="30d" selected');
-    expect(html).toContain('value="fake" selected');
+    expect(html).toContain('value="fake" checked');
     expect(html).toContain('viewport');
     expect(html).toContain('logs-page');
     expect(html).toContain('class="timeline"');
@@ -483,8 +483,9 @@ describe('history UI helpers', () => {
       samples: [],
     });
 
-    expect(html).toContain('value="fake">Test provider</option>');
-    expect(html).toContain('value="codex">Codex</option>');
+    expect(html).toContain('value="fake"');
+    expect(html).toContain('value="codex"');
+    expect(html).toContain('All providers');
     expect(html).not.toContain('duplicate');
     expect(html).not.toContain('bad/id');
   });

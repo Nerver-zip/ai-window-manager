@@ -16,6 +16,7 @@ import {
 import { localTimeMinutes, type TimezoneSetting } from '../scheduler/policy.js';
 import type { ProviderMode } from '../storage/repositories.js';
 import { renderAppShell } from './ui/layout.js';
+import { renderProviderPicker } from './ui/provider-picker.js';
 import { renderAuthOnboarding, type AuthOnboardingInput } from './ui/auth-onboarding.js';
 import {
   capabilityLabel,
@@ -95,6 +96,8 @@ export interface SettingsProviderView {
   capabilities?: ProviderCapabilities | undefined;
   windows?: readonly WindowSnapshot[] | undefined;
   staleAfterSeconds?: number | undefined;
+  configured?: boolean | undefined;
+  connectionLabel?: string | undefined;
 }
 
 export interface SettingsPageInput {
@@ -150,9 +153,22 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const kind = policy?.kind ?? 'manual';
   const currentWindow = input.currentWindow;
   const decision = input.decision;
-  const providerOptions = input.providers.length
-    ? input.providers.map((provider) => renderProviderOption(provider, providerId)).join('')
-    : '<option value="">No providers configured</option>';
+  const providerPicker = renderProviderPicker({
+    name: 'providerId',
+    legend: 'Provider',
+    options: input.providers.map((provider) => ({
+      value: provider.id,
+      label: providerDisplayName(provider.id, provider.kind),
+      kind: provider.kind,
+      ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
+      ...(provider.connectionLabel ? { statusLabel: provider.connectionLabel } : {}),
+    })),
+    selectedValue: providerId,
+    required: input.providers.length > 0,
+    describedBy: 'activation-policy-provider-help',
+    helpText: 'Choose a provider to load its saved schedule. This does not save changes.',
+    emptyText: 'No providers configured',
+  });
   const policyOptions = [
     ['auto', 'Whenever possible', 'Start when a new window is safely available.', 'bolt'],
     ['custom_schedule', 'At specific times', 'Choose one or more times of day.', 'calendar'],
@@ -182,7 +198,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
       <section class="card" aria-labelledby="activation-policy-title">
         <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">Choose a pattern. We only start when fresh usage information and provider safety checks allow it.</p></div></div>
         <form class="schedule-provider-selection" method="get" action="/schedule" data-provider-picker-auto-submit>
-          ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose a provider to load its saved schedule. This does not save changes.', 'activation-policy-provider-help')}
+          ${providerPicker}
           <noscript><div class="form-actions"><button type="submit">View provider schedule</button></div></noscript>
         </form>
         <form method="post" action="/schedule" data-policy-form data-schedule-preview-form>
@@ -614,28 +630,28 @@ export function renderSettingsPage(input: SettingsPageInput): string {
       ? `<optgroup label="Saved location"><option value="${escapeAttribute(timezoneValue)}" selected>${escapeHtml(timezoneValue)} (${escapeHtml(timeZoneOffsetLabel(timezoneValue, referenceInstant))})</option></optgroup>`
       : '';
   const timezoneField = `<select id="account-timezone" name="timezoneChoice" data-timezone-select data-timezone-auto-detect="${input.timezone ? 'false' : 'true'}" required><option value=""${timezoneValue ? '' : ' selected'} disabled>Choose your local time zone</option>${timezoneOptions}${savedZoneOption}</select>`;
+  const authProviders = new Map<string, AuthOnboardingInput>(
+    (input.authProviders ?? []).map((provider) => [provider.providerId, provider] as const),
+  );
   const providerSections = input.providers.length
-    ? input.providers.map((provider) => renderProviderCard(provider, csrfToken)).join('\n')
+    ? input.providers
+        .map((provider) => renderProviderCard(provider, csrfToken, authProviders.get(provider.id)))
+        .join('\n')
     : renderEmptyState(
         'No providers configured',
         'Add a provider through service configuration before changing runtime settings.',
       );
-  const authPanels = input.authProviders?.map(renderAuthOnboarding).join('') ?? '';
-  const authSection = authPanels
-    ? `<section aria-labelledby="provider-auth-title"><div class="section-heading"><div class="heading-copy"><p class="eyebrow">Official sign-in</p><h2 id="provider-auth-title">Provider accounts</h2></div><p class="muted">Sign in with the provider’s own client. The app never asks for passwords or tokens.</p></div><div class="settings-stack">${authPanels}</div></section>`
-    : '';
 
   return renderAppShell({
     page: 'settings',
     title: 'Settings',
     description: 'Choose what to monitor, when to check, and your local time zone.',
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
-      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time zone</h2><p class="muted">Used for schedule times and dates shown in the app. It stays saved until you change it.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
+      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time Zone</h2><p class="muted">Schedules and window resets are displayed in this time zone.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
       <section aria-labelledby="provider-settings-title">
-        <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Provider connection</p><h2 id="provider-settings-title">Connection and monitoring</h2></div><p class="muted">Only non-secret settings are editable here. Sign-in stays with the official provider client.</p></div>
+        <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Accounts</p><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>
         <div class="settings-stack">${providerSections}</div>
       </section>
-      ${authSection}
     </div>`,
   });
 }
@@ -658,9 +674,22 @@ export function renderSchedulePage(input: SchedulePageInput): string {
         })
       : unknownPreview(targetResetLocalTime || null, timezone || null);
   const preview = addWindowCandidate(basePreview, selectedProvider, windowKind);
-  const providerOptions = input.providers.length
-    ? input.providers.map((provider) => renderProviderOption(provider, providerId)).join('')
-    : '<option value="">No providers configured</option>';
+  const providerPicker = renderProviderPicker({
+    name: 'providerId',
+    legend: 'Provider',
+    options: input.providers.map((provider) => ({
+      value: provider.id,
+      label: providerDisplayName(provider.id, provider.kind),
+      kind: provider.kind,
+      ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
+      ...(provider.connectionLabel ? { statusLabel: provider.connectionLabel } : {}),
+    })),
+    selectedValue: providerId,
+    required: input.providers.length > 0,
+    describedBy: 'schedule-provider-help',
+    helpText: 'Choose which connected provider supplies the usage information.',
+    emptyText: 'No providers configured',
+  });
 
   return renderAppShell({
     page: 'schedule',
@@ -676,7 +705,7 @@ export function renderSchedulePage(input: SchedulePageInput): string {
               <legend>Reset plan</legend>
               <div class="form-grid">
                 ${renderField('schedule-enabled', 'Plan status', `<select id="schedule-enabled" name="enabled" aria-describedby="schedule-enabled-help">${booleanOptions(policy.enabled, 'Active', 'Paused')}</select>`, 'Pause this plan without deleting it or changing its saved values.', 'schedule-enabled-help')}
-                ${renderField('schedule-provider', 'Provider', `<select id="schedule-provider" name="providerId" aria-describedby="schedule-provider-help" required>${providerOptions}</select>`, 'Choose which connected provider supplies the usage information.', 'schedule-provider-help')}
+                ${providerPicker}
                 ${renderField('schedule-window-kind', 'Usage window', renderWindowControl(selectedProvider, windowKind), 'Choose the window whose reset you want to plan around.', 'schedule-window-kind-help')}
                 ${renderField('schedule-target-reset', 'Reset time', `<input id="schedule-target-reset" name="targetResetLocalTime" type="time" value="${escapeAttribute(targetResetLocalTime)}" step="60" aria-describedby="schedule-target-reset-help" required>`, 'The local time when this usage window is expected to reset.', 'schedule-target-reset-help')}
                 ${renderField('schedule-timezone', 'Timezone', `<input id="schedule-timezone" name="timezone" value="${escapeAttribute(timezone)}" placeholder="America/Sao_Paulo" maxlength="128" aria-describedby="schedule-timezone-help" required>`, 'Use an IANA timezone so daylight-saving transitions remain explicit.', 'schedule-timezone-help')}
@@ -713,49 +742,88 @@ export function renderSchedulePreview(preview: SchedulePreview): string {
   </div>`;
 }
 
-function renderProviderCard(provider: SettingsProviderView, csrfToken: string): string {
+function renderProviderCard(
+  provider: SettingsProviderView,
+  csrfToken: string,
+  authProvider?: AuthOnboardingInput,
+): string {
   const id = safeId(provider.id);
+  const connection = providerConnectionState(provider, authProvider);
   const canAutomate = provider.capabilities?.windowTrigger.supported === true;
   const automationOption = canAutomate
-    ? `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''}>Allow automatic starts</option>`
-    : `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''} disabled>Automatic starts unavailable</option>`;
+    ? `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''}>On (auto-start allowed)</option>`
+    : `<option value="automation"${provider.mode === 'automation' ? ' selected' : ''} disabled>Automatic start unavailable</option>`;
   const automationHelp = canAutomate
-    ? 'The app may start a new window when your schedule and safety checks allow it. This uses provider quota.'
+    ? 'A new window may start when your schedule and safety checks allow it. This can use your provider’s allowance.'
     : provider.capabilities
-      ? 'This provider cannot start a new window automatically.'
-      : 'Automatic starts are unavailable until this provider is verified.';
+      ? 'Automatic starts are not available for this provider.'
+      : 'Connect and verify this provider before automatic starts are available.';
   const displayName = providerDisplayName(provider.id, provider.kind);
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
   const logoHtml = logoUrl
     ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
     : '';
+  const connected = connection.ready;
+  const authPanel = authProvider
+    ? renderAuthOnboarding({ ...authProvider, reconnect: connected })
+    : '';
+  const authArea = authPanel
+    ? `<${connected ? 'details class="provider-reconnect"' : 'div class="provider-auth-area"'} data-provider-auth-area>${connected ? '<summary>Reconnect account</summary>' : ''}${authPanel}${connected ? '</details>' : '</div>'}`
+    : '';
+  const controlsLocked = authProvider !== undefined && !connected;
   const pollPreset = [60, 300, 900].includes(provider.pollIntervalSeconds)
     ? String(provider.pollIntervalSeconds)
     : 'custom';
   const customIntervalDisabled = pollPreset !== 'custom' ? ' disabled' : '';
-  const automaticStartsLabel = !provider.enabled
-    ? 'Automatic starts paused'
-    : provider.mode === 'automation'
-      ? canAutomate
-        ? 'Automatic starts allowed'
-        : 'Automatic starts unavailable'
-      : canAutomate
-        ? 'Automatic starts off'
-        : 'Monitoring only';
 
-  return `<article class="card provider-settings" aria-labelledby="provider-${id}-title">
-    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><div class="badges" aria-label="${escapeHtml(displayName)} status"><span class="badge ${provider.enabled ? 'badge-success' : 'badge-warning'}">${provider.enabled ? 'Monitoring on' : 'Monitoring paused'}</span><span class="badge">${automaticStartsLabel}</span></div></header>
-    <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}">
+  return `<article class="card provider-settings" aria-labelledby="provider-${id}-title" data-provider-connected="${connected ? 'true' : 'false'}">
+    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><span class="badge provider-connection-badge" data-provider-connection-status data-connection-state="${connection.state}" aria-label="${escapeHtml(displayName)} account status"><span class="online-indicator" aria-hidden="true"></span><span data-provider-connection-label>${escapeHtml(connection.label)}</span></span></header>
+    ${authArea}
+    <p class="provider-monitoring-note" data-provider-monitoring-note${controlsLocked ? '' : ' hidden'}>Connect your account to customize monitoring settings.</p>
+    <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}" data-provider-settings-form${controlsLocked ? ' hidden' : ''}>
       ${csrfInput(csrfToken)}
-      <fieldset><legend>Provider controls</legend><div class="form-grid">
-        ${renderField(`provider-${id}-enabled`, 'Check this provider', `<select id="provider-${id}-enabled" name="enabled" aria-describedby="provider-${id}-enabled-help">${booleanOptions(provider.enabled, 'On', 'Paused')}</select>`, 'Paused providers keep their saved history but are not checked for new usage.', `provider-${id}-enabled-help`)}
-        ${renderField(`provider-${id}-mode`, 'Start windows automatically', `<select id="provider-${id}-mode" name="mode" aria-describedby="provider-${id}-mode-help"><option value="monitor_only"${provider.mode === 'monitor_only' ? ' selected' : ''}>No, only monitor</option>${automationOption}</select>`, automationHelp, `provider-${id}-mode-help`)}
+      <fieldset><legend>Monitoring settings</legend><div class="form-grid">
+        ${renderField(`provider-${id}-enabled`, 'Monitoring', `<select id="provider-${id}-enabled" name="enabled" aria-describedby="provider-${id}-enabled-help">${booleanOptions(provider.enabled, 'On', 'Paused')}</select>`, 'Turn off monitoring to pause new usage checks.', `provider-${id}-enabled-help`)}
+        ${renderField(`provider-${id}-mode`, 'Automatic window start', `<select id="provider-${id}-mode" name="mode" aria-describedby="provider-${id}-mode-help"><option value="monitor_only"${provider.mode === 'monitor_only' ? ' selected' : ''}>Off (monitoring only)</option>${automationOption}</select>`, automationHelp, `provider-${id}-mode-help`)}
         ${renderPollIntervalField(provider, id, pollPreset, customIntervalDisabled)}
       </div></fieldset>
       <div class="form-actions"><button type="submit">Save settings</button></div>
     </form>
     <details class="capability-details"><summary>What this provider can do</summary>${renderCapabilitySummary(provider.capabilities)}</details>
   </article>`;
+}
+
+function providerConnectionState(
+  provider: SettingsProviderView,
+  authProvider?: AuthOnboardingInput,
+): {
+  state: 'connected' | 'connecting' | 'required' | 'disconnected';
+  label: string;
+  ready: boolean;
+} {
+  const authStatus = authProvider?.status;
+  if (authStatus?.state === 'SUCCEEDED' || authStatus?.reasonCode === 'ALREADY_AUTHENTICATED') {
+    return { state: 'connected', label: 'Connected', ready: true };
+  }
+  if (authStatus && ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authStatus.state)) {
+    const wasConnected =
+      provider.configured === true && provider.connectionLabel !== 'Sign in to connect';
+    return { state: 'connecting', label: 'Signing in…', ready: wasConnected };
+  }
+  if (
+    authStatus?.reasonCode === 'AUTH_REQUIRED' ||
+    provider.connectionLabel === 'Sign in to connect'
+  ) {
+    return { state: 'required', label: 'Sign-in required', ready: false };
+  }
+  if (
+    provider.configured === true ||
+    provider.connectionLabel === 'Connected' ||
+    provider.connectionLabel === 'Needs attention'
+  ) {
+    return { state: 'connected', label: 'Connected', ready: true };
+  }
+  return { state: 'disconnected', label: 'Not connected', ready: false };
 }
 
 function renderPollIntervalField(
@@ -807,10 +875,6 @@ function renderCapabilityRow(
           : 'This provider cannot start new windows automatically.';
   const extra = [description, quota].filter(Boolean).join(' ');
   return `<div><dt>${escapeHtml(capabilityLabel(capabilityName))}</dt><dd><span class="badge ${capability.supported ? 'badge-success' : 'badge-warning'}">${status}</span><br><small>${escapeHtml(extra)}</small></dd></div>`;
-}
-
-function renderProviderOption(provider: SettingsProviderView, selectedProviderId: string): string {
-  return `<option value="${escapeAttribute(provider.id)}"${provider.id === selectedProviderId ? ' selected' : ''}>${escapeHtml(providerDisplayName(provider.id, provider.kind))}</option>`;
 }
 
 function renderScheduleSafety(provider: SettingsProviderView | undefined): string {

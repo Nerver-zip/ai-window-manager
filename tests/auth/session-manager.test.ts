@@ -66,6 +66,7 @@ class FakeDriver implements ProviderAuthDriver {
   codeSubmissions: string[] = [];
   authenticated: boolean | undefined = false;
   verification: Array<boolean | Error> = [true];
+  outputLines: string[] = [];
   launchFailure: Error | undefined;
   submitFailure: Error | undefined;
   authCheckFailure: Error | undefined;
@@ -85,7 +86,20 @@ class FakeDriver implements ProviderAuthDriver {
     return this.process;
   }
 
+  onOutputLine(process: AuthManagedProcess, _stream: AuthOutputStream, line: string): void {
+    this.outputLines.push(line);
+    if (this.providerId === 'antigravity' && line === 'select-google-oauth')
+      process.writeInput('\r');
+  }
+
   parseOutput(_stream: AuthOutputStream, line: string): AuthOutputUpdate | undefined {
+    if (line === 'auth-link-only' || line === 'auth-progress') {
+      return {
+        awaitingUserAction: true,
+        authorizationUrl: 'https://auth.openai.com/codex/device',
+        requiresCodeSubmission: false,
+      };
+    }
     if (line === 'auth-prompt') {
       return {
         awaitingUserAction: true,
@@ -104,6 +118,16 @@ class FakeDriver implements ProviderAuthDriver {
         reasonCode: 'AUTH_CODE_REJECTED',
       };
     return undefined;
+  }
+
+  parseOutputFragment(_stream: AuthOutputStream, fragment: string): AuthOutputUpdate | undefined {
+    if (!fragment.endsWith('ABCD-EFGHI')) return undefined;
+    return {
+      awaitingUserAction: true,
+      authorizationUrl: 'https://auth.openai.com/codex/device',
+      userCode: 'ABCD-EFGHI',
+      requiresCodeSubmission: false,
+    };
   }
 
   submitCode(_process: AuthManagedProcess, code: string): void {
@@ -158,6 +182,32 @@ async function flushMicrotasks(): Promise<void> {
 afterEach(() => vi.useRealTimers());
 
 describe('AuthSessionManager', () => {
+  it('captures a complete device code from a PTY prompt without a trailing newline', async () => {
+    const { manager, driver } = createManager();
+    manager.start('codex');
+    await flushMicrotasks();
+    driver.process.output('stdout', 'auth-link-only\n');
+    expect(manager.status('codex')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      userCode: null,
+    });
+
+    driver.process.output('stdout', 'Enter this code: ABCD-EF');
+    expect(manager.status('codex').userCode).toBeNull();
+    driver.process.output('stdout', 'GHI');
+    expect(manager.status('codex')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      userCode: 'ABCD-EFGHI',
+    });
+
+    driver.process.output('stdout', 'auth-progress\n');
+    expect(manager.status('codex')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      userCode: 'ABCD-EFGHI',
+    });
+    await manager.shutdown();
+  });
+
   it('exposes an idle DTO with no process or credential fields', () => {
     const { manager } = createManager();
     expect(manager.status('codex')).toEqual({
@@ -208,6 +258,19 @@ describe('AuthSessionManager', () => {
       { type: 'provider_auth_awaiting_user', providerId: 'codex', reasonCode: null },
     ]);
     expect(JSON.stringify(events)).not.toContain('ABCD-EFGH');
+  });
+
+  it('routes sanitized PTY lines to the provider prompt handler', async () => {
+    const driver = new FakeDriver('antigravity');
+    const { manager } = createManager({ driver });
+    manager.start('antigravity');
+    await flushMicrotasks();
+
+    driver.process.output('stdout', 'select-google-oauth\n');
+
+    expect(driver.outputLines).toContain('select-google-oauth');
+    expect(driver.process.inputs).toEqual(['\r']);
+    await manager.shutdown();
   });
 
   it('times out and stops a launched process that never emits sign-in progress', async () => {

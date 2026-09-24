@@ -62,7 +62,11 @@ export interface ProviderAuthDriver {
   /** true means an existing auth must not be overwritten; undefined is an unsafe/unknown result. */
   isAlreadyAuthenticated(signal: AbortSignal): Promise<boolean | undefined>;
   launch(): AuthManagedProcess;
+  /** React only to explicitly recognized, control-stripped interactive CLI prompts. */
+  onOutputLine?(process: AuthManagedProcess, stream: AuthOutputStream, line: string): void;
   parseOutput(stream: AuthOutputStream, line: string): AuthOutputUpdate | undefined;
+  /** Parse a complete auth prompt that has not ended with a newline yet. */
+  parseOutputFragment?(stream: AuthOutputStream, fragment: string): AuthOutputUpdate | undefined;
   submitCode(process: AuthManagedProcess, code: string): void;
   /** Must verify through an official provider read surface, never by inspecting credential files. */
   verify(signal: AbortSignal): Promise<boolean>;
@@ -304,7 +308,22 @@ export class AuthSessionManager {
       }
       let update: AuthOutputUpdate | undefined;
       try {
+        const process = session.process;
+        if (process) driver.onOutputLine?.(process, stream, line);
+        if (!this.isActive(session)) return;
         update = driver.parseOutput(stream, line);
+      } catch {
+        this.finish(session, 'FAILED', 'AUTH_PROCESS_FAILED');
+        return;
+      }
+      if (update) this.applyOutputUpdate(session, update);
+    }
+
+    const fragment = stripTerminalControls(session.lineBuffers[stream]);
+    if (fragment && driver.parseOutputFragment) {
+      let update: AuthOutputUpdate | undefined;
+      try {
+        update = driver.parseOutputFragment(stream, fragment);
       } catch {
         this.finish(session, 'FAILED', 'AUTH_PROCESS_FAILED');
         return;
@@ -332,7 +351,7 @@ export class AuthSessionManager {
       if (update.authorizationUrl && !url) return;
       if (update.userCode && !code) return;
       session.authorizationUrl = url ?? null;
-      session.userCode = code ?? null;
+      if (update.userCode !== undefined) session.userCode = code ?? null;
       session.requiresCodeSubmission = update.requiresCodeSubmission ?? false;
       session.reasonCode = update.reasonCode ?? null;
       if (session.state === 'STARTING' || session.state === 'VERIFYING') {

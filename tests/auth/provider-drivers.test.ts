@@ -118,7 +118,7 @@ describe('provider auth drivers', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('launches only the official Codex device flow and accepts only its official auth host', () => {
+  it('launches the official Codex device flow in a PTY and accepts only its official auth host', () => {
     const process = managedProcess();
     const spawnProcess = vi.fn<NonNullable<ProviderAuthDriverOptions['spawnProcess']>>(
       () => process,
@@ -128,21 +128,30 @@ describe('provider auth drivers', () => {
 
     expect(driver.launch()).toBe(process);
     const [executable, args, processOptions] = spawnProcess.mock.calls[0]!;
-    expect([executable, args, processOptions.cwd]).toEqual([
+    expect([executable, args, processOptions.cwd, processOptions.interactive]).toEqual([
       '/opt/codex/bin/codex',
       ['login', '--device-auth'],
       '/tmp',
+      true,
     ]);
     expect(processOptions.env.CODEX_HOME).toBe('/private/codex-state');
     expect(
-      driver.parseOutput(
-        'stderr',
-        'Open https://auth.openai.com/codex/device?flow=synthetic and enter code: ABCD-EFGH',
-      ),
+      driver.parseOutput('stderr', 'Open https://auth.openai.com/codex/device?flow=synthetic'),
     ).toEqual({
       awaitingUserAction: true,
       authorizationUrl: 'https://auth.openai.com/codex/device?flow=synthetic',
-      userCode: 'ABCD-EFGH',
+      requiresCodeSubmission: false,
+    });
+    expect(driver.parseOutput('stdout', 'Enter this code: ABCD-EFGHI')).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: 'https://auth.openai.com/codex/device?flow=synthetic',
+      userCode: 'ABCD-EFGHI',
+      requiresCodeSubmission: false,
+    });
+    expect(driver.parseOutputFragment?.('stdout', 'Enter this code: ABCD-EFGHI')).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: 'https://auth.openai.com/codex/device?flow=synthetic',
+      userCode: 'ABCD-EFGHI',
       requiresCodeSubmission: false,
     });
     driver.launch();
@@ -154,7 +163,7 @@ describe('provider auth drivers', () => {
     ).toBeUndefined();
   });
 
-  it('uses the official Antigravity interactive flow and submits only the user-entered code', () => {
+  it('selects Google OAuth only from its explicit default selection and submits the user code', () => {
     const process = managedProcess();
     const spawnProcess = vi.fn<NonNullable<ProviderAuthDriverOptions['spawnProcess']>>(
       () => process,
@@ -173,15 +182,51 @@ describe('provider auth drivers', () => {
     expect(processOptions.env.HOME).toBe('/private/antigravity-state');
     expect(typeof processOptions.env.SSH_CONNECTION).toBe('string');
     expect(typeof processOptions.env.SSH_TTY).toBe('string');
+
+    driver.onOutputLine?.(process, 'stdout', '> 1. Google OAuth');
+    expect(process.written).toEqual([]);
+    driver.onOutputLine?.(process, 'stdout', 'Select login method:');
+    driver.onOutputLine?.(process, 'stdout', '> 2. Use a Google Cloud project');
+    expect(process.written).toEqual([]);
+    driver.onOutputLine?.(process, 'stdout', 'Select login method:');
+    driver.onOutputLine?.(process, 'stdout', '> 1. Google OAuth');
+    driver.onOutputLine?.(process, 'stdout', '> 1. Google OAuth');
+    expect(process.written).toEqual(['\r']);
+
+    const urlLineOne =
+      'https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=synthetic.apps.googleusercontent.com&code_challenge=synthetic';
+    const urlLineTwo =
+      'challenge&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=synthetic-state';
+    expect(driver.parseOutput('stdout', urlLineOne)).toBeUndefined();
+    expect(driver.parseOutput('stdout', urlLineTwo)).toBeUndefined();
     expect(
-      driver.parseOutput('stdout', 'Open https://accounts.google.com/o/oauth2/auth?flow=synthetic'),
+      driver.parseOutput('stdout', 'Copy and paste the URL or click on the link below:'),
     ).toEqual({
       awaitingUserAction: true,
-      authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?flow=synthetic',
+      authorizationUrl:
+        'https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=synthetic.apps.googleusercontent.com&code_challenge=syntheticchallenge&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=synthetic-state',
       requiresCodeSubmission: true,
     });
+
+    driver.launch();
+    driver.parseOutput(
+      'stdout',
+      'https://accounts.google.com/o/oauth2/auth?client_id=synthetic&state=fragment-state',
+    );
+    expect(
+      driver.parseOutputFragment?.(
+        'stdout',
+        'Copy and paste the URL or click here to authenticate',
+      ),
+    ).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl:
+        'https://accounts.google.com/o/oauth2/auth?client_id=synthetic&state=fragment-state',
+      requiresCodeSubmission: true,
+    });
+
     driver.submitCode(process, 'SYNTHETIC-CODE');
-    expect(process.written).toEqual(['SYNTHETIC-CODE\r']);
+    expect(process.written).toEqual(['\r', 'SYNTHETIC-CODE\r']);
     expect(JSON.stringify(process.written)).not.toContain('refresh_token');
   });
 
@@ -193,6 +238,7 @@ describe('provider auth drivers', () => {
     if (!driver) throw new Error('Antigravity driver missing');
     driver.launch();
     driver.parseOutput('stdout', 'Open https://accounts.google.com/signin');
+    driver.parseOutput('stdout', 'Copy and paste the URL or click on the link below:');
     expect(driver.parseOutput('stderr', 'Invalid authorization code')).toMatchObject({
       awaitingUserAction: true,
       requiresCodeSubmission: true,
@@ -208,7 +254,13 @@ describe('provider auth drivers', () => {
     expect(
       driver.parseOutput('stdout', 'https://accounts.google.com/login?code=synthetic'),
     ).toBeUndefined();
+    expect(
+      driver.parseOutput('stdout', 'Copy and paste the URL or click on the link below:'),
+    ).toBeUndefined();
     expect(driver.parseOutput('stdout', 'https://accounts.google.com:bad/login')).toBeUndefined();
+    expect(
+      driver.parseOutput('stdout', 'Copy and paste the URL or click on the link below:'),
+    ).toBeUndefined();
   });
 
   it('returns no drivers when neither provider adapter is configured', () => {

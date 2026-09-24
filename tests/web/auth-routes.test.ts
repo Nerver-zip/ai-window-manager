@@ -207,7 +207,7 @@ describe('provider auth routes', () => {
     const styles = await app.inject('/assets/app.css');
 
     expect(settings.statusCode).toBe(200);
-    expect(settings.body).toContain('Connect Codex');
+    expect(settings.body).toContain('Reconnect Codex');
     expect(settings.body).toContain('data-auth-state="SUCCEEDED"');
     expect(settings.body).toContain('Connected');
     expect(status.json()).toMatchObject({ providerId: 'codex', state: 'SUCCEEDED' });

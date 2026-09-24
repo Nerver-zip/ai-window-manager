@@ -5,6 +5,7 @@ import {
 } from '../../src/web/ui/auth-onboarding.js';
 import { AUTH_ONBOARDING_CSS } from '../../src/web/ui/auth-onboarding-styles.js';
 import { AUTH_ONBOARDING_JS } from '../../src/web/ui/auth-onboarding-interactions.js';
+import { APP_CSS } from '../../src/web/ui/styles.js';
 
 const status = (overrides: Partial<AuthOnboardingStatus> = {}): AuthOnboardingStatus => ({
   providerId: 'codex',
@@ -22,9 +23,10 @@ describe('auth onboarding UI', () => {
   it('renders a loading state without exposing implementation details', () => {
     const html = renderAuthOnboarding({ providerId: 'codex' });
 
-    expect(html).toContain('Checking sign-in status');
+    expect(html).toContain('Checking your connection…');
     expect(html).toContain('data-auth-state="loading"');
     expect(html).toContain('Connect Codex');
+    expect(html).toContain('Sign in with OpenAI to start tracking your usage windows.');
     expect(html).not.toContain('auth.json');
     expect(html).not.toContain('refresh_token');
     expect(html).not.toContain('authorization_code');
@@ -34,23 +36,22 @@ describe('auth onboarding UI', () => {
   it('renders the empty state for an unconfigured provider', () => {
     const html = renderAuthOnboarding({ providerId: 'antigravity', configured: false });
 
-    expect(html).toContain('Not configured');
-    expect(html).toContain('Authentication is not configured for this provider.');
+    expect(html).toContain('Sign-in is not available for this provider yet.');
     expect(html).toContain('data-auth-start hidden');
   });
 
   it.each([
-    ['IDLE', 'Not connected', 'Start official sign-in'],
+    ['IDLE', 'Connect Codex', 'Sign in with OpenAI to start tracking your usage windows.'],
+    ['STARTING', 'Opening sign-in…', 'Opening sign-in…'],
+    ['VERIFYING', 'Checking your account…', 'Checking your account…'],
+    ['SUCCEEDED', 'Connected. Usage checks are ready.', 'Connected. Usage checks are ready.'],
     [
-      'STARTING',
-      'Starting sign-in',
-      'The official provider client is preparing a sign-in request.',
+      'FAILED',
+      'We couldn’t complete sign-in. Try again.',
+      'We couldn’t complete sign-in. Try again.',
     ],
-    ['VERIFYING', 'Checking sign-in', 'The provider client is checking that sign-in completed.'],
-    ['SUCCEEDED', 'Connected', 'This provider is connected and ready for usage checks.'],
-    ['FAILED', 'Sign-in failed', 'The official sign-in could not be completed.'],
-    ['TIMED_OUT', 'Sign-in expired', 'The sign-in window expired'],
-    ['CANCELED', 'Sign-in canceled', 'The sign-in request was canceled'],
+    ['TIMED_OUT', 'Sign-in timed out. Try again.', 'Sign-in timed out. Try again.'],
+    ['CANCELED', 'Sign-in canceled. Try again.', 'Sign-in canceled. Try again.'],
   ] as const)('renders the %s state with clear copy', (state, label, detail) => {
     const html = renderAuthOnboarding({ providerId: 'codex', status: status({ state }) });
 
@@ -59,7 +60,7 @@ describe('auth onboarding UI', () => {
     expect(html).toContain(detail);
   });
 
-  it('renders a safe awaiting-user-action state with an optional one-time code', () => {
+  it('shows and can copy the Codex device code and sign-in link', () => {
     const html = renderAuthOnboarding({
       providerId: 'codex',
       status: status({
@@ -68,17 +69,39 @@ describe('auth onboarding UI', () => {
         expiresAt: '2026-09-23T10:05:00.000Z',
         authorizationUrl: 'https://auth.example.test/device?flow=awm',
         userCode: 'ABCD-EFGH',
+        requiresCodeSubmission: false,
+      }),
+    });
+
+    expect(html).toContain('Open sign-in');
+    expect(html).toContain('href="https://auth.example.test/device?flow=awm"');
+    expect(html).toContain('data-auth-device-code');
+    expect(html).toContain('Enter this code on the sign-in page.');
+    expect(html).toContain('ABCD-EFGH');
+    expect(html).toContain('data-auth-copy-code');
+    expect(html).toContain('Copy sign-in code');
+    expect(html).toContain('data-auth-copy-url');
+    expect(html).toContain('Copy sign-in link');
+    expect(html).toMatch(/data-auth-code-section hidden/);
+    expect(html).toContain('This sign-in expires at');
+  });
+
+  it('keeps Antigravity code submission separate from a displayed device code', () => {
+    const html = renderAuthOnboarding({
+      providerId: 'antigravity',
+      status: status({
+        providerId: 'antigravity',
+        state: 'AWAITING_USER_ACTION',
+        authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?flow=awm',
         requiresCodeSubmission: true,
       }),
     });
 
-    expect(html).toContain('Action needed');
-    expect(html).toContain('Open official sign-in');
-    expect(html).toContain('href="https://auth.example.test/device?flow=awm"');
-    expect(html).toContain('ABCD-EFGH');
+    expect(html).toContain('data-auth-code-section>');
     expect(html).toContain('autocomplete="one-time-code"');
+    expect(html).toContain('Enter the code shown by the provider.');
     expect(html).toContain('data-auth-submit');
-    expect(html).toContain('This sign-in expires at');
+    expect(html).toMatch(/data-auth-device-code hidden/);
   });
 
   it('does not render unsafe or out-of-state authorization material', () => {
@@ -101,8 +124,8 @@ describe('auth onboarding UI', () => {
   it('renders status-unavailable errors without raw reason codes', () => {
     const html = renderAuthOnboarding({ providerId: 'codex', status: null });
 
-    expect(html).toContain('Status unavailable');
-    expect(html).toContain('The status check failed');
+    expect(html).toContain('The provider connection status could not be loaded. Try again.');
+    expect(html).not.toContain('The status check failed');
     expect(html).not.toContain('AUTH_SESSION_FAILED');
   });
 
@@ -118,7 +141,7 @@ describe('auth onboarding UI', () => {
     expect(html).not.toContain('<script>');
     expect(html).not.toContain('access_token');
     expect(html).not.toContain('secret_path');
-    expect(html).toContain('official client could not start sign-in');
+    expect(html).toContain('Couldn’t start sign-in. Try again.');
   });
 
   it('explains when the official sign-in process never starts responding', () => {
@@ -127,14 +150,59 @@ describe('auth onboarding UI', () => {
       status: status({ state: 'TIMED_OUT', reasonCode: 'AUTH_START_TIMEOUT' }),
     });
 
-    expect(html).toContain('official sign-in process did not respond in time');
+    expect(html).toContain('Sign-in timed out. Try again.');
+  });
+
+  it('uses the requested concise copy for canceled and rejected sign-in states', () => {
+    const canceled = renderAuthOnboarding({
+      providerId: 'codex',
+      status: status({ state: 'CANCELED', reasonCode: 'AUTH_CANCELED' }),
+    });
+    const rejected = renderAuthOnboarding({
+      providerId: 'antigravity',
+      status: status({
+        providerId: 'antigravity',
+        state: 'FAILED',
+        reasonCode: 'AUTH_CODE_REJECTED',
+      }),
+    });
+
+    expect(canceled).toContain('Sign-in canceled. Try again.');
+    expect(rejected).toContain(
+      'Sign-in code was not accepted. Please check the code and try again.',
+    );
+    expect(rejected).toContain('Sign in with Google to start tracking your usage windows.');
+  });
+
+  it('labels an already connected account with a secondary reconnect action', () => {
+    const html = renderAuthOnboarding({
+      providerId: 'codex',
+      status: status({ state: 'SUCCEEDED' }),
+      reconnect: true,
+    });
+
+    expect(html).toContain('data-auth-role="reconnect"');
+    expect(html).toContain('Reconnect Codex');
+    expect(html).not.toMatch(/data-auth-start hidden/);
   });
 
   it('keeps the client-side flow safe and progressive', () => {
     expect(AUTH_ONBOARDING_JS).toContain('fetch(url, options)');
+    expect(AUTH_ONBOARDING_JS).toContain("'[data-auth-device-code]'");
+    expect(AUTH_ONBOARDING_JS).toContain('setHidden(deviceCode, !(awaiting && status?.userCode));');
     expect(AUTH_ONBOARDING_JS).toContain("readCookie('awm_csrf')");
+    expect(AUTH_ONBOARDING_JS).toContain(
+      "const message = status\n        ? STATE_DETAILS[state]\n        : 'The provider connection status is unavailable. Try again.';",
+    );
+    expect(AUTH_ONBOARDING_JS).not.toContain(
+      "STATE_DETAILS[state] || 'The provider connection status is unavailable. Try again.'",
+    );
     expect(AUTH_ONBOARDING_JS).toContain("input.value = ''");
     expect(AUTH_ONBOARDING_JS).toContain('setTimeout(poll, 2000)');
+    expect(AUTH_ONBOARDING_JS).toContain('navigator.clipboard.writeText(value)');
+    expect(AUTH_ONBOARDING_JS).toContain("'[data-auth-copy-code]'");
+    expect(AUTH_ONBOARDING_JS).toContain("'[data-auth-copy-url]'");
+    expect(AUTH_ONBOARDING_JS).toContain("'[data-provider-connection-status]'");
     expect(AUTH_ONBOARDING_JS).not.toContain('localStorage');
     expect(AUTH_ONBOARDING_JS).not.toContain('sessionStorage');
     expect(AUTH_ONBOARDING_JS).not.toContain('innerHTML');
@@ -143,10 +211,9 @@ describe('auth onboarding UI', () => {
 
   it('keeps styles scoped, responsive, and motion-conscious', () => {
     expect(AUTH_ONBOARDING_CSS).toContain('.auth-onboarding');
-    expect(AUTH_ONBOARDING_CSS).toContain(
-      '.auth-onboarding__status[data-auth-state="SUCCEEDED"] .auth-onboarding__status-dot',
-    );
-    expect(AUTH_ONBOARDING_CSS).toContain('animation: online-pulse 1.8s ease-out infinite');
+    expect(AUTH_ONBOARDING_CSS).toContain('.auth-copy-button');
+    expect(APP_CSS).toContain('.provider-connection-badge[data-connection-state="connected"]');
+    expect(APP_CSS).toContain('animation: online-pulse 1.8s ease-out infinite');
     expect(AUTH_ONBOARDING_CSS).toContain('@media (max-width: 700px)');
     expect(AUTH_ONBOARDING_CSS).toContain('prefers-reduced-motion');
     expect(AUTH_ONBOARDING_CSS).not.toMatch(/(^|\n)\s*body\s*\{/);
