@@ -53,7 +53,14 @@ onboarding flow advances the official CLI only after its login-method prompt
 shows Google OAuth selected, then presents the CLI's complete authorization
 URL and forwards the operator-entered browser code back to that CLI. Normal
 inspection runs only the documented headless `/usage` command. Antigravity
-trigger capability is permanently false in this milestone.
+trigger capability remains disabled by default through the independent
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=false` gate. If deliberately enabled, provider
+automation mode must also be selected in the UI; the adapter then exposes only
+the four exact Gemini / Claude-and-GPT five-hour or weekly targets and uses the
+configured family model. One `Hi!` is a quota-consuming normal prompt, not a
+provider start-only operation. A request aimed at one family may also affect
+that family's other allowance window. A timeout or other ambiguous result after
+spawn must not be retried blindly.
 
 ## Web-assisted provider sign-in acceptance
 
@@ -68,11 +75,23 @@ the official sign-in flow. Confirm that the UI reports **Connected** and that
 read-only usage observation succeeds. Restart the container and verify the
 provider reconnects without asking for sign-in again.
 
-This acceptance does not require sending a Codex turn or any other
-quota-consuming action. Codex trigger execution remains separately gated. For
+This acceptance does not require sending a Codex or Antigravity turn or any
+other quota-consuming action. Both trigger paths remain separately gated. For
 Antigravity, configure the optional mounted keyring unlock file only if the
 dedicated keyring requires it; never mount host home, keyring, or D-Bus state.
 Offline package/runtime probes do not count as authenticated restart acceptance.
+
+## Optional quota-consuming trigger acceptance
+
+Never run this as an automated smoke test or CI step. For an explicitly
+authorized manual acceptance, first confirm that the exact selected provider
+window is naturally fresh and eligible, the trigger feature gate is enabled,
+and provider automation mode is deliberately on. Use the Overview action for
+that exact target once. Verify the durable intent and its fresh target-window
+confirmation in persisted state/history. A timeout or `uncertain` result is not
+permission to click again; wait for new observations to resolve it. If the
+selected window is not naturally eligible, skip the live test rather than
+spending quota to manufacture eligibility.
 
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight

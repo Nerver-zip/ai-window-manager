@@ -125,10 +125,18 @@ interface ReadCapability {
 
 interface TriggerCapability extends ReadCapability {
   consumesQuota: boolean | 'unknown';
+  /** Optional allowlist for adapters that support only exact normalized targets. */
+  supportedWindowKinds?: string[];
 }
 ```
 
-Trigger quota consumption is always explicit. Unsupported or unknown provider operations remain monitor-only; the domain does not emulate support through undocumented behavior. `ProviderActionResult.status` remains separate from future persisted scheduler lifecycle states.
+Trigger quota consumption is always explicit. When `supportedWindowKinds` is
+present, only those exact normalized targets may be dispatched; an unlisted
+future target remains monitorable but is not triggerable. Antigravity uses this
+allowlist for its four known group/cadence targets. Its `observed_undocumented`
+contract remains disabled by default and is exposed only when the explicit
+feature gate is enabled. `ProviderActionResult.status` remains separate from
+the persisted scheduler lifecycle state.
 
 ## Other entities and invariants
 

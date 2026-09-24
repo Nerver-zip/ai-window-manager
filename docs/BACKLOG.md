@@ -48,11 +48,13 @@ implementation pass.
   D-Bus/Secret Service, non-root execution, optional mounted unlock-file secret,
   and Antigravity disabled by default.
 - **AGY-001**: official headless `/usage` read-only adapter with strict
-  normalization and `windowTrigger.supported=false`.
+  normalization and independent Gemini / Claude-GPT quota windows.
 - **WEB-004 / TEST-004**: Settings onboarding UI and offline lifecycle/runtime
   test coverage.
 
-No Antigravity action/trigger work is included or authorized by this milestone.
+Antigravity quota actions are a separate, experimental, quota-consuming
+capability. They remain disabled by default and require both the environment
+gate and provider automation mode.
 
 ## CORE-001 — Finalize evidence/window domain types
 
@@ -102,11 +104,42 @@ No Antigravity action/trigger work is included or authorized by this milestone.
 
 ## SCHED-003 — Implement action-intent execution/recovery
 
-**Status: complete (2026-09-19) for the safe executor boundary; Antigravity trigger adapters remain deferred.**
+**Status: complete (2026-09-19) for the generic safe executor boundary; Antigravity's official-CLI action is tracked separately under AGY-TRIGGER-001.**
 
 **Scope**: claim, dispatch, confirm, uncertain recovery, retry classes, missed-action skip.  
 **Acceptance**: DB unique dedupe protects duplicate trigger; crash-at-each-stage integration tests.  
 **Dependencies**: SCHED-002.
+
+## WINDOW-001 — Scope an activation policy to exactly one observed window
+
+**Status: complete.**
+
+Each provider has one canonical `activation-${providerId}` policy. When usage
+windows are available, every policy selects exactly one reported
+`windowKind`; a legacy targetless manual policy remains compatible only until
+the first observation, then is flagged for review. Changing the selected target
+invalidates earlier open intents before dispatch. Antigravity targets
+include both model family and cadence, so Gemini five-hour and Gemini weekly
+are distinct from Claude/GPT five-hour and Claude/GPT weekly.
+
+## AGY-TRIGGER-001 — Implement durable target-specific Antigravity actions
+
+**Status: implemented with offline tests; integrated live action acceptance is pending.**
+
+Use only the pinned official `agy` CLI with one fixed `Hi!`, the model mapped
+to the exact selected quota family, a durable intent, fresh target-window
+preflight/confirmation, and no blind retry after any ambiguous post-spawn
+result. `AWM_ANTIGRAVITY_TRIGGER_ENABLED` defaults to false. CI uses synthetic
+processes and never spends quota.
+
+## WEB-005 — Add safe manual start controls to Overview
+
+**Status: implemented with offline tests.**
+
+Show a CSRF/Origin-protected form on each exact supported window only when the
+provider is enabled, in automation mode, and advertises that target. Display
+the selected Antigravity model and a quota warning. The form queues an intent;
+the HTTP handler never inspects or dispatches a provider action.
 
 ## TIME-001 — Implement IANA local schedule conversion
 
@@ -144,10 +177,16 @@ No Antigravity action/trigger work is included or authorized by this milestone.
 
 ## ANT-002 — Reassess Antigravity trigger semantics
 
-**Scope**: research/controlled experiment only; do not ship automation by default.  
-**Success**: official documentation found **or** controlled evidence + explicit policy review justify capability; otherwise record `canTriggerWindow=false`.  
-**Dependencies**: ANT-001.  
-**MVP note**: may close as “not supported”.
+**Status: complete with account-specific operator evidence; not a universal provider guarantee.**
+
+An operator observed that one official `agy -p "Hi!"` turn with each family’s
+configured model anchored that family’s five-hour reset. See
+[`SPIKE-005`](research/spikes/SPIKE-005-antigravity-window-trigger.md). This
+supports an experimental opt-in implementation, but does not establish a
+dedicated start API or generalize to all accounts/versions. The capability is
+`observed_undocumented`, quota-consuming, and off by default.
+
+**Dependencies**: ANT-001. No undocumented provider endpoint or token handling.
 
 ## WEB-001 — Implement overview SSR
 

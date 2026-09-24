@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: self-hosted monitor and scheduler with supervised official-client onboarding. Codex actions remain explicit opt-in; Antigravity is read-only and disabled by default.
+> Status: self-hosted monitor and scheduler with supervised official-client onboarding. Codex and Antigravity quota-consuming actions are explicit opt-in; Antigravity's window-start effect is experimental and based on one operator-tested account/CLI path.
 
 ## Product boundary
 
@@ -111,21 +111,28 @@ Included now:
 - bounded retention maintenance for samples, events and terminal intent history;
 - official Codex app-server adapter with offline protocol fixtures and an opt-in
   fixed `Hi!` turn;
+- opt-in, target-specific Antigravity `Hi!` actions through the official `agy`
+  CLI, with separate Gemini and Claude/GPT model selection, fresh target-window
+  confirmation, and no blind retry after ambiguous dispatch;
 - supervised, in-memory Codex and Antigravity login sessions through their
   official clients, with same-origin/CSRF-protected onboarding in Settings;
-- read-only Antigravity usage adapter using the pinned official `agy` CLI;
+- Antigravity usage adapter using the pinned official `agy` CLI, with its
+  experimental quota action disabled by default;
 - Docker/Compose hardening with pinned Codex and Antigravity clients, isolated
   state/keyring volumes, and Antigravity disabled by default;
 - CI/validation scaffolding;
 - provider research and compliance classification;
 - ADRs, roadmap, backlog and agent skills.
 
-Intentionally **not** implemented yet:
+Intentionally **not** enabled by default:
 
-- Antigravity trigger/window-start automation;
+- Codex or Antigravity quota-consuming actions; each requires its explicit
+  environment gate and provider automation mode;
 - live Web-assisted login and restart acceptance for Codex and Antigravity in
   an operator-authorized account/container;
-- broad production enablement of the quota-consuming gate; one operator-authorized live `Hi!` heartbeat has been validated, but the action remains opt-in and the bounded timeout/confirmation boundary remains subject to provider-latency review;
+- universal guarantees about Antigravity's window-start behavior; the
+  operator-tested one-account/CLI experiment is documented in
+  [`SPIKE-005`](docs/research/spikes/SPIKE-005-antigravity-window-trigger.md);
 - aggregate statistics and richer charting.
 
 Those are implementation-roadmap work, not omissions from the planning deliverable.

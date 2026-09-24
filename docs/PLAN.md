@@ -9,7 +9,7 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an explicitly enabled adapter capability; Codex has an opt-in quota-consuming path and Antigravity is read-only/disabled by default.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an explicitly enabled adapter capability; Codex and Antigravity have separate opt-in quota-consuming paths, with Antigravity's window-positioning effect still experimental.
 
 ## Current milestone status
 
@@ -30,13 +30,28 @@ uncertain-outcome confirmation. Provider onboarding now supervises official
 Codex and Antigravity sign-in processes in memory; Antigravity read-only
 observation and an isolated optional keyring runtime are implemented. Live
 Web-assisted login and restart reuse for both providers remain operator
-acceptance tasks.
-Antigravity triggers, work-window recommendations and broader statistics
-remain out of scope.
+acceptance tasks. `WINDOW-001` and `WEB-005` now provide exact target scoping
+and safe per-window manual controls. `WINDOW-001` restricts each provider to one exact selected
+window for policy planning. `ANT-002` has account-specific operator evidence
+recorded in `SPIKE-005`; `AGY-TRIGGER-001` implements an opt-in official-CLI
+action with synthetic process coverage, but live AWM action acceptance remains
+pending. The Antigravity effect is experimental and not a provider-wide
+guarantee. Work-window recommendations and broader statistics remain out of
+scope.
 
 Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
-Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless `agy -p`, and official keyring auth. SPIKE-002 validated a structured official headless usage path; SPIKE-003 recorded that no supported container auth-persistence path had been established at the time. For this milestone, the project explicitly accepts a self-hosted single-operator integration through the official CLI, with a dedicated D-Bus/Secret-Service/keyring runtime and optional mounted unlock file. No token extraction or backend impersonation is allowed. Live account login/restart remains unverified; exact inactive-window start semantics remain UNKNOWN, and `windowTrigger.supported=false`.
+Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless
+`agy -p`, and official keyring auth. SPIKE-002 validated a structured official
+headless usage path; SPIKE-003 recorded the original container-auth blocker.
+The project later accepted a self-hosted single-operator integration through
+the official CLI, with a dedicated D-Bus/Secret-Service/keyring runtime and
+optional mounted unlock file. No token extraction or backend impersonation is
+allowed. SPIKE-005 records operator-provided evidence that one `Hi!` anchored
+the selected family's five-hour window on one account/CLI/model path. This is
+not a universal guarantee. The official-CLI action is implemented behind an
+independent default-off gate, but live AWM action acceptance and authenticated
+restart reuse remain unverified.
 
 The stack is Node 24 + TypeScript + Fastify + SQLite (`better-sqlite3`) + server-rendered HTML/tiny JS + `prom-client` + Vitest + pnpm. One service/container; no Redis/Postgres/broker/React/Kubernetes. Environment owns process/bootstrap config; SQLite owns mutable runtime config; secrets live in dedicated provider-owned/mounted storage.
 
@@ -125,11 +140,11 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 
 **Inferred**
 
-- normal headless prompts consume quota, but exact first-activity window-start semantics are not documented clearly enough to ship a trigger.
+- a normal headless prompt consumes quota; operator evidence supports anchoring the selected family's five-hour window for the tested account, but this behavior is not documented or proven universal.
 
 **Unknown**
 
-- inactive-window start event;
+- whether the observed effect generalizes beyond the tested account, plan, model and CLI version;
 - long-term stability of the nested machine-readable quota/reset payload;
 - authenticated account login and keyring reuse after a real container restart.
 
@@ -137,8 +152,10 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 
 The project-level decision accepts this self-hosted single-operator integration
 only through Google's official CLI. Do not extract tokens or reproduce backend
-calls. The runtime remains opt-in/read-only; `canTriggerWindow=false` unless a
-separate future decision changes the scope.
+calls. Monitoring is opt-in; the quota-consuming experimental trigger is
+separately opt-in and requires explicit provider automation mode. It targets
+one exact quota window/model family, uses a fixed `Hi!`, and never retries an
+uncertain post-dispatch result.
 
 ## D. Product boundaries
 
@@ -488,11 +505,15 @@ timeout separation and uncertain-outcome confirmation are enforced.**
 request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
 `automation`. The action sends only `Hi!` and is not enabled by default.
 
-### Phase 6 — Antigravity monitor if feasible
+### Phase 6 — Antigravity monitor and experimental action
 
-**Goal**: official-CLI-only read path.  
-**Acceptance**: safe auth persistence + stable parser or deliberate disabled adapter.  
-**Trigger**: remains out unless separate spike succeeds.
+**Status**: official monitor and opt-in action implementation have offline
+coverage. SPIKE-005 has account-specific operator evidence; live authenticated
+restart and live AWM action acceptance remain pending.
+**Goal**: official-CLI-only read path and one target-specific `Hi!` action.
+**Acceptance**: safe auth persistence, strict parser, exact target confirmation,
+durable intent and no retry after an uncertain result.
+**Trigger**: disabled by default; not a universal start-window guarantee.
 
 ### Phase 7 — Settings/logs/usage polish
 
@@ -526,7 +547,9 @@ STORAGE-001 ──────────────────────�
 
 SPIKE-001 ─ CODEX-001 ─ CODEX-002
 SPIKE-002 ─┐
-SPIKE-003 ─┴─ ANT-001 (official CLI, read-only) ─ ANT-002 (research only / may remain unsupported)
+SPIKE-003 ─┴─ ANT-001 (official CLI monitor) ─ ANT-002 (account-specific evidence)
+                                             └─ SCHED-003 + AGY-TRIGGER-001 (experimental opt-in)
+WINDOW-001 ─ WEB-005 (exact-target manual controls)
 
 CORE/STORAGE/OPS/research spikes can start in parallel.
 ```
@@ -538,12 +561,12 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [x] FakeProvider exercises active/inactive/reset/failure/action-uncertain flows.
 - [x] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
 - [x] Codex automation, if enabled, is explicit opt-in and performs only one persisted/confirmed minimal ordinary action per target cycle.
-- [x] Antigravity is available as monitor-only **only if** official-CLI auth/inspection is proven; otherwise it is explicitly `UNAVAILABLE/AUTH_REQUIRED` with no hack.
+- [x] Antigravity monitoring uses only the official CLI; unavailable/auth-required states are explicit and no token/backend workaround exists.
 - [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
 - [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service, optional mounted unlock file, and remains disabled by default.
-- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger capability is false.
+- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger support is independently gated, exact-target allowlisted, and disabled by default.
 - [ ] Web-assisted Codex and Antigravity login, followed by restart reuse, are verified by an operator in the intended deployment.
-- [x] no Antigravity trigger ships without resolved semantics/compliance evidence.
+- [x] Antigravity trigger semantics have account-specific operator evidence and are explicitly classified experimental; no universal guarantee is claimed.
 - [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
 - [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.
 - [x] duplicate trigger protection is enforced by DB uniqueness + action lifecycle tests.
@@ -569,7 +592,7 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 
 - **Codex official-client integration lifecycle/auth in headless container**: SPIKE-001.
 - **Antigravity keyring/DBus in container**: isolated in-container runtime is implemented and locally probeable; live auth/restart remains pending.
-- **Exact Antigravity window-start semantics**: ANT-002; default false.
+- **Antigravity window-start semantics**: one account-specific operator test is documented; other accounts/plans/CLI versions remain unknown, so the trigger stays opt-in and uncertain outcomes cannot retry.
 - **Clock/DST mis-scheduling**: dedicated temporal tests + skip missed actions.
 
 ### P2
@@ -603,7 +626,7 @@ Explicitly still not future goals: agent orchestration, prompt management, accou
 5. **Estimated vs observed**: every nontrivial fact carries `source`, `confidence`, `observedAt`.
 6. **State machine**: separate provider health from window phase.
 7. **Scheduler**: 30s reconciler + pure decision function + durable action intents.
-8. **Trigger meaning**: Codex = one minimal normal official-client request after eligibility; Antigravity = unsupported/UNKNOWN in MVP; Fake = deterministic state transition.
+8. **Trigger meaning**: Codex = one minimal normal official-client request after eligibility; Antigravity = one fixed normal official CLI `Hi!` for the exact configured target model, experimental and quota-consuming; Fake = deterministic state transition.
 9. **Duplicate prevention**: DB `UNIQUE(dedupe_key)` + intent lifecycle + fresh preflight.
 10. **Persist jobs/intentions**: `action_intents` table, not cron/in-memory timers.
 11. **Restart**: reload state/intents, mark interrupted executing triggers uncertain, inspect before decisions.
@@ -625,4 +648,4 @@ Explicitly still not future goals: agent orchestration, prompt management, accou
 27. **Authority**: SQLite after initialization.
 28. **Threat model**: token/volume theft, LAN access, CSRF/XSS, container escape, supply-chain, malicious response, logs/crashes, Docker permissions; mitigations documented.
 29. **Skills**: provider-adapter, scheduler, testing-time, docker-deployment, database-migration, release. Generic coding skill intentionally omitted.
-30. **MVP scope**: Fake vertical slice, Codex monitor + safe opt-in trigger after explicit live acceptance, Antigravity monitor-only if official CLI path is viable, scheduler/config/history/metrics/private UI/Docker; everything broader remains out.
+30. **MVP scope**: Fake vertical slice, Codex monitor + safe opt-in trigger, Antigravity official monitor + separately gated experimental exact-target trigger, scheduler/config/history/metrics/private UI/Docker; generalized optimization and all other broader platform work remain out.

@@ -73,14 +73,26 @@ The application executor then handles only due, eligible intents:
 planned intent
   -> atomic claim
   -> capability/mode/preflight guard
-  -> one provider dispatch
+  -> one provider dispatch through its official-client adapter
   -> persisted result
   -> fresh inspection confirmation or uncertain state
 ```
 
+For Codex the action is one `turn/start` through the official app-server. For
+Antigravity the opt-in experimental action is one fixed `Hi!` invocation through
+the official headless `agy -p` CLI. The scheduler and generic executor contain
+no provider endpoint, token format, CLI model semantics, or credential parsing.
+Each intent stores one exact normalized window target; changing the canonical
+provider policy replaces that target for future planning.
+
 HTTP handlers do not inspect providers or dispatch actions. Settings and
 activation-policy forms validate non-secret values and persist them in SQLite; all
 mutations require same-origin Origin and double-submit CSRF proof.
+
+The server-rendered Overview may create a manual intent for an exact normalized
+window using a protected form. That command path persists the intent and asks
+the executor/reconciler to wake; it does not call an adapter or dispatch an
+action synchronously.
 
 ## Reconciler over durable timers
 

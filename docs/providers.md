@@ -12,7 +12,7 @@ Provider-specific parsing ends at the runtime-validated `ProviderObservationSche
 
 These concepts must not be collapsed. For example, an inferred reset can be deterministic and high-confidence, while a trigger mechanism can be `official_client_internal`. Window phase is also a fact, so adapters must return `phase: Fact<WindowPhase>` rather than a bare lifecycle string.
 
-Capabilities remain truthful and explicit. Read capabilities use `supported` plus a `CapabilityContract`; trigger capabilities additionally set `consumesQuota` to `true`, `false`, or `'unknown'`. Unsupported or unproven behavior remains monitor-only and must not be emulated through undocumented endpoints or credential handling.
+Capabilities remain truthful and explicit. Read capabilities use `supported` plus a `CapabilityContract`; trigger capabilities additionally set `consumesQuota` to `true`, `false`, or `'unknown'`. Unsupported or unaccepted behavior remains monitor-only. Experimental/unversioned paths require explicit project acceptance, truthful classification, and a separate opt-in; they must not be emulated through undocumented endpoints or credential handling.
 
 The words below are contractual classifications, not rhetorical labels:
 
@@ -116,14 +116,24 @@ blindly retried.
   URL. AWM advances only when the official screen explicitly marks option 1
   (Google OAuth) as selected, then exposes the complete URL and forwards only
   the operator-entered browser code to the waiting CLI.
+- An operator-provided experiment on 2026-09-24 used one ordinary `Hi!` via
+  official headless `agy` with `gemini-3.8-flash-low` and
+  `claude-sonnet-4-6`. In each selected family, the five-hour reset changed
+  from a moving projection to a stable reset timestamp after the prompt. Exact
+  readings and limitations are recorded in
+  [`SPIKE-005`](research/spikes/SPIKE-005-antigravity-window-trigger.md).
 
 ### Inferred
 
-- A normal `agy -p` prompt consumes Antigravity quota. It might also be the event that starts/repositions a five-hour window, but current official quota docs found during this research do **not** define the inactive-window start event as explicitly as OpenAI does.
+- The operator experiment supports the inference that a normal `agy -p`
+  prompt consumes quota and anchors the five-hour window for the selected
+  family. This is account/CLI/model-specific evidence, not a universal
+  provider guarantee or a published window-start operation.
 
 ### Unknown
 
-- The exact event that starts an Antigravity five-hour window after inactivity.
+- Whether the observed window-start effect generalizes to other plans,
+  accounts, regions, or future CLI/model versions.
 - Whether the nested quota payload remains stable across CLI releases.
 - Whether `agy -p /usage` consistently yields the same parseable non-interactive quota output in every future release/configuration.
 - Live authenticated container restart acceptance for the project's isolated official-CLI keyring runtime.
@@ -131,21 +141,22 @@ blindly retried.
 
 ### Risk / policy
 
-The project-level compliance decision for this milestone accepts a self-hosted,
-single-operator integration that invokes the **official `agy` CLI itself**. This
-does not relax the technical boundary: never extract/replay login tokens,
-reproduce internal backend calls, or impersonate the client. The integration is
-read-only and remains disabled by default. The official CLI owns login and its
-Secret Service credentials; AWM only supervises the CLI and validates its
-bounded usage output.
+The project-level decision accepts a self-hosted, single-operator integration
+that invokes the **official `agy` CLI itself**, including an experimental,
+quota-consuming `Hi!` action behind an explicit environment gate. This does not
+relax the technical boundary: never extract/replay login tokens, reproduce
+internal backend calls, or impersonate the client. The official CLI owns login
+and its Secret Service credentials; AWM validates bounded usage/action output.
+The trigger is classified `observed_undocumented`, consumes normal quota, and
+is not a dedicated start-only operation.
 
 **MVP capability proposal**
 
 ```text
 can_query_usage       = experimental/conditional, official CLI headless JSON only
 can_query_reset       = experimental/conditional, only with validated bucket reset fields
-can_trigger_window    = false (UNKNOWN semantics + policy risk)
-trigger_consumes_quota= true if ever enabled
+can_trigger_window    = opt-in, observed_undocumented, exact allowlisted targets
+trigger_consumes_quota= true
 public_usage_api      = false / none found
 ```
 
@@ -156,10 +167,29 @@ the accurate result of that research-only investigation. This milestone
 supersedes its implementation recommendation with an isolated, opt-in
 in-container D-Bus/Secret-Service/keyring design and a file-mounted unlock
 secret. That runtime has offline packaging/probe coverage, but authenticated
-login reuse after restart still requires explicit operator acceptance.
+login reuse after restart still requires explicit operator acceptance. The
+trigger is advertised per exact target when
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` and that target's group model is
+configured; dispatch additionally requires the provider to be in automation
+mode. Its allowlist contains `antigravity_gemini_five_hour`,
+`antigravity_gemini_weekly`, `antigravity_claude_gpt_five_hour`, and
+`antigravity_claude_gpt_weekly`; the chosen family selects its configured
+model. A request does not intentionally select both groups.
 
-The production capability remains `windowTrigger.supported = false`; no
-quota-positioning prompt or quota-consuming action is implemented.
+The adapter derives an operational phase from the observed remaining fraction:
+values within `0.00001` of full allowance are normalized to `INACTIVE`, values
+within `0.00001` of zero to `EXHAUSTED`, and intermediate values to `ACTIVE`.
+These phases are inferred with high confidence, not lifecycle fields supplied
+by Google. `INACTIVE` means full unused allowance for the selected target and
+eligibility for the project's safety checks; a `99.95%` remaining observation
+still counts as active.
+
+The adapter accepts success only from a valid one-turn CLI JSON result. Any
+timeout, EOF, malformed output, or auth-looking message after process spawn is
+ambiguous and remains `uncertain`; it is never blindly retried. The durable
+executor confirms the exact requested window with a fresh `/usage` observation.
+No live quota-consuming prompt was sent by the implementation agent during this
+sprint.
 
 ## Provider contract change detection
 

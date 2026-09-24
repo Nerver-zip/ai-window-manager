@@ -44,21 +44,31 @@ cannot be retried blindly.
 ### Antigravity
 
 The accepted integration invokes only the pinned official `agy` CLI. It is
-opt-in (`AWM_ANTIGRAVITY_ENABLED=false` by default), read-only, and always
-declares `windowTrigger.supported=false`. Authentication remains owned by the
-official CLI and its Secret Service keyring. The container uses separate
-Antigravity CLI-state and keyring volumes under UID 10001; it does not mount the
-host home, host D-Bus socket, or host keyring. An optional operator-managed
-keyring unlock value is read from a mounted file under `/run/secrets`, never
-from an environment variable, image, database, browser response, log, or
-metric. On sign-in, AWM waits for the official CLI's `Select login method`
-screen and sends one Enter only when `1. Google OAuth` is explicitly selected;
-it never selects the Google Cloud project option. It then captures the
-complete official Google sign-in URL and forwards only the browser-issued code
-entered by the operator to the waiting CLI process. AWM never reads or returns
-Antigravity tokens. Live authenticated login/restart acceptance remains
-pending; do not
-represent offline keyring startup as proof that account authentication works.
+monitoring is opt-in (`AWM_ANTIGRAVITY_ENABLED=false` by default). Its
+experimental, quota-consuming trigger is independently disabled by
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=false`; enabling it also requires the persisted
+provider mode `automation`. The adapter uses only official headless `agy -p`
+with one fixed `Hi!`, and only for one exact supported quota-window target and
+its configured model. This is a normal provider request, not a start-only API;
+the UI warns that another window in the same model family may also be charged.
+Operator-provided observations support the reset-anchoring effect for one
+account and pinned client, but this is not a universal provider guarantee.
+Timeout, EOF, malformed output or other ambiguity after spawn becomes
+`uncertain`; it is never blindly retried.
+
+Authentication remains owned by the official CLI and its Secret Service
+keyring. The container uses separate Antigravity CLI-state and keyring volumes
+under UID 10001; it does not mount the host home, host D-Bus socket, or host
+keyring. An optional operator-managed keyring unlock value is read from a
+mounted file under `/run/secrets`, never from an environment variable, image,
+database, browser response, log, or metric. On sign-in, AWM waits for the
+official CLI's `Select login method` screen and sends one Enter only when
+`1. Google OAuth` is explicitly selected; it never selects the Google Cloud
+project option. It then captures the complete official Google sign-in URL and
+forwards only the browser-issued code entered by the operator to the waiting
+CLI process. AWM never reads or returns Antigravity tokens. Live authenticated
+login/restart acceptance remains pending; do not represent offline keyring
+startup as proof that account authentication works.
 
 ## Network exposure
 
@@ -86,7 +96,7 @@ If the service is exposed to an untrusted LAN, authentication becomes a requirem
 | container escape                  | Low-Medium  | non-root, cap_drop ALL, no-new-privileges, read-only rootfs where feasible, no Docker socket                                     |
 | dependency/supply-chain           | Medium      | lockfile, minimal dependencies, Dependabot/audit, pin build actions/image bases deliberately                                     |
 | SQLite corruption                 | Medium      | WAL, transactional migrations, health check, backups, integrity recovery documentation                                           |
-| UI operator error causing trigger | Medium      | explicit provider automation toggle, confirmation/manual controls, explain next action                                           |
+| UI operator error causing trigger | Medium      | separate opt-in gates, explicit exact-window start button, quota warning, durable intent and fresh preflight                     |
 
 ## HTTP baseline
 
@@ -99,8 +109,9 @@ If the service is exposed to an untrusted LAN, authentication becomes a requirem
 - state-changing routes reject unexpected Origins.
 - API errors are sanitized; detailed provider errors stay in structured logs/events.
 
-The current mutation surface is `/settings/providers/:id`, `/schedule`, and the
-read/command API endpoints. It accepts only validated non-secret fields; command
+The current mutation surface is `/settings/providers/:id`, `/schedule`,
+`/providers/:id/trigger`, and the read/command API endpoints. It accepts only
+validated non-secret fields; command
 handlers create intent/reconcile signals and never call provider adapters. The
 executor is the only action dispatch boundary and records ambiguous outcomes as
 uncertain.

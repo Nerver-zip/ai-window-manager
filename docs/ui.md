@@ -57,6 +57,12 @@ monitoring-only, unsupported, missing, or invalid policies are called out rather
 than being presented as active. Technical window keys never appear as normal
 labels.
 
+When the provider is in automation mode and an exact window is triggerable,
+that window has its own `Start this window now` action. It queues a durable
+intent; it does not dispatch from the HTTP handler. The action is accompanied by
+a quota warning. For Antigravity, the warning explains that a prompt aimed at a
+model family may affect both that family's five-hour and weekly allowance.
+
 The Overview does not duplicate the scheduler's next-decision explanation. The
 Schedule page owns the persisted decision and live preview, and still never
 inspects a provider while rendering either page.
@@ -71,6 +77,14 @@ inspects a provider while rendering either page.
 - add/remove controls for custom times and active-hour periods;
 - upcoming occurrences and the authoritative next decision/reason;
 - manual `Trigger now` only when capability/automation mode permits.
+
+Each provider has one saved activation policy and one exact selected quota
+window. Switching providers loads the other provider's saved policy without
+saving; selecting a window scopes future decisions to that window only. Older
+manual policies without a target are flagged for review once observations are
+available. If the experimental Antigravity trigger is enabled, the selected
+model is shown as secondary detail; the selected group determines which model
+is used, while a prompt may still affect both cadence windows in that group.
 
 The current server-rendered `/schedule` page reveals only the fields relevant to
 the selected preference. The next-start preview uses saved provider information

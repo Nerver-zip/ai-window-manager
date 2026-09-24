@@ -28,8 +28,8 @@ timezone:
 
 - `manual`: observe only; never create an automatic start intent;
 - `auto`: start when the selected provider window is inactive, fresh and safely
-  triggerable; an optional window kind scopes the decision when a provider reports
-  more than one quota window;
+  triggerable; each provider has one canonical `activation-${providerId}` policy
+  whose exact `windowKind` selects the only window that policy may manage;
 - `fixed`: repeat one local anchor using the observed window duration;
 - `custom_schedule`: evaluate a bounded list of local times;
 - `active_hours`: start only while enough time remains in a configured local
@@ -42,6 +42,13 @@ When a policy selects a specific window kind, current-window derivation is scope
 to that window; an active weekly window cannot incorrectly suppress a scheduled
 five-hour start.
 
+The target is required for every policy as soon as the provider has persisted
+usage windows. For compatibility, an older manual policy may omit it while no
+window has ever been observed; after observations exist, the overview flags that
+policy for review and the schedule form requires one exact reported window.
+Saving a different target updates the same canonical policy instead of creating
+parallel policies for one provider.
+
 Legacy `target_reset` and `work_window` records remain readable and are handled
 by the compatibility path in the reconciler. The activation schedule API only
 loads the explicit `activation-${providerId}` record; it never converts a legacy
@@ -52,10 +59,21 @@ different meanings.
 
 ### Manual
 
-`Trigger now` creates an action intent only if the provider reports
-`canTriggerWindow=true`, the user has enabled automation for that provider, and
-a fresh preflight inspection says an action is eligible. For Codex this also
-requires `AWM_CODEX_TRIGGER_ENABLED=true`.
+The Overview's per-window `Start this window now` form creates an action intent
+only when the provider is enabled, its persisted mode is `automation`, its
+trigger capability is enabled for that exact `windowKind`, and a fresh preflight
+inspection says the action is eligible. The HTTP handler only validates and
+queues the intent; the executor performs provider I/O. Codex additionally
+requires `AWM_CODEX_TRIGGER_ENABLED=true`. Antigravity additionally requires
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` and the selected window's configured
+model. Its only implemented action is one ordinary `Hi!` through official
+`agy -p`; it consumes normal quota. A selected model family is targeted, but
+the provider may also account that request against the family's other window.
+The UI warns about this before dispatch. A post-dispatch uncertain result is
+never blindly retried.
+
+Manual starts remain separate from the saved automatic schedule: selecting a
+provider/window for the action does not alter that provider's one saved policy.
 
 ### Legacy target reset compatibility
 

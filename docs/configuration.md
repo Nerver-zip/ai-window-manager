@@ -17,6 +17,13 @@ Environment/.env/Compose controls process/container concerns:
 - provider executable paths and dedicated provider state paths;
 - `AWM_AUTH_SESSION_TIMEOUT_SECONDS` (60–1800 seconds, default 900);
 - `AWM_ANTIGRAVITY_ENABLED` (default `false`) to opt into the official CLI monitor;
+- `AWM_ANTIGRAVITY_TRIGGER_ENABLED` (default `false`) as a separate gate for the
+  experimental quota-consuming action; persisted provider mode must also be
+  `automation`;
+- `AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS` (5–120, default `30`);
+- `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL` (default `gemini-3.8-flash-low`) and
+  `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL` (default `claude-sonnet-4-6`),
+  each bounded to 128 characters;
 - `AWM_ANTIGRAVITY_KEYRING_SECRET_FILE`, an internal mounted-file path only (not secret contents).
 
 These generally require restart.

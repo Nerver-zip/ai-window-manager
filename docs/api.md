@@ -60,6 +60,7 @@ Current HTML mutation routes are:
 ```text
 POST /settings/providers/:id
 POST /schedule
+POST /providers/:id/trigger
 ```
 
 The JSON settings routes accept only validated non-secret timezone and
@@ -70,7 +71,10 @@ its query string. The JSON endpoint `/api/v1/history` remains unchanged.
 
 They require a same-origin request and a CSRF token, return `303` on success,
 and write only validated non-secret SQLite configuration. Invalid input returns
-an error status without calling a provider.
+an error status without calling a provider. The manual trigger form accepts an
+exact observed `windowKind`, creates/queues a durable intent, and redirects with
+a bounded result notice; it never starts the provider process in the handler.
+It is shown only when provider mode and exact target capability allow it.
 
 History and settings responses are bounded/allowlisted. No endpoint returns
 provider credentials, raw provider payloads, tokens, or secret configuration.
