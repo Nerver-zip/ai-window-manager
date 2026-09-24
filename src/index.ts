@@ -221,6 +221,12 @@ function registerAntigravityProvider(): void {
   const provider = new AntigravityProvider({
     executable: config.AWM_ANTIGRAVITY_EXECUTABLE,
     cwd: config.AWM_ANTIGRAVITY_HOME,
+    triggerEnabled: config.AWM_ANTIGRAVITY_TRIGGER_ENABLED,
+    actionTimeoutSeconds: config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
+    triggerModels: {
+      gemini: config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
+      claudeGpt: config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
+    },
   });
   adapters.set(provider.id, provider);
   seedProvider(
@@ -229,7 +235,7 @@ function registerAntigravityProvider(): void {
       kind: 'antigravity',
       config: { home: config.AWM_ANTIGRAVITY_HOME },
     },
-    'monitor_only',
+    config.AWM_ANTIGRAVITY_TRIGGER_ENABLED ? undefined : 'monitor_only',
   );
 }
 

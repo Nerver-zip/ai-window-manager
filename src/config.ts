@@ -31,6 +31,25 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  AWM_ANTIGRAVITY_TRIGGER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(30),
+  AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: z
+    .string()
+    .trim()
+    .min(1, { message: 'AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL must not be empty' })
+    .max(128, { message: 'AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL must be 128 characters or fewer' })
+    .default('gemini-3.8-flash-low'),
+  AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL: z
+    .string()
+    .trim()
+    .min(1, { message: 'AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL must not be empty' })
+    .max(128, {
+      message: 'AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL must be 128 characters or fewer',
+    })
+    .default('claude-sonnet-4-6'),
   AWM_ANTIGRAVITY_HOME: z.string().default('./data/antigravity'),
   AWM_ANTIGRAVITY_EXECUTABLE: z.string().default('agy'),
   AWM_RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),

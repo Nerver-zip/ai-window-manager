@@ -1,8 +1,14 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 
 const MAX_STDOUT_BYTES = 512 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
+const MAX_ACTION_STDOUT_BYTES = 128 * 1024;
+const MAX_ACTION_TIMEOUT_MS = 120_000;
 const TERMINATION_GRACE_MS = 250;
+export const ANTIGRAVITY_TRIGGER_MESSAGE = 'Hi!';
 
 export type AntigravityTransportErrorCode =
   | 'AUTH_REQUIRED'
@@ -14,10 +20,23 @@ export type AntigravityTransportErrorCode =
   | 'PROVIDER_OUTPUT_INVALID'
   | 'EXECUTABLE_UNAVAILABLE';
 
+export type AntigravityActionFailureDisposition = 'failed' | 'uncertain';
+export type AntigravityActionTransportErrorCode = 'PROCESS_START_FAILED' | 'OUTCOME_UNKNOWN';
+
 export class AntigravityTransportError extends Error {
   constructor(readonly code: AntigravityTransportErrorCode) {
     super(`Antigravity provider ${code.toLowerCase().replaceAll('_', ' ')}`);
     this.name = 'AntigravityTransportError';
+  }
+}
+
+export class AntigravityActionTransportError extends Error {
+  constructor(
+    readonly code: AntigravityActionTransportErrorCode,
+    readonly disposition: AntigravityActionFailureDisposition,
+  ) {
+    super(`Antigravity action ${code.toLowerCase().replaceAll('_', ' ')}`);
+    this.name = 'AntigravityActionTransportError';
   }
 }
 
@@ -37,6 +56,14 @@ export interface AntigravityUsageCommandOptions {
   printTimeoutSeconds: number;
   timeoutMs: number;
   cwd?: string;
+  spawnProcess?: AntigravityProcessFactory;
+  signal?: AbortSignal;
+}
+
+export interface AntigravityTriggerCommandOptions {
+  executable: string;
+  model: string;
+  timeoutMs: number;
   spawnProcess?: AntigravityProcessFactory;
   signal?: AbortSignal;
 }
@@ -111,6 +138,173 @@ function killProcess(child: ChildProcessWithoutNullStreams): void {
     }
   }, TERMINATION_GRACE_MS);
   killTimer.unref();
+}
+
+function actionFailure(
+  code: AntigravityActionTransportErrorCode,
+  disposition: AntigravityActionFailureDisposition,
+): AntigravityActionTransportError {
+  return new AntigravityActionTransportError(code, disposition);
+}
+
+function actionProcessFailure(spawned: boolean): AntigravityActionTransportError {
+  if (!spawned) return actionFailure('PROCESS_START_FAILED', 'failed');
+  return actionFailure('OUTCOME_UNKNOWN', 'uncertain');
+}
+
+/**
+ * Send the single fixed, quota-consuming prompt through the official CLI.
+ * The caller must persist its intent before invoking this function. Any
+ * failure after the child process starts is ambiguous because the CLI does not
+ * expose a trusted signal that proves whether the prompt was dispatched.
+ */
+export async function runAntigravityTriggerCommand(
+  options: AntigravityTriggerCommandOptions,
+): Promise<string> {
+  if (
+    !Number.isInteger(options.timeoutMs) ||
+    options.timeoutMs <= 0 ||
+    options.timeoutMs > MAX_ACTION_TIMEOUT_MS
+  ) {
+    throw actionFailure('PROCESS_START_FAILED', 'failed');
+  }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/.test(options.model)) {
+    throw actionFailure('PROCESS_START_FAILED', 'failed');
+  }
+  if (options.signal?.aborted) throw actionFailure('PROCESS_START_FAILED', 'failed');
+
+  let workspace: string;
+  try {
+    workspace = await mkdtemp(join(tmpdir(), 'awm-agy-trigger-'));
+  } catch {
+    throw actionFailure('PROCESS_START_FAILED', 'failed');
+  }
+
+  const spawnProcess = options.spawnProcess ?? defaultSpawn;
+  const args = [
+    '-p',
+    ANTIGRAVITY_TRIGGER_MESSAGE,
+    '--model',
+    options.model,
+    '--output-format',
+    'json',
+    '--print-timeout',
+    `${Math.ceil(options.timeoutMs / 1000)}s`,
+    '--sandbox',
+  ];
+
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      let child: ChildProcessWithoutNullStreams;
+      try {
+        child = spawnProcess(options.executable, args, {
+          shell: false,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: antigravityProcessEnvironment(process.env),
+          cwd: workspace,
+        });
+      } catch {
+        reject(actionFailure('PROCESS_START_FAILED', 'failed'));
+        return;
+      }
+
+      let settled = false;
+      let spawned = false;
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      let stdout = '';
+      const timeout = setTimeout(() => {
+        terminate();
+        finish(actionProcessFailure(spawned));
+      }, options.timeoutMs);
+      timeout.unref();
+      let abortListener: (() => void) | undefined;
+
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        if (abortListener && options.signal)
+          options.signal.removeEventListener('abort', abortListener);
+      };
+
+      const finish = (error?: AntigravityActionTransportError, value?: string): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(value ?? '');
+      };
+
+      const terminate = (): void => {
+        killProcess(child);
+      };
+
+      child.once('spawn', () => {
+        spawned = true;
+      });
+
+      child.stdout.on('data', (chunk: Buffer | string) => {
+        if (settled) return;
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        stdoutBytes += Buffer.byteLength(text, 'utf8');
+        if (stdoutBytes > MAX_ACTION_STDOUT_BYTES) {
+          terminate();
+          finish(actionFailure('OUTCOME_UNKNOWN', 'uncertain'));
+          return;
+        }
+        stdout += text;
+      });
+
+      child.stderr.on('data', (chunk: Buffer | string) => {
+        if (settled) return;
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        stderrBytes += Buffer.byteLength(text, 'utf8');
+        if (stderrBytes > MAX_STDERR_BYTES) {
+          terminate();
+          finish(actionFailure('OUTCOME_UNKNOWN', 'uncertain'));
+        }
+      });
+
+      child.once('error', () => {
+        if (settled) return;
+        finish(
+          spawned
+            ? actionFailure('OUTCOME_UNKNOWN', 'uncertain')
+            : actionFailure('PROCESS_START_FAILED', 'failed'),
+        );
+      });
+
+      child.stdin.once('error', () => {
+        if (settled) return;
+        finish(actionProcessFailure(spawned));
+      });
+
+      child.once('close', (exitCode: number | null) => {
+        if (settled) return;
+        if (!spawned) {
+          finish(actionFailure('PROCESS_START_FAILED', 'failed'));
+          return;
+        }
+        if (exitCode !== 0) {
+          finish(actionProcessFailure(spawned));
+          return;
+        }
+        finish(undefined, stdout);
+      });
+
+      if (options.signal) {
+        abortListener = () => {
+          terminate();
+          finish(actionProcessFailure(spawned));
+        };
+        if (options.signal.aborted) abortListener();
+        else options.signal.addEventListener('abort', abortListener, { once: true });
+      }
+
+      child.stdin.end();
+    });
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 }
 
 export async function runAntigravityUsageCommand(

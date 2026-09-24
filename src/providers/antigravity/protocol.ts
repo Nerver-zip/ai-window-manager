@@ -63,7 +63,28 @@ export const AntigravityUsageEnvelopeSchema = z
   })
   .passthrough();
 
+const AntigravityActionEnvelopeSchema = z
+  .object({
+    status: z.enum([
+      'SUCCESS',
+      'ERROR',
+      'CANCELED',
+      'INTERRUPTED',
+      'INVALID',
+      'WAITING',
+      'RUNNING',
+    ]),
+    response: z
+      .string()
+      .max(64 * 1024)
+      .optional(),
+    error: z.string().max(MAX_ERROR_LENGTH).optional(),
+    num_turns: z.number().int().min(0).max(1_000).optional(),
+  })
+  .passthrough();
+
 export type AntigravityUsageEnvelope = z.infer<typeof AntigravityUsageEnvelopeSchema>;
+export type AntigravityActionEnvelope = z.infer<typeof AntigravityActionEnvelopeSchema>;
 export type AntigravityUsageGroup = z.infer<typeof UsageGroupSchema>;
 export type AntigravityUsageBucket = z.infer<typeof UsageBucketSchema>;
 
@@ -71,6 +92,13 @@ export class AntigravityOutputError extends Error {
   constructor() {
     super('invalid official Antigravity usage output');
     this.name = 'AntigravityOutputError';
+  }
+}
+
+export class AntigravityActionOutputError extends Error {
+  constructor() {
+    super('invalid official Antigravity action output');
+    this.name = 'AntigravityActionOutputError';
   }
 }
 
@@ -85,6 +113,14 @@ export function parseAntigravityUsageEnvelope(value: unknown): AntigravityUsageE
   } catch (error) {
     if (error instanceof AntigravityOutputError) throw error;
     throw new AntigravityOutputError();
+  }
+}
+
+export function parseAntigravityActionEnvelope(value: unknown): AntigravityActionEnvelope {
+  try {
+    return AntigravityActionEnvelopeSchema.parse(value);
+  } catch {
+    throw new AntigravityActionOutputError();
   }
 }
 

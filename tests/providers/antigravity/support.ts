@@ -12,6 +12,8 @@ export class FakeAntigravityProcess extends EventEmitter {
   readonly stderr = new PassThrough();
   readonly killSignals: Array<NodeJS.Signals | number | undefined> = [];
   readonly options: AntigravitySpawnOptions;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   killed = false;
 
   constructor(options: AntigravitySpawnOptions) {
@@ -19,8 +21,13 @@ export class FakeAntigravityProcess extends EventEmitter {
     this.options = options;
   }
 
+  start(): void {
+    queueMicrotask(() => this.emit('spawn'));
+  }
+
   complete(output: string, exitCode = 0, stderr = ''): void {
     queueMicrotask(() => {
+      this.emit('spawn');
       if (output) this.stdout.write(output);
       if (stderr) this.stderr.write(stderr);
       this.stdout.end();
@@ -36,6 +43,7 @@ export class FakeAntigravityProcess extends EventEmitter {
   kill(signal?: NodeJS.Signals | number): boolean {
     this.killSignals.push(signal);
     this.killed = true;
+    this.signalCode = typeof signal === 'string' ? signal : null;
     this.stdout.end();
     this.stderr.end();
     queueMicrotask(() => this.emit('close', null, signal));
