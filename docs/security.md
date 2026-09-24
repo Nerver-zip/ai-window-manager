@@ -23,6 +23,9 @@ only through the official Codex login/device/app-server flow. AI Window
 Manager talks to the official client protocol and does not copy a workstation
 auth file back and forth. This avoids shared refresh-token races and reduces
 coupling to raw token formats.
+The Web-assisted login flow has offline process/UI coverage; completing it
+with an operator account and verifying the new session after container restart
+remain pending acceptance.
 
 The quota-consuming trigger gate defaults to disabled. When an operator enables
 `AWM_CODEX_TRIGGER_ENABLED=true` and provider automation, the adapter sends one
@@ -35,7 +38,16 @@ cannot be retried blindly.
 
 ### Antigravity
 
-Official CLI uses OS keyring/Secret Service. A Docker-safe persistent auth approach needs a spike. Do not “solve” this by extracting Google tokens. Until a supported operational pattern is demonstrated, report `AUTH_REQUIRED`/monitor-only.
+The accepted integration invokes only the pinned official `agy` CLI. It is
+opt-in (`AWM_ANTIGRAVITY_ENABLED=false` by default), read-only, and always
+declares `windowTrigger.supported=false`. Authentication remains owned by the
+official CLI and its Secret Service keyring. The container uses separate
+Antigravity CLI-state and keyring volumes under UID 10001; it does not mount the
+host home, host D-Bus socket, or host keyring. An optional operator-managed
+keyring unlock value is read from a mounted file under `/run/secrets`, never
+from an environment variable, image, database, browser response, log, or
+metric. Live authenticated login/restart acceptance remains pending; do not
+represent offline keyring startup as proof that account authentication works.
 
 ## Network exposure
 

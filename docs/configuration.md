@@ -14,6 +14,10 @@ Environment/.env/Compose controls process/container concerns:
 - initial provider/policy defaults (including `AWM_TIMEZONE`) **only when the
   DB is empty**;
 - feature flags needed before DB access.
+- provider executable paths and dedicated provider state paths;
+- `AWM_AUTH_SESSION_TIMEOUT_SECONDS` (60–1800 seconds, default 900);
+- `AWM_ANTIGRAVITY_ENABLED` (default `false`) to opt into the official CLI monitor;
+- `AWM_ANTIGRAVITY_KEYRING_SECRET_FILE`, an internal mounted-file path only (not secret contents).
 
 These generally require restart.
 
@@ -34,6 +38,12 @@ DB is authoritative after initialization.
 ## Secrets
 
 Secrets are neither normal env-backed mutable settings nor DB values. Runtime settings store only a secret **reference/slot name**. Secret material lives in dedicated mounts/provider-owned secure storage.
+
+The Antigravity keyring unlock value, if required, must be mounted as a
+file below `/run/secrets` using the ignored Compose override example. The
+environment variable contains only that in-container path. Keep the host file
+readable by UID 10001 and protected from other host users; never put its value
+in `.env` or Compose environment.
 
 ## Precedence
 

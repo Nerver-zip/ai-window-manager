@@ -6,7 +6,9 @@
 docker compose up -d
 ```
 
-One container, one data volume, optional dedicated provider credential/state mounts as provider spikes prove safe patterns.
+One application container with separate SQLite, Codex state, Antigravity CLI
+state, and Antigravity keyring volumes. No host home, D-Bus socket, or host
+keyring is mounted.
 
 ## Defaults
 
@@ -14,6 +16,8 @@ One container, one data volume, optional dedicated provider credential/state mou
 - container port: `8787`;
 - data: named volume at `/data`;
 - optional Codex state: separate named volume at `/codex-state`;
+- Antigravity CLI state: separate named volume at `/antigravity-state`;
+- Antigravity keyring backing data: separate named volume at `/antigravity-keyring`;
 - non-root UID 10001;
 - `restart: unless-stopped`;
 - `cap_drop: ALL`;
@@ -38,6 +42,32 @@ by `AWM_CODEX_TRIGGER_ENABLED=false` and the persisted provider mode remains
 When enabled deliberately, `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
 app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
 it does not turn an ambiguous outcome into a retryable failure.
+
+The image also packages the official Antigravity CLI `1.2.9` with
+architecture-specific SHA-256 verification. `AWM_ANTIGRAVITY_ENABLED=false` is
+the default. When enabled, the entrypoint starts a private D-Bus session and
+GNOME Secret Service as UID 10001, with `XDG_*` paths rooted in the dedicated
+provider volumes. It does not copy workstation login state. The login itself is
+performed by the official CLI through the Settings onboarding flow; normal
+inspection runs only the documented headless `/usage` command. Antigravity
+trigger capability is permanently false in this milestone.
+
+## Web-assisted provider sign-in acceptance
+
+Authentication sessions are temporary and reset to idle if the daemon restarts;
+the official provider clients persist credentials in their separate state
+volumes. For an operator-authorized acceptance, enable the provider in `.env`
+(`AWM_CODEX_ENABLED=true` or `AWM_ANTIGRAVITY_ENABLED=true`), start the
+container, then use **Settings → Connect** for that provider and complete only
+the official sign-in flow. Confirm that the UI reports **Connected** and that
+read-only usage observation succeeds. Restart the container and verify the
+provider reconnects without asking for sign-in again.
+
+This acceptance does not require sending a Codex turn or any other
+quota-consuming action. Codex trigger execution remains separately gated. For
+Antigravity, configure the optional mounted keyring unlock file only if the
+dedicated keyring requires it; never mount host home, keyring, or D-Bus state.
+Offline package/runtime probes do not count as authenticated restart acceptance.
 
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight
@@ -67,13 +97,26 @@ Prefer a private reverse proxy or Tailscale ACL/auth over building user manageme
 
 ## Provider homes/secrets
 
-Do not mount `$HOME`. Each provider gets only the exact official-client state it needs. Codex/Antigravity mounts are **not enabled by default** in the base Compose file until their implementation spikes settle the secure path.
+Do not mount `$HOME`. Each provider gets only the exact official-client state
+it needs. Codex and Antigravity runtime state volumes are isolated from the
+SQLite volume; Antigravity remains disabled by default.
 
 For Codex, an explicitly authorized operator may authenticate the official CLI
 into the dedicated `awm-codex-state` volume. AWM does not copy `auth.json`,
 browser cookies, JWTs or refresh tokens. `AWM_CODEX_ENABLED=false` remains the
 safe default, and a successful unauthenticated runtime probe proves packaging
 and process startup only, not account access.
+
+Antigravity authentication is explicit operator setup. If an encrypted GNOME
+keyring needs a startup unlock, create the ignored local override from
+`compose.antigravity-secret.example.yaml` and set
+`AWM_ANTIGRAVITY_KEYRING_SECRET_SOURCE` to a protected host file path. The file
+must be readable by container UID 10001; its contents are never placed in
+`.env`, Compose environment, application storage, or logs. Do not use a host
+home/keyring/D-Bus mount. If no unlock file is provided, the keyring must be
+available unlocked through the isolated runtime; otherwise the provider safely
+reports unavailable/auth-required. Authenticated login and reuse after restart
+must be verified by an operator before relying on the integration.
 
 ## Smoke test checklist
 
@@ -114,3 +157,16 @@ docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
 
 The command must report `codex-cli 0.155.1` and a successful app-server
 `initialize`. It deliberately does not log in or call `account/rateLimits/read`.
+
+The Antigravity image check, without credentials or a provider request, is:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
+  --user 10001:10001 --entrypoint node \
+  -v "$PWD/scripts/validate-antigravity-runtime.mjs:/tmp/validate.mjs:ro" \
+  ai-window-manager:dev /tmp/validate.mjs
+```
+
+It verifies the pinned CLI version and starts an isolated D-Bus/Secret-Service
+session. It does not authenticate, read quota, or prove restart reuse of a real
+Antigravity account.

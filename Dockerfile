@@ -44,33 +44,73 @@ RUN set -eux; \
     test "$(/opt/codex/bin/codex --version)" = "codex-cli ${CODEX_VERSION}"; \
     chmod -R a-w /opt/codex
 
+FROM node:24-bookworm-slim AS antigravity
+ARG AGY_VERSION=1.2.9
+ARG AGY_SHA256_AMD64=d9850373f3df866011024a961fa9740cc4adaac060eebe9c70fbf263ac6b2624
+ARG AGY_SHA256_ARM64=8a63cf4c4f559e2ff91bd46fbdf015ca7937415805d0cff82015b9cb9dbbdfcd
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar gzip \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) \
+        agy_asset='agy_cli_linux_x64.tar.gz'; \
+        agy_sha256="${AGY_SHA256_AMD64}" \
+        ;; \
+      arm64) \
+        agy_asset='agy_cli_linux_arm64.tar.gz'; \
+        agy_sha256="${AGY_SHA256_ARM64}" \
+        ;; \
+      *) echo "unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    archive="/tmp/${agy_asset}"; \
+    curl --fail --silent --show-error --location --retry 3 \
+      "https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${agy_asset}" \
+      --output "${archive}"; \
+    printf '%s  %s\n' "${agy_sha256}" "${archive}" | sha256sum --check -; \
+    install -d -m 0755 /opt/antigravity/bin; \
+    tar --extract --gzip --file "${archive}" --directory /tmp; \
+    test -f /tmp/antigravity; \
+    install -m 0555 /tmp/antigravity /opt/antigravity/bin/agy; \
+    test "$(/opt/antigravity/bin/agy --version)" = "${AGY_VERSION}"; \
+    chmod -R a-w /opt/antigravity
+
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
-    PATH=/opt/codex/bin:$PATH \
+    PATH=/opt/antigravity/bin:/opt/codex/bin:$PATH \
     AWM_BIND=0.0.0.0 \
     AWM_PORT=8787 \
     AWM_DB_PATH=/data/window-manager.db \
     AWM_CODEX_HOME=/codex-state \
-    AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex
+    AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex \
+    AWM_AUTH_SESSION_TIMEOUT_SECONDS=900 \
+    AWM_ANTIGRAVITY_ENABLED=false \
+    AWM_ANTIGRAVITY_HOME=/antigravity-state \
+    AWM_ANTIGRAVITY_EXECUTABLE=/opt/antigravity/bin/agy
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates dbus-daemon gnome-keyring libsecret-1-0 \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable \
     && useradd --system --uid 10001 --create-home --home-dir /home/awm awm \
-    && mkdir -p /data /codex-state \
-    && chown -R awm:awm /data /codex-state /home/awm \
+    && mkdir -p /data /codex-state /antigravity-state /antigravity-keyring /home/awm \
+      /antigravity-state/.local/share/keyrings \
+    && chown -R awm:awm /data /codex-state /antigravity-state /antigravity-keyring /home/awm \
     && chmod 0755 /data \
-    && chmod 0700 /codex-state /home/awm
+    && chmod 0700 /codex-state /antigravity-state /antigravity-keyring /home/awm
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
 COPY --from=build /app/assets ./assets
 COPY --from=codex /opt/codex /opt/codex
+COPY --from=antigravity /opt/antigravity /opt/antigravity
 COPY package.json ./package.json
+COPY --chmod=0555 scripts/agy-entrypoint.sh ./scripts/agy-entrypoint.sh
 USER 10001:10001
 EXPOSE 8787
 STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-ENTRYPOINT ["node", "dist/src/index.js"]
+ENTRYPOINT ["/app/scripts/agy-entrypoint.sh"]

@@ -3,6 +3,7 @@ node_modules/
 dist/
 coverage/
 .env
+compose.antigravity-secret.yaml
 .env.*
 !.env.example
 data/

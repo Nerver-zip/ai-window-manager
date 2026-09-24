@@ -16,6 +16,13 @@ services:
       AWM_CODEX_HOME: ${AWM_CODEX_HOME:-/codex-state}
       AWM_CODEX_EXECUTABLE: ${AWM_CODEX_EXECUTABLE:-/opt/codex/bin/codex}
       AWM_CODEX_ACTION_TIMEOUT_SECONDS: ${AWM_CODEX_ACTION_TIMEOUT_SECONDS:-30}
+      AWM_AUTH_SESSION_TIMEOUT_SECONDS: ${AWM_AUTH_SESSION_TIMEOUT_SECONDS:-900}
+      AWM_ANTIGRAVITY_ENABLED: ${AWM_ANTIGRAVITY_ENABLED:-false}
+      AWM_ANTIGRAVITY_HOME: ${AWM_ANTIGRAVITY_HOME:-/antigravity-state}
+      AWM_ANTIGRAVITY_EXECUTABLE: ${AWM_ANTIGRAVITY_EXECUTABLE:-/opt/antigravity/bin/agy}
+      # Path only; the secret contents must be supplied through a separate mounted
+      # file under /run/secrets when keyring unlock is explicitly required.
+      AWM_ANTIGRAVITY_KEYRING_SECRET_FILE: ${AWM_ANTIGRAVITY_KEYRING_SECRET_FILE:-}
       AWM_RECONCILE_INTERVAL_SECONDS: ${AWM_RECONCILE_INTERVAL_SECONDS:-30}
       AWM_EXECUTOR_INTERVAL_SECONDS: ${AWM_EXECUTOR_INTERVAL_SECONDS:-5}
       AWM_RETENTION_INTERVAL_SECONDS: ${AWM_RETENTION_INTERVAL_SECONDS:-86400}
@@ -24,13 +31,17 @@ services:
     volumes:
       - awm-data:/data
       - awm-codex-state:/codex-state
+      - awm-antigravity-state:/antigravity-state
+      - awm-antigravity-keyring:/antigravity-keyring
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
+      - /run:size=16m,mode=755
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    user: '10001:10001'
     healthcheck:
       test:
         [
@@ -47,3 +58,5 @@ services:
 volumes:
   awm-data:
   awm-codex-state:
+  awm-antigravity-state:
+  awm-antigravity-keyring:
