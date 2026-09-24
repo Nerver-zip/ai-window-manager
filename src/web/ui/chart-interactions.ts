@@ -25,6 +25,14 @@ export const APP_JS = `(() => {
     });
   }
 
+  for (const form of document.querySelectorAll('[data-provider-picker-auto-submit]')) {
+    for (const input of form.querySelectorAll('select, .provider-picker-input')) {
+      input.addEventListener('change', () => {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      });
+    }
+  }
+
   function setPolicyFieldState(section, active) {
     section.hidden = !active;
     section.setAttribute('aria-hidden', active ? 'false' : 'true');

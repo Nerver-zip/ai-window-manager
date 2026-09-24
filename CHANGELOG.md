@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Schedule provider selection now loads that provider's saved policy through a
+  read-only GET; switching providers does not save changes, and remains usable
+  without JavaScript.
 - Fixed same-origin form submissions in Chrome sending `Origin: null` by using
   `Referrer-Policy: same-origin` while retaining cross-origin referrer
   suppression and Origin/CSRF enforcement.

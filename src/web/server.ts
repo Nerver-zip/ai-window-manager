@@ -502,6 +502,7 @@ export function buildServer(input: BuildServerInput) {
     return renderActivationSchedulePage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
+      ...(selected ? { selectedProviderId: selected.providerId } : {}),
       ...(selected?.policy ? { policy: selected.policy } : {}),
       ...(scheduling.timezone ? { timezone: scheduling.timezone } : {}),
       ...(selected?.currentWindow ? { currentWindow: selected.currentWindow } : {}),

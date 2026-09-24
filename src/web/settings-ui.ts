@@ -117,6 +117,7 @@ export interface SchedulePageInput {
 export interface ActivationSchedulePageInput {
   csrfToken: string;
   providers: readonly SettingsProviderView[];
+  selectedProviderId?: string;
   policy?: ActivationPolicy;
   timezone?: TimezoneSetting;
   currentWindow?: CurrentWindowState;
@@ -139,7 +140,7 @@ export interface SchedulePolicyView {
 export function renderActivationSchedulePage(input: ActivationSchedulePageInput): string {
   const csrfToken = escapeHtml(input.csrfToken);
   const policy = input.policy;
-  const providerId = policy?.providerId ?? input.providers[0]?.id ?? '';
+  const providerId = policy?.providerId ?? input.selectedProviderId ?? input.providers[0]?.id ?? '';
   const selectedProvider = input.providers.find((provider) => provider.id === providerId);
   const selectedWindowKind =
     policy && 'windowKind' in policy
@@ -180,13 +181,15 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
       </section>
       <section class="card" aria-labelledby="activation-policy-title">
         <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">Choose a pattern. We only start when fresh usage information and provider safety checks allow it.</p></div></div>
+        <form class="schedule-provider-selection" method="get" action="/schedule" data-provider-picker-auto-submit>
+          ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose a provider to load its saved schedule. This does not save changes.', 'activation-policy-provider-help')}
+          <noscript><div class="form-actions"><button type="submit">View provider schedule</button></div></noscript>
+        </form>
         <form method="post" action="/schedule" data-policy-form data-schedule-preview-form>
           ${csrfInput(csrfToken)}
+          <input type="hidden" name="providerId" value="${escapeAttribute(providerId)}">
           <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
           <input type="hidden" name="toleranceSeconds" value="${tolerance}">
-          <div class="form-grid schedule-primary-fields">
-            ${renderField('activation-policy-provider', 'Provider', `<select id="activation-policy-provider" name="providerId" required>${providerOptions}</select>`, 'Choose the provider this schedule controls.', 'activation-policy-provider-help')}
-          </div>
           <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><p class="field-help">Choose a pattern. You can change it later without affecting the current window.</p><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value)).join('')}</div></fieldset>
           <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change</a></p>
           ${renderPolicyFields('auto', kind === 'auto', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'auto-window')}</div><p class="policy-guidance">The service checks for a newly available window and starts it only when fresh provider data and safety checks agree.</p>`)}
@@ -194,7 +197,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
           ${renderPolicyFields('fixed', kind === 'fixed', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'fixed-window')}${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
           ${renderPolicyFields('active_hours', kind === 'active_hours', `<div class="policy-controls-grid">${renderPolicyWindowField(windowControl, 'active-hours-window')}${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
           ${renderPolicyFields('manual', kind === 'manual', '<p class="policy-guidance">Monitoring continues. The service will not start a window automatically.</p>')}
-          <div class="form-actions"><button type="submit">Save schedule</button></div>
+          <div class="form-actions"><button type="submit"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div>
         </form>
       </section>
       <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
