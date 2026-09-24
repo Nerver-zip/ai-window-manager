@@ -28,9 +28,12 @@ operator-authorized live `Hi!` heartbeat acceptance; production enablement
 remains explicit and the action path now has a separate bounded timeout with
 uncertain-outcome confirmation. Provider onboarding now supervises official
 Codex and Antigravity sign-in processes in memory; Antigravity read-only
-observation and an isolated optional keyring runtime are implemented. Live
-Web-assisted login and restart reuse for both providers remain operator
-acceptance tasks. `WINDOW-001` and `WEB-005` now provide exact target scoping
+observation and an isolated optional keyring runtime are implemented. On
+2026-09-24, existing Codex and Antigravity sessions in the local `awm`
+deployment survived forced recreation and `docker compose restart`; both
+providers resumed fresh read-only observations. This is instance-specific and
+does not replace fresh sign-in acceptance in another deployment.
+`WINDOW-001` and `WEB-005` now provide exact target scoping
 and safe per-window manual controls. `WINDOW-001` restricts each provider to one exact selected
 window for policy planning. `ANT-002` has account-specific operator evidence
 recorded in `SPIKE-005`; `AGY-TRIGGER-001` implements an opt-in official-CLI
@@ -50,8 +53,9 @@ optional mounted unlock file. No token extraction or backend impersonation is
 allowed. SPIKE-005 records operator-provided evidence that one `Hi!` anchored
 the selected family's five-hour window on one account/CLI/model path. This is
 not a universal guarantee. The official-CLI action is implemented behind an
-independent default-off gate, but live AWM action acceptance and authenticated
-restart reuse remain unverified.
+independent default-off gate, but live AWM action acceptance remains pending.
+Authenticated state reuse after recreation/restart was verified for the local
+operator deployment on 2026-09-24; this does not generalize to a fresh install.
 
 The stack is Node 24 + TypeScript + Fastify + SQLite (`better-sqlite3`) + server-rendered HTML/tiny JS + `prom-client` + Vitest + pnpm. One service/container; no Redis/Postgres/broker/React/Kubernetes. Environment owns process/bootstrap config; SQLite owns mutable runtime config; secrets live in dedicated provider-owned/mounted storage.
 
@@ -146,7 +150,9 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 
 - whether the observed effect generalizes beyond the tested account, plan, model and CLI version;
 - long-term stability of the nested machine-readable quota/reset payload;
-- authenticated account login and keyring reuse after a real container restart.
+- reuse of authentication for fresh account/keyring configurations. Existing
+  sessions survived recreation/restart in the local operator deployment on
+  2026-09-24, but this is not a general guarantee for new installations.
 
 **Risk**
 
@@ -309,7 +315,10 @@ Codex: prefer dedicated official-client home/auth lifecycle. Do not mount whole 
 Antigravity: use only the official CLI and its Secret Service keyring. The
 container runtime is isolated and opt-in; no host home, D-Bus, keyring or
 credential files are mounted. The mounted unlock-file path carries no secret
-value. Live authenticated persistence/restart acceptance remains pending.
+value. Existing Antigravity authentication in the local `awm` deployment
+survived forced recreation and `docker compose restart` on 2026-09-24, followed
+by fresh read-only observations. Fresh login/keyring setup in another
+deployment still requires operator acceptance.
 
 Threat model and HTTP mitigations are detailed in `docs/security.md`. Loopback is default. No full app auth in MVP under private-network assumption, but untrusted LAN exposure requires upstream auth or a future native auth feature. Mutations still require CSRF/Origin checks.
 
@@ -508,8 +517,9 @@ request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
 ### Phase 6 — Antigravity monitor and experimental action
 
 **Status**: official monitor and opt-in action implementation have offline
-coverage. SPIKE-005 has account-specific operator evidence; live authenticated
-restart and live AWM action acceptance remain pending.
+coverage. SPIKE-005 has account-specific operator evidence. Existing
+authenticated state survived recreation/restart in the local operator
+deployment on 2026-09-24; live AWM action acceptance remains pending.
 **Goal**: official-CLI-only read path and one target-specific `Hi!` action.
 **Acceptance**: safe auth persistence, strict parser, exact target confirmation,
 durable intent and no retry after an uncertain result.
@@ -565,7 +575,7 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
 - [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service, optional mounted unlock file, and remains disabled by default.
 - [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger support is independently gated, exact-target allowlisted, and disabled by default.
-- [ ] Web-assisted Codex and Antigravity login, followed by restart reuse, are verified by an operator in the intended deployment.
+- [ ] Fresh Web-assisted Codex and Antigravity sign-in is verified by an operator in each intended deployment. Existing sessions in the current local deployment survived recreation/restart and resumed provider reads on 2026-09-24.
 - [x] Antigravity trigger semantics have account-specific operator evidence and are explicitly classified experimental; no universal guarantee is claimed.
 - [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
 - [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.
@@ -584,14 +594,14 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 
 ### P0
 
-- **Antigravity auth persistence**: the official docs require OS keyring/Secret Service; this project accepts an isolated official-CLI runtime but still requires authenticated restart acceptance. No token extraction or internal calls.
+- **Antigravity auth persistence**: the official docs require OS keyring/Secret Service; authenticated state survived recreation/restart in this local deployment on 2026-09-24, but fresh account/keyring setups remain deployment-specific. No token extraction or internal calls.
 - **Duplicate quota-affecting actions**: mitigation is durable intent + unique dedupe + uncertain state + confirmation before any retry.
 - **Provider contract churn**: strict boundary validation, sanitized fixtures, last-known-good/staleness, fail closed, research refresh.
 
 ### P1
 
 - **Codex official-client integration lifecycle/auth in headless container**: SPIKE-001.
-- **Antigravity keyring/DBus in container**: isolated in-container runtime is implemented and locally probeable; live auth/restart remains pending.
+- **Antigravity keyring/DBus in container**: isolated runtime is implemented; existing authenticated state survived restart in the local deployment, while fresh setups still require acceptance.
 - **Antigravity window-start semantics**: one account-specific operator test is documented; other accounts/plans/CLI versions remain unknown, so the trigger stays opt-in and uncertain outcomes cannot retry.
 - **Clock/DST mis-scheduling**: dedicated temporal tests + skip missed actions.
 

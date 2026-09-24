@@ -28,9 +28,11 @@ bounded overall interactive session deadline. The web flow captures only the
 short-lived device code and official sign-in URL from the CLI's interactive
 terminal; it never reads, parses, or returns OAuth/access/refresh tokens. The
 official Codex CLI alone persists authentication in `/codex-state`.
-The Web-assisted login flow has offline process/UI coverage; completing it
-with an operator account and verifying the new session after container restart
-remain pending acceptance.
+The Web-assisted login flow has offline process/UI coverage. Existing Codex
+and Antigravity sessions in the local operator deployment survived container
+recreation/restart and resumed read-only observations on 2026-09-24. This does
+not validate a fresh Web-assisted sign-in or keyring setup in another
+deployment; operators must verify those there.
 
 The quota-consuming trigger gate defaults to disabled. When an operator enables
 `AWM_CODEX_TRIGGER_ENABLED=true` and provider automation, the adapter sends one
@@ -66,9 +68,10 @@ official CLI's `Select login method` screen and sends one Enter only when
 `1. Google OAuth` is explicitly selected; it never selects the Google Cloud
 project option. It then captures the complete official Google sign-in URL and
 forwards only the browser-issued code entered by the operator to the waiting
-CLI process. AWM never reads or returns Antigravity tokens. Live authenticated
-login/restart acceptance remains pending; do not represent offline keyring
-startup as proof that account authentication works.
+CLI process. AWM never reads or returns Antigravity tokens. The existing
+authenticated local deployment resumed usage reads after recreation/restart on
+2026-09-24; this does not prove fresh account/keyring setup elsewhere. Do not
+represent offline keyring startup as proof that account authentication works.
 
 ## Network exposure
 

@@ -80,6 +80,12 @@ other quota-consuming action. Both trigger paths remain separately gated. For
 Antigravity, configure the optional mounted keyring unlock file only if the
 dedicated keyring requires it; never mount host home, keyring, or D-Bus state.
 Offline package/runtime probes do not count as authenticated restart acceptance.
+For this repository's local operator deployment, existing Codex and
+Antigravity sessions were revalidated after forced container recreation and
+`docker compose restart` on 2026-09-24: both providers returned to healthy
+read-only observation without a new login. No quota-consuming action was
+sent. Treat this as deployment-specific evidence, not as acceptance for a
+fresh installation or a different account/keyring configuration.
 
 ## Optional quota-consuming trigger acceptance
 

@@ -136,7 +136,9 @@ blindly retried.
   accounts, regions, or future CLI/model versions.
 - Whether the nested quota payload remains stable across CLI releases.
 - Whether `agy -p /usage` consistently yields the same parseable non-interactive quota output in every future release/configuration.
-- Live authenticated container restart acceptance for the project's isolated official-CLI keyring runtime.
+- reuse of authentication for fresh account/keyring configurations. Existing
+  sessions survived recreation/restart in the local operator deployment on
+  2026-09-24, but this is not a general guarantee for new installations.
 - Whether any automated quota-positioning request is acceptable under Antigravity terms beyond ordinary documented CLI automation.
 
 ### Risk / policy

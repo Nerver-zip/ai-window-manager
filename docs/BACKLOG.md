@@ -35,10 +35,11 @@ Provider Onboarding milestone below; its evidence is preserved.
 
 ## Provider onboarding milestone — current implementation status
 
-The following slices are implemented with offline/unit coverage. Live
-Web-assisted login and restart reuse for Codex and Antigravity still require an
-operator in the intended deployment; no live auth acceptance was run in this
-implementation pass.
+The following slices are implemented with offline/unit coverage. On
+2026-09-24, the existing Codex and Antigravity sessions in the local `awm`
+deployment survived forced recreation and `docker compose restart`, with fresh
+read-only observations resuming. Fresh Web-assisted sign-in in a new intended
+deployment remains operator acceptance; no quota-consuming action was run.
 
 - **AUTH-001 / CODEX-AUTH-001 / AGY-AUTH-001**: in-memory supervised login
   sessions through official clients, bounded safe status DTOs, code forwarding
@@ -169,7 +170,7 @@ the HTTP handler never inspects or dispatches a provider action.
 
 ## ANT-001 — Implement Antigravity read-only adapter if spikes pass
 
-**Status: adapter/runtime implementation present; offline tests pass; live authenticated restart acceptance pending.**
+**Status: adapter/runtime implementation present; offline tests pass; existing authenticated state survived recreation/restart in the local operator deployment on 2026-09-24. Fresh account/keyring setup remains deployment-specific.**
 
 **Scope**: official `agy` CLI only; parser based on documented/proven output; no extracted tokens.  
 **Acceptance**: health/auth states clear, parser fails closed, monitor-only.  

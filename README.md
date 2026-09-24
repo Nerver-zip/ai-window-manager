@@ -128,8 +128,10 @@ Intentionally **not** enabled by default:
 
 - Codex or Antigravity quota-consuming actions; each requires its explicit
   environment gate and provider automation mode;
-- live Web-assisted login and restart acceptance for Codex and Antigravity in
-  an operator-authorized account/container;
+- fresh sign-in and authenticated-state acceptance in each new deployment are
+  operator-run. Existing Codex and Antigravity sessions in the local `awm`
+  deployment survived container recreation/restart and resumed read-only
+  observations on 2026-09-24; this is instance-specific, not a CI guarantee;
 - universal guarantees about Antigravity's window-start behavior; the
   operator-tested one-account/CLI experiment is documented in
   [`SPIKE-005`](docs/research/spikes/SPIKE-005-antigravity-window-trigger.md);
