@@ -12,3 +12,13 @@ paths = [
   '''(^|/)data/''',
   '''(^|/)\.pnpm-store/''',
 ]
+
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Synthetic Antigravity dedupe IDs in provider tests are not credentials."
+  condition = "AND"
+  paths = [ '''^tests/providers/antigravity/provider\.test\.ts$''' ]
+  regexTarget = "match"
+  regexes = [ '''dedupe-synthetic-[0-9]+''' ]
