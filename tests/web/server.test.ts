@@ -240,8 +240,8 @@ describe('web server persisted overview', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toContain('text/html');
-    expect(response.body).toContain('href="/assets/app.css"');
-    expect(response.body).toContain('<script defer src="/assets/app.js"></script>');
+    expect(response.body).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
+    expect(response.body).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
     expect(response.body).not.toMatch(/<style|style=|<script>/);
     expect(response.body).toContain('aria-current="page"');
   });
@@ -638,8 +638,8 @@ describe('web server persisted overview', () => {
     const page = await app.inject('/');
     expect(page.statusCode).toBe(200);
     expect(page.headers['content-type']).toContain('text/html');
-    expect(page.body).toContain('href="/assets/app.css"');
-    expect(page.body).toContain('<script defer src="/assets/app.js"></script>');
+    expect(page.body).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
+    expect(page.body).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
     expect(page.body).not.toMatch(/<style|style=|<script>/);
     expect(page.body).toContain('value="25"');
     expect(page.body).toContain('<progress');

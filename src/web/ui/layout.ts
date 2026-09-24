@@ -1,4 +1,10 @@
+import { randomUUID } from 'node:crypto';
+
 export type Page = 'overview' | 'usage' | 'schedule' | 'logs' | 'settings';
+
+// Version shared assets per process so container updates cannot keep serving
+// stale browser-cached interactions or styles from the same stable URL.
+const ASSET_VERSION = randomUUID();
 
 export function escapeHtml(value: string): string {
   return value
@@ -30,5 +36,5 @@ export function renderAppShell(input: {
         `<a href="${page === 'overview' ? '/' : `/${page}`}"${input.page === page ? ' aria-current="page"' : ''}><span class="nav-mark" aria-hidden="true">${NAV_ICONS[page]}</span><span>${page === 'logs' ? 'Logs' : `${page.charAt(0).toUpperCase()}${page.slice(1)}`}</span></a>`,
     )
     .join('');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${escapeHtml(input.title)} · AI Window Manager</title><link rel="icon" type="image/png" href="/assets/images/logo.png"><link rel="stylesheet" href="/assets/app.css"><script defer src="/assets/app.js"></script></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="/"><img class="brand-logo" src="/assets/images/logo.png" alt="" width="28" height="28"><span>AI Window<span class="brand-subtitle">MANAGER</span></span></a><p class="nav-caption">WORKSPACE</p><nav aria-label="Primary navigation">${navigation}</nav><footer class="sidebar-footer"><details class="developer-links"><summary>Developer tools</summary><div><a href="/api/v1/providers">JSON API</a><a href="/metrics">Metrics</a></div></details></footer></aside><main id="main" tabindex="-1"><header class="page-header"><div><p class="eyebrow">WINDOW OPERATIONS</p><h1>${escapeHtml(input.heading ?? input.title)}</h1>${input.description ? `<p class="page-description">${escapeHtml(input.description)}</p>` : ''}</div></header>${input.content}<footer class="page-footer">AI Window Manager <span>Observe. Plan. Understand.</span></footer></main></div></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><title>${escapeHtml(input.title)} · AI Window Manager</title><link rel="icon" type="image/png" href="/assets/images/logo.png"><link rel="stylesheet" href="/assets/app.css?v=${ASSET_VERSION}"><script defer src="/assets/app.js?v=${ASSET_VERSION}"></script></head><body><a class="skip-link" href="#main">Skip to content</a><div class="app-shell"><aside class="sidebar"><a class="brand" href="/"><img class="brand-logo" src="/assets/images/logo.png" alt="" width="28" height="28"><span>AI Window<span class="brand-subtitle">MANAGER</span></span></a><p class="nav-caption">WORKSPACE</p><nav aria-label="Primary navigation">${navigation}</nav><footer class="sidebar-footer"><details class="developer-links"><summary>Developer tools</summary><div><a href="/api/v1/providers">JSON API</a><a href="/metrics">Metrics</a></div></details></footer></aside><main id="main" tabindex="-1"><header class="page-header"><div><p class="eyebrow">WINDOW OPERATIONS</p><h1>${escapeHtml(input.heading ?? input.title)}</h1>${input.description ? `<p class="page-description">${escapeHtml(input.description)}</p>` : ''}</div></header>${input.content}<footer class="page-footer">AI Window Manager <span>Observe. Plan. Understand.</span></footer></main></div></body></html>`;
 }

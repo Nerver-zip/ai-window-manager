@@ -176,6 +176,12 @@ describe('Usage page', () => {
     expect(html).toContain('name="provider" value="codex" checked');
     expect(html).toContain('value="antigravity"');
     expect(html).toContain('class="provider-picker"');
+    expect(html).toContain(
+      'class="usage-filter-form" aria-label="Usage filters" data-provider-picker-auto-submit',
+    );
+    expect(html).toContain(
+      '<button class="button button-secondary" type="submit">Update view</button>',
+    );
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('<option value="codex|five_hour|3h" selected>3h</option>');
   });

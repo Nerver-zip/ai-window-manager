@@ -26,7 +26,7 @@ export const APP_JS = `(() => {
   }
 
   for (const form of document.querySelectorAll('[data-provider-picker-auto-submit]')) {
-    for (const input of form.querySelectorAll('select, .provider-picker-input')) {
+    for (const input of form.querySelectorAll('.provider-picker-input')) {
       input.addEventListener('change', () => {
         if (typeof form.requestSubmit === 'function') form.requestSubmit();
       });

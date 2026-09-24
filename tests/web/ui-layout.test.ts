@@ -16,12 +16,20 @@ describe('shared application shell', () => {
         `href="${page === 'overview' ? '/' : `/${page}`}" aria-current="page"`,
       );
       expect(html).toContain(`${page} · AI Window Manager`);
-      expect(html).toContain('href="/assets/app.css"');
-      expect(html).toContain('<script defer src="/assets/app.js"></script>');
+      expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
+      expect(html).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
       expect(html).toContain('Skip to content');
       expect(html).not.toMatch(/<style|<script>|style=/);
     },
   );
+  it('uses one process-scoped cache key for both local asset bundles', () => {
+    const html = renderAppShell({ page: 'usage', title: 'Usage', content: '' });
+    const cssVersion = html.match(/href="\/assets\/app\.css\?v=([a-f0-9-]+)"/)?.[1];
+    const jsVersion = html.match(/src="\/assets\/app\.js\?v=([a-f0-9-]+)"/)?.[1];
+
+    expect(cssVersion).toBeDefined();
+    expect(jsVersion).toBe(cssVersion);
+  });
   it('escapes all untrusted heading text and preserves readable descriptions', () => {
     const html = renderAppShell({
       page: 'overview',

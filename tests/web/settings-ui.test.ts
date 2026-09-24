@@ -329,7 +329,7 @@ describe('settings UI helpers', () => {
     expect(html).not.toContain('AWM_CODEX_TRIGGER_ENABLED');
     expect(html).not.toContain('apiKey');
     expect(html).not.toContain('<script>bad</script>');
-    expect(html).toContain('href="/assets/app.css"');
+    expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
     expect(html).not.toContain('<style>');
     expect(html).not.toContain('<script>');
   });

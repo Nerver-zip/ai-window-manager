@@ -198,17 +198,23 @@ describe('schedule provider switching', () => {
     expect(reconcileRequests).toBe(1);
   });
 
-  it('submits the GET selector on the native radio change event used by pointer or keyboard', () => {
-    let onChange: (() => void) | undefined;
+  it('submits provider radios on change without auto-submitting unrelated filters', () => {
+    let providerChange: (() => void) | undefined;
+    let windowChange: (() => void) | undefined;
     let submitted = 0;
     const providerChoice = {
       addEventListener: (event: string, listener: () => void) => {
-        if (event === 'change') onChange = listener;
+        if (event === 'change') providerChange = listener;
+      },
+    };
+    const windowChoice = {
+      addEventListener: (event: string, listener: () => void) => {
+        if (event === 'change') windowChange = listener;
       },
     };
     const form = {
       querySelectorAll: (selector: string) =>
-        selector === 'select, .provider-picker-input' ? [providerChoice] : [],
+        selector === '.provider-picker-input' ? [providerChoice] : [windowChoice],
       requestSubmit: () => {
         submitted += 1;
       },
@@ -219,7 +225,8 @@ describe('schedule provider switching', () => {
     };
 
     new Script(APP_JS).runInNewContext({ document, window: {} });
-    onChange?.();
+    providerChange?.();
+    windowChange?.();
 
     expect(submitted).toBe(1);
   });

@@ -106,7 +106,7 @@ export function renderUsagePage(input: UsagePageInput): string {
     ${notice}${dataStatus}
     <section class="usage-controls" aria-label="Usage filters">
       <div class="usage-controls-copy"><span class="eyebrow">Your activity</span><h2>Usage by day</h2><p>Weekly allowance used, based on saved provider updates.</p><p class="usage-timezone">Calendar dates use ${escapeHtml(timeZoneDisplayName(data.timezone))} · <a href="/settings">Change in Settings</a></p></div>
-      <form method="get" action="/usage" class="usage-filter-form" aria-label="Usage filters">
+      <form method="get" action="/usage" class="usage-filter-form" aria-label="Usage filters" data-provider-picker-auto-submit>
         ${preservedRanges}${selectedDayField}
         ${providerPicker}
         ${data.windows.length > 1 ? `<label class="field"><span class="field-label">Usage window</span><select name="window">${windowOptions}</select></label>` : selectedWindow ? `<input type="hidden" name="window" value="${escapeHtml(selectedWindow)}">` : ''}
