@@ -25,6 +25,7 @@ import { createRepositories, type SchedulePolicyRecord } from './storage/reposit
 import { runRetentionMaintenance } from './storage/retention.js';
 import { processUsageAggregationBatch } from './usage/service.js';
 import { buildServer } from './web/server.js';
+import { seedBootstrapProviderDefaults } from './bootstrap/provider-defaults.js';
 
 const config = loadConfig();
 const db = openDatabase(config.AWM_DB_PATH);
@@ -215,14 +216,17 @@ function registerCodexProvider(): void {
     triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
   });
   adapters.set(provider.id, provider);
-  seedProvider({
-    id: provider.id,
-    kind: 'codex',
-    config: {
-      codexHome: config.AWM_CODEX_HOME,
-      triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
+  seedProvider(
+    {
+      id: provider.id,
+      kind: 'codex',
+      config: {
+        codexHome: config.AWM_CODEX_HOME,
+        triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
+      },
     },
-  });
+    config.AWM_CODEX_TRIGGER_ENABLED,
+  );
 }
 
 function registerAntigravityProvider(): void {
@@ -244,44 +248,22 @@ function registerAntigravityProvider(): void {
       kind: 'antigravity',
       config: { home: config.AWM_ANTIGRAVITY_HOME },
     },
-    config.AWM_ANTIGRAVITY_TRIGGER_ENABLED ? undefined : 'monitor_only',
+    config.AWM_ANTIGRAVITY_TRIGGER_ENABLED,
   );
 }
 
 function seedProvider(
   input: { id: string; kind: string; config: unknown },
-  requiredMode?: 'monitor_only',
+  triggerEnabled = false,
 ): void {
-  const nowMs = clock.now().getTime();
-  const existing = repositories.providers.get(input.id);
-  if (!existing) {
-    repositories.providers.upsert({
-      id: input.id,
-      kind: input.kind,
-      enabled: true,
-      mode: 'monitor_only',
-      pollIntervalSeconds: Math.max(30, config.AWM_RECONCILE_INTERVAL_SECONDS),
-      config: input.config,
-      configVersion: 1,
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    });
-  } else if (requiredMode && existing.mode !== requiredMode) {
-    repositories.providers.upsert({ ...existing, mode: requiredMode, updatedAtMs: nowMs });
-  }
-  if (repositories.schedulePolicies.list(input.id).length === 0) {
-    const policy: SchedulePolicyRecord = {
-      id: `activation-${input.id}`,
-      providerId: input.id,
-      kind: 'manual',
-      enabled: true,
-      timezone: config.AWM_TIMEZONE,
-      config: {},
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    };
-    repositories.schedulePolicies.upsert(policy);
-  }
+  seedBootstrapProviderDefaults({
+    repositories,
+    provider: input,
+    nowMs: clock.now().getTime(),
+    pollIntervalSeconds: Math.max(30, config.AWM_RECONCILE_INTERVAL_SECONDS),
+    timezone: config.AWM_TIMEZONE,
+    triggerEnabled,
+  });
 }
 
 function hydrateMetricsFromState(): void {

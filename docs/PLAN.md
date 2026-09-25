@@ -159,9 +159,10 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 The project-level decision accepts this self-hosted single-operator integration
 only through Google's official CLI. Do not extract tokens or reproduce backend
 calls. Monitoring is opt-in; the quota-consuming experimental trigger is
-separately opt-in and requires explicit provider automation mode. It targets
-one exact quota window/model family, uses a fixed `Hi!`, and never retries an
-uncertain post-dispatch result.
+separately opt-in behind its environment capability gate. With that gate
+enabled, a fresh database seeds provider automation and an automatic policy;
+the operator still has to select the exact quota window/model family. It uses a
+fixed `Hi!` and never retries an uncertain post-dispatch result.
 
 ## D. Product boundaries
 

@@ -146,8 +146,6 @@ progress::-moz-progress-bar { background: var(--accent); }
 .window-reset strong { font-size: 14px; font-variant-numeric: tabular-nums; }
 .window-reset small { color: var(--text-muted); font-size: 11px; }
 .reset-relative { display: block; color: var(--accent); font-size: 13px; }
-.provider-action-notice { border-left: 2px solid var(--warning); margin: 18px 0; background: var(--surface-raised); padding: 12px 14px; color: var(--text-muted); font-size: 12px; }
-.provider-action-notice strong { color: var(--text-soft); }
 .manual-start-form { display: grid; justify-items: start; gap: 10px; border-top: 1px solid var(--border); margin-top: 18px; padding-top: 14px; }
 .manual-start-form button { min-height: 44px; }
 .manual-start-model { margin: 0; color: var(--text-muted); font-size: 12px; }

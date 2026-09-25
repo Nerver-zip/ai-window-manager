@@ -686,7 +686,9 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Start model: <strong>Gemini 3.8 Flash Low</strong>');
     expect(page.body).toContain('Start model: <strong>Claude Sonnet 4.6</strong>');
     expect(page.body).toContain('aria-label="Start Gemini Models, 5-hour window now"');
-    expect(page.body).toContain('aria-describedby="provider-action-note-antigravity"');
+    expect(page.body).toContain('data-quota-confirm="antigravity"');
+    expect(page.body).not.toContain('provider-action-notice');
+    expect(page.body).not.toContain('aria-describedby="provider-action-note-antigravity"');
     expect(page.body.match(/action="\/providers\/antigravity\/trigger"/g)).toHaveLength(4);
     expect(page.body).toContain('name="windowKind" value="antigravity_gemini_five_hour"');
     expect(page.body).toContain('name="windowKind" value="antigravity_claude_gpt_weekly"');
@@ -1253,7 +1255,8 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('action="/providers/fake/trigger"');
     expect(page.body).toContain('name="windowKind" value="five_hour"');
     expect(page.body).toContain('Start this window now');
-    expect(page.body).toContain('uses normal provider quota');
+    expect(page.body).toContain('data-quota-confirm="provider"');
+    expect(page.body).not.toContain('provider-action-notice');
     const setCookie = page.headers['set-cookie'];
     const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0];
     const token = cookie?.split('=')[1];

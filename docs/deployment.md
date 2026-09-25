@@ -46,10 +46,11 @@ rather than these unset-variable Compose defaults: it uses host port `8878`,
 binds all host interfaces, requires a locally generated operator hash, enables
 both official provider clients and both action capability gates, and sets
 action timeouts to 60 seconds. It contains no usable credential or keyring
-unlock value. The gates expose supported actions but do not enable automatic
-scheduling in a fresh database. Providers are seeded `monitor_only` with
-manual policies, so authenticate and explicitly configure provider mode,
-target window and activation policy in the UI. The base Compose interpolation
+unlock value. With these trigger gates enabled, a fresh database seeds the
+providers in `automation` mode with an enabled `auto` (“Whenever possible”)
+policy. After connecting, select the exact usage window (and Antigravity quota
+family) to manage; the application does not guess a target. Existing SQLite
+choices remain authoritative across restarts. The base Compose interpolation
 defaults remain disabled when `.env` is absent.
 
 At startup the daemon seeds only enabled bootstrap providers when their DB record
@@ -62,9 +63,9 @@ system CA bundle required for official Codex HTTPS login and app-server
 connections. Codex monitoring uses the dedicated
 `AWM_CODEX_HOME=/codex-state` volume and is disabled when its variable is
 unset. The image contains no Codex credentials. Codex trigger support is
-separately gated by `AWM_CODEX_TRIGGER_ENABLED` and the persisted provider mode remains
-`monitor_only` until an operator explicitly changes it.
-When enabled deliberately, `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
+separately gated by `AWM_CODEX_TRIGGER_ENABLED`; with that gate enabled, a
+fresh database seeds automatic mode and policy. Existing SQLite choices are
+not changed by the gate. `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
 app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
 it does not turn an ambiguous outcome into a retryable failure.
 
@@ -78,13 +79,13 @@ shows Google OAuth selected, then presents the CLI's complete authorization
 URL and forwards the operator-entered browser code back to that CLI. Normal
 inspection runs only the documented headless `/usage` command. Antigravity
 trigger capability has an independent `AWM_ANTIGRAVITY_TRIGGER_ENABLED` gate
-(false when unset). If enabled, provider
-automation mode must also be selected in the UI; the adapter then exposes only
-the four exact Gemini / Claude-and-GPT five-hour or weekly targets and uses the
-configured family model. One `Hi!` is a quota-consuming normal prompt, not a
-provider start-only operation. A request aimed at one family may also affect
-that family's other allowance window. A timeout or other ambiguous result after
-spawn must not be retried blindly.
+(false when unset). If enabled, a fresh database seeds automatic mode and
+policy. Existing SQLite provider choices remain authoritative; the adapter
+still exposes only the four exact Gemini / Claude-and-GPT five-hour or weekly
+targets and uses the configured family model. One `Hi!` is a quota-consuming
+normal prompt, not a provider start-only operation. A request aimed at one
+family may also affect that family's other allowance window. A timeout or other
+ambiguous result after spawn must not be retried blindly.
 
 ## Web-assisted provider sign-in acceptance
 
@@ -101,9 +102,9 @@ provider reconnects without asking for sign-in again.
 
 This acceptance does not require sending a Codex or Antigravity turn or any
 other quota-consuming action. Trigger gates may be enabled by the checked-in
-local profile, but execution still requires deliberate SQLite automation mode
-and an enabled automatic policy. For
-Antigravity, configure the optional mounted keyring unlock file only if the
+local profile. With a fresh database those gates seed automation mode and an
+automatic policy, but an exact target window must still be selected; existing
+SQLite choices remain authoritative. For Antigravity, configure the optional mounted keyring unlock file only if the
 dedicated keyring requires it; never mount host home, keyring, or D-Bus state.
 Offline package/runtime probes do not count as authenticated restart acceptance.
 For this repository's local operator deployment, existing Codex and
@@ -118,7 +119,7 @@ fresh installation or a different account/keyring configuration.
 Never run this as an automated smoke test or CI step. For an explicitly
 authorized manual acceptance, first confirm that the exact selected provider
 window is naturally fresh and eligible, the trigger feature gate is enabled,
-and provider automation mode is deliberately on. Use the Overview action for
+provider automation mode is on, and the exact target policy is configured. Use the Overview action for
 that exact target once. Verify the durable intent and its fresh target-window
 confirmation in persisted state/history. A timeout or `uncertain` result is not
 permission to click again; wait for new observations to resolve it. If the

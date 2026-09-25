@@ -1568,11 +1568,6 @@ function renderProviderWindows(
     return '<div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div>';
   }
 
-  const triggerReady = provider.windows.some((window) => canManuallyTrigger(provider, window));
-  const actionNoticeId = `provider-action-note-${provider.id}`;
-  const actionNotice = triggerReady
-    ? `<p class="provider-action-notice" id="${escapeHtml(actionNoticeId)}"><strong>Starting a window sends one “Hi!” message and uses normal provider quota.</strong> ${provider.kind === 'antigravity' ? 'The same prompt may affect both the 5-hour and weekly limits for this model family.' : 'The provider may update more than one usage window.'} A fresh safety check runs before sending.</p>`
-    : '';
   const renderedWindows = (windows: readonly WindowSnapshot[], headingTag: 'h3' | 'h4' = 'h3') =>
     windows
       .map((window) => renderWindow(provider, window, now, timezone, csrfToken, headingTag))
@@ -1587,10 +1582,10 @@ function renderProviderWindows(
   }
 
   if (groups.size === 1 && groups.has(null)) {
-    return `${actionNotice}<div class="window-grid">${renderedWindows(provider.windows)}</div>`;
+    return `<div class="window-grid">${renderedWindows(provider.windows)}</div>`;
   }
 
-  return `${actionNotice}<div class="window-families">${Array.from(groups, ([label, windows]) =>
+  return `<div class="window-families">${Array.from(groups, ([label, windows]) =>
     label
       ? `<section class="window-family" aria-label="${escapeHtml(label)}"><h3>${escapeHtml(label)}</h3><div class="window-grid">${renderedWindows(windows, 'h4')}</div></section>`
       : `<div class="window-grid">${renderedWindows(windows)}</div>`,
@@ -1741,7 +1736,7 @@ function renderWindow(
   const targetLabel = windowGroupDisplayName(window.windowKind);
   const actionLabel = targetLabel ? `${targetLabel}, ${label}` : label;
   const startAction = canManuallyTrigger(provider, window)
-    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" aria-describedby="provider-action-note-${escapeHtml(provider.id)}"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
+    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-quota-confirm="${provider.kind === 'antigravity' ? 'antigravity' : 'provider'}"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<noscript><p class="notice">This sends one “Hi!” message through the provider and uses normal provider quota.</p></noscript><button class="button button-secondary" type="submit" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
     : '';
   return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction}</section>`;
 }

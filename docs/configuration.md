@@ -44,13 +44,17 @@ operator credential, provider credentials or keyring unlock secret. The
 application/Compose defaults remain disabled for provider gates when these
 variables are absent; Compose refuses to start without the operator settings.
 
-The environment gates do not rewrite SQLite runtime settings. A fresh database
-still seeds enabled providers in `monitor_only` mode with manual activation
-policies. After authenticating the official clients, choose the provider mode,
-window target, and activation policy in the UI. Existing SQLite settings remain
-authoritative across container restarts. Any configured trigger sends a normal
-`Hi!` provider request and may consume quota; an ambiguous dispatched request is
-not retried automatically.
+The environment gates determine which trigger capabilities are available and
+are also the initial automation default for a newly seeded provider. When a
+gate is enabled, a fresh database seeds that provider in `automation` mode with
+an enabled `auto` (“Whenever possible”) policy. When a gate is absent or false,
+the initial mode is `monitor_only` with a manual policy. The automatic policy
+does not guess a target: after connecting, select the exact provider-reported
+window (and, for Antigravity, quota family) before any action can be planned.
+Existing SQLite settings are authoritative and are never overwritten by later
+environment changes or container restarts. Any configured trigger sends a
+normal `Hi!` provider request and may consume quota; an ambiguous dispatched
+request is not retried automatically.
 
 ## Runtime configuration: SQLite
 

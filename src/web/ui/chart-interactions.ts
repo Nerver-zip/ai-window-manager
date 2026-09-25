@@ -2,6 +2,17 @@
 export const APP_JS = `(() => {
   const roots = document.querySelectorAll('[data-chart-root]');
 
+  for (const form of document.querySelectorAll('form[data-quota-confirm]')) {
+    form.addEventListener('submit', (event) => {
+      const affectedLimits = form.dataset.quotaConfirm === 'antigravity'
+        ? 'It may affect both the five-hour and weekly limits for this model family. '
+        : 'The provider may update more than one usage window. ';
+      const message = 'Starting a window sends one "Hi!" message and uses normal provider quota. '
+        + affectedLimits + 'A fresh safety check runs before sending. Continue?';
+      if (!window.confirm(message)) event.preventDefault();
+    });
+  }
+
   for (const form of document.querySelectorAll('form[action^="/settings/providers/"]')) {
     const preset = form.querySelector('[data-refresh-preset]');
     const custom = form.querySelector('[data-refresh-custom]');

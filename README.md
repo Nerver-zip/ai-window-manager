@@ -2,7 +2,7 @@
 
 Self-hosted manager for observing and deliberately positioning AI-provider usage windows.
 
-> Status: self-hosted monitor and scheduler with supervised official-client onboarding. Codex and Antigravity quota-consuming actions are explicit opt-in; Antigravity's window-start effect is experimental and based on one operator-tested account/CLI path.
+> Status: self-hosted monitor and scheduler with supervised official-client onboarding. Codex and Antigravity quota-consuming actions are guarded by explicit environment gates; a gate-enabled fresh database defaults to automation and still requires an exact target. Antigravity's window-start effect is experimental and based on one operator-tested account/CLI path.
 
 ## Product boundary
 
@@ -91,11 +91,12 @@ public registration or multi-user account management.
 The checked-in example mirrors the local `awm` Compose profile: Codex and
 Antigravity monitoring and their trigger capability gates are enabled, with
 provider state kept in dedicated Docker volumes. It contains no credentials.
-On a fresh database, providers still start in `monitor_only` mode with manual
-policies; connect each official client, review its target, then deliberately
-enable automation and configure the activation policy in the UI. A trigger is a
-real provider request (`Hi!`) and can consume quota. The base Compose defaults
-remain disabled when these variables are absent.
+With those gates enabled, a fresh database seeds providers in automation mode
+with a “Whenever possible” policy. The operator still chooses the exact usage
+window to manage; without a target, no action is planned. Existing SQLite
+choices, including an explicit monitoring-only setting, are preserved across
+restarts. A trigger is a real provider request (`Hi!`) and can consume quota.
+The base Compose defaults remain disabled when these variables are absent.
 
 For source development, install dependencies and use `pnpm dev` separately;
 the example's provider executable paths are container paths.
@@ -149,9 +150,9 @@ Included now:
 
 Still requires separate runtime configuration or remains out of scope:
 
-- automatic actions on a fresh SQLite database: despite the local `.env.example`
-  enabling both environment gates, providers bootstrap as `monitor_only` with
-  manual policies until deliberately configured in the UI;
+- automatic targeting on a fresh SQLite database: the enabled local profile
+  starts in automation mode, but each provider still requires an exact usage
+  window selection before any action can be planned;
 - fresh sign-in and authenticated-state acceptance in each new deployment are
   operator-run. Existing Codex and Antigravity sessions in the local `awm`
   deployment survived container recreation/restart and resumed read-only
