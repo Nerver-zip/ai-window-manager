@@ -221,7 +221,7 @@ describe('history UI helpers', () => {
     });
   });
 
-  it('targets a period change at the chart being edited, not the heatmap window', () => {
+  it('keeps the selected heatmap window while each chart period remains independent', () => {
     const html = renderUsageSeries(
       [
         {
@@ -246,11 +246,33 @@ describe('history UI helpers', () => {
     );
 
     expect(html).toContain('name="window" value="weekly"');
-    expect(html).toContain('name="window" value="five_hour"');
+    expect(html).not.toContain('name="window" value="five_hour"');
     expect(html).toContain('<select name="chartRange"');
     expect(html).toContain('<option value="codex|five_hour|3h" selected>3h</option>');
     expect(html).toContain('<option value="codex|weekly|7d" selected>7d</option>');
     expect(html).not.toContain('name="chartRangeChoice"');
+  });
+
+  it('keeps a chart-specific window in its form when no heatmap selection was supplied', () => {
+    const html = renderUsageSeries(
+      [
+        { providerId: 'codex', windowKind: 'weekly', range: '7d', points: [] },
+        { providerId: 'codex', windowKind: 'five_hour', range: '3h', points: [] },
+      ],
+      { timelineRange: '24h', providerId: null, chartRanges: {} },
+    );
+
+    expect(html).toContain('name="window" value="weekly"');
+    expect(html).toContain('name="window" value="five_hour"');
+  });
+
+  it('omits the heatmap window when an explicit empty selection is passed', () => {
+    const html = renderUsageSeries(
+      [{ providerId: 'codex', windowKind: 'weekly', range: '7d', points: [] }],
+      { timelineRange: '24h', providerId: 'codex', chartRanges: {}, selectedWindowKind: null },
+    );
+
+    expect(html).not.toContain('name="window"');
   });
 
   it('keeps a chart visible with an explicit empty state when its period has no samples', () => {

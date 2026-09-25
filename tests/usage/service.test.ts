@@ -69,6 +69,26 @@ function weeklySample(atMs: number, ratio: number): WindowSnapshot {
   };
 }
 
+function fiveHourSample(atMs: number, ratio: number): WindowSnapshot {
+  const sample = weeklySample(atMs, ratio);
+  return {
+    ...sample,
+    windowKind: 'five_hour',
+    resetAt: {
+      value: new Date(atMs + 5 * 60 * 60 * 1000).toISOString(),
+      source: 'official_supported',
+      confidence: 'exact',
+      observedAt: sample.observedAt,
+    },
+    durationSeconds: {
+      value: 5 * 60 * 60,
+      source: 'official_supported',
+      confidence: 'exact',
+      observedAt: sample.observedAt,
+    },
+  };
+}
+
 describe('usage aggregation persistence', () => {
   it('processes backfill in bounded batches and resumes idempotently after reopening SQLite', () => {
     const first = database();
@@ -173,6 +193,36 @@ describe('usage aggregation persistence', () => {
     expect(
       data.days.every((day) => day.status === 'no_data' && day.usagePercentagePoints === null),
     ).toBe(true);
+  });
+
+  it('defaults the daily heatmap source to a weekly window when several cadences exist', () => {
+    const { db, repositories } = database();
+    const base = now - 60_000;
+    const fiveHourSampleId = repositories.windowSamples.insert(fiveHourSample(base, 0.1));
+    repositories.usageAggregation.insertInterval({
+      sourceSampleId: fiveHourSampleId,
+      providerId: 'codex',
+      windowKind: 'five_hour',
+      fromMs: base,
+      toMs: base + 5 * 60_000,
+      usageDeltaRatio: null,
+      quality: 'unknown',
+      reasonCode: 'WINDOW_DURATION_CHANGED',
+    });
+    repositories.windowSamples.insert(weeklySample(base, 0.3));
+    repositories.windowSamples.insert(weeklySample(base + 5 * 60_000, 0.32));
+    processUsageAggregationBatch(db, repositories, now);
+
+    const data = readUsagePageData({
+      repositories,
+      now: new Date(now),
+      timezone: 'UTC',
+      providerId: 'codex',
+      visibleProviderIds: new Set(['codex']),
+    });
+
+    expect(data.windows.map(({ windowKind }) => windowKind)).toEqual(['five_hour', 'weekly']);
+    expect(data.selectedWindowKind).toBe('weekly');
   });
 
   it('bounds chart query output while retaining temporal endpoints and extrema', () => {

@@ -1,4 +1,5 @@
 import { localDateAt, resolveLocalOccurrenceOnDate, shiftLocalDate } from '../scheduler/time.js';
+import { classifyWindowCadence } from '../domain/window-target.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type { StorageRepositories } from '../storage/repositories.js';
 import { withTransaction } from '../storage/repositories.js';
@@ -124,7 +125,9 @@ export function readUsagePageData(input: {
   const windows = eligible.filter((item) => item.providerId === selectedProviderId);
   const selectedWindowKind = windows.some((item) => item.windowKind === input.windowKind)
     ? input.windowKind!
-    : (windows[0]?.windowKind ?? null);
+    : (windows.find((item) => classifyWindowCadence(item) === 'weekly')?.windowKind ??
+      windows[0]?.windowKind ??
+      null);
   const intervals =
     selectedProviderId && selectedWindowKind
       ? input.repositories.usageAggregation.listIntervals(

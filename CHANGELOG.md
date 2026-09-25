@@ -4,6 +4,8 @@
 
 - Simplified the active start-policy summary on Overview; paused and
   unavailable states remain visible without repeating the fresh-check notice.
+- Usage charts distinguish Antigravity model families, retain independent
+  periods, and provide an in-place weekly-family selector for the daily heatmap.
 - Sign-in code copying now reads the current displayed code, tries both clipboard
   paths, and leaves it selected with honest feedback when the browser blocks copy.
 - Trigger-enabled providers now default to automation with a “Whenever

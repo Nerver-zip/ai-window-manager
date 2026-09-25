@@ -148,6 +148,7 @@ export interface UsageChartControls {
   timelineRange: HistoryRange;
   providerId: string | null;
   chartRanges: Readonly<Record<string, HistoryRange>>;
+  seriesTitles?: Readonly<Record<string, string>>;
   page?: number;
   selectedDay?: string;
   selectedWindowKind?: string | null;
@@ -517,6 +518,9 @@ function renderUsageChart(
   const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
   const providerLabel = providerDisplayName(providerId);
   const windowLabel = windowDisplayName(providerId, windowKind);
+  const chartTitle =
+    controls.seriesTitles?.[chartRangeKey(providerId, windowKind)] ??
+    `${providerLabel} / ${windowLabel}`;
   const points = series.points.slice(-MAX_USAGE_POINTS).map((point) => ({
     ...point,
     usageRatio: ratioOrNull(point.usageRatio),
@@ -538,10 +542,10 @@ function renderUsageChart(
     controls.timelineRange;
 
   return renderTimeSeriesChart({
-    id: `${providerLabel}-${windowLabel}`,
-    title: `${providerLabel} / ${windowLabel}`,
+    id: chartTitle,
+    title: chartTitle,
     range,
-    controls: renderChartRangeControl(series, range, controls, allSeries),
+    controls: renderChartRangeControl(series, range, controls, allSeries, chartTitle),
     summary: [
       { label: 'Latest used', value: latestText },
       { label: 'Remaining', value: remainingText },
@@ -586,10 +590,10 @@ function renderChartRangeControl(
   range: HistoryRange,
   controls: UsageChartControls,
   allSeries: readonly HistoryUsageSeries[],
+  label: string,
 ): string {
   const providerId = safeProviderId(series.providerId) ?? 'unknown';
   const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
-  const label = `${providerDisplayName(providerId)} / ${windowDisplayName(providerId, windowKind)}`;
   const preservedSelections = allSeries
     .filter((item) => item !== series)
     .map((item) => {
@@ -601,7 +605,11 @@ function renderChartRangeControl(
     })
     .join('');
   const provider = `<input type="hidden" name="provider" value="${escapeAttribute(providerId)}">`;
-  const selectedWindow = `<input type="hidden" name="window" value="${escapeAttribute(windowKind)}">`;
+  const selectedWindowKind =
+    controls.selectedWindowKind === undefined ? windowKind : controls.selectedWindowKind;
+  const selectedWindow = selectedWindowKind
+    ? `<input type="hidden" name="window" value="${escapeAttribute(selectedWindowKind)}">`
+    : '';
   const selectedDay = controls.selectedDay
     ? `<input type="hidden" name="day" value="${escapeAttribute(controls.selectedDay)}">`
     : '';
