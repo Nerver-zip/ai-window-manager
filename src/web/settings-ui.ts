@@ -300,7 +300,8 @@ export function renderScheduleHorizon(input: ScheduleHorizonInput): string {
   const { policy, provider, currentWindow, referenceInstant, timezone } = input;
   const horizonMs = 24 * 60 * 60 * 1000;
   const endMs = referenceInstant.getTime() + horizonMs;
-  const selectedKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
+  const selectedKind =
+    (policy && 'windowKind' in policy ? policy.windowKind : undefined) ?? currentWindow?.windowKind;
   const selectedWindow = provider?.windows?.find((window) => window.windowKind === selectedKind);
   const duration = selectedWindow?.durationSeconds;
   const durationSeconds =
@@ -365,16 +366,19 @@ export function renderScheduleHorizon(input: ScheduleHorizonInput): string {
     })
     .join('');
   const nowLine = '<line class="horizon-now" x1="40" y1="19" x2="40" y2="68"/>';
-  const ticks = [0, 6, 12, 18, 24]
+  const fiveHourScale =
+    durationSeconds !== undefined && Math.abs(durationSeconds - 5 * 60 * 60) <= 60;
+  const tickHours = fiveHourScale ? [0, 5, 10, 15, 20, 24] : [0, 6, 12, 18, 24];
+  const ticks = tickHours
     .map((hour) => {
       const x = 40 + (hour / 24) * 920;
-      return `<line class="horizon-tick" x1="${x}" y1="36" x2="${x}" y2="62"/>`;
+      return `<line class="horizon-tick" data-hour="${hour}" x1="${x}" y1="36" x2="${x}" y2="62"/>`;
     })
     .join('');
-  const axis = [0, 6, 12, 18, 24]
+  const axis = tickHours
     .map((hour) => {
       const tickAt = new Date(referenceInstant.getTime() + hour * 60 * 60 * 1000);
-      return `<span>${escapeHtml(formatUpcomingTime(tickAt.toISOString(), timezone || 'UTC'))}</span>`;
+      return `<span class="horizon-axis-label" data-hour="${hour}">${escapeHtml(formatUpcomingTime(tickAt.toISOString(), timezone || 'UTC'))}</span>`;
     })
     .join('');
   const opportunitiesInView = schedule.filter((item) => {

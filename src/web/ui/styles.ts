@@ -256,10 +256,17 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 .horizon-marker-start { stroke: var(--accent); }
 .horizon-marker-reset { stroke: var(--success); }
 .horizon-marker-dot { fill: var(--surface); stroke-width: 3; }
-.horizon-axis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
-.horizon-axis span { min-width: 0; white-space: nowrap; }
-.horizon-axis span:not(:first-child):not(:last-child) { text-align: center; }
-.horizon-axis span:last-child { text-align: right; }
+.horizon-axis { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); padding-inline: 4%; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.horizon-axis-label { min-width: 0; justify-self: center; white-space: nowrap; }
+.horizon-axis-label[data-hour="0"] { grid-column: 1; justify-self: start; text-align: left; }
+.horizon-axis-label[data-hour="5"] { grid-column: 6; }
+.horizon-axis-label[data-hour="6"] { grid-column: 7; }
+.horizon-axis-label[data-hour="10"] { grid-column: 11; }
+.horizon-axis-label[data-hour="12"] { grid-column: 13; }
+.horizon-axis-label[data-hour="15"] { grid-column: 16; }
+.horizon-axis-label[data-hour="18"] { grid-column: 19; }
+.horizon-axis-label[data-hour="20"] { grid-column: 21; }
+.horizon-axis-label[data-hour="24"] { grid-column: 24; justify-self: end; text-align: right; }
 .horizon-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--text-muted); font-size: 11px; }
 .horizon-legend > span { display: inline-flex; align-items: center; gap: 7px; }
 .horizon-legend i { display: inline-block; width: 12px; height: 8px; border-radius: 3px; }

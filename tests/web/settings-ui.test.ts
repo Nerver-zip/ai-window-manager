@@ -800,6 +800,42 @@ describe('settings UI helpers', () => {
     expect(html).toContain('08:00');
   });
 
+  it('uses five-hour timeline ticks for five-hour windows and keeps the 24-hour endpoint', () => {
+    const referenceInstant = new Date('2026-09-19T11:00:00.000Z');
+    const render = (window: WindowSnapshot) =>
+      renderScheduleHorizon({
+        policy: {
+          id: 'activation-fake',
+          providerId: 'fake',
+          kind: 'custom_schedule',
+          enabled: true,
+          timezone: 'America/Sao_Paulo',
+          windowKind: window.windowKind,
+          times: ['09:00'],
+          toleranceSeconds: 900,
+          updatedAtMs: referenceInstant.getTime(),
+        },
+        provider: { ...provider, windows: [window] },
+        currentWindow: { providerId: 'fake', status: 'UNKNOWN', confidence: 'unknown' },
+        referenceInstant,
+        timezone: 'America/Sao_Paulo',
+      });
+    const tickHours = (html: string, expression: RegExp) =>
+      [...html.matchAll(expression)].map((match) => Number(match[1]));
+
+    const fiveHour = render(windowWithDuration('exact'));
+    const fiveHourAxis = tickHours(fiveHour, /class="horizon-axis-label" data-hour="(\d+)"/g);
+    const fiveHourMarks = tickHours(fiveHour, /class="horizon-tick" data-hour="(\d+)"/g);
+    expect(fiveHourAxis).toEqual([0, 5, 10, 15, 20, 24]);
+    expect(fiveHourMarks).toEqual(fiveHourAxis);
+    expect(fiveHour).toContain('data-hour="24">Sun 08:00</span>');
+
+    const weeklyWindow = observedWindowTarget('fake', 'weekly', 7 * 24 * 60 * 60);
+    const weekly = render(weeklyWindow);
+    const weeklyAxis = tickHours(weekly, /class="horizon-axis-label" data-hour="(\d+)"/g);
+    expect(weeklyAxis).toEqual([0, 6, 12, 18, 24]);
+  });
+
   it('does not project stale active state or manual starts on the schedule horizon', () => {
     const horizon = renderScheduleHorizon({
       policy: {

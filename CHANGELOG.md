@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The schedule horizon uses five-hour ticks for a known five-hour window and
+  retains an endpoint at 24 hours; other windows keep six-hour ticks.
 - The local `.env.example` now mirrors the `awm` Compose profile, including
   Codex and Antigravity trigger capability gates; fresh SQLite settings still
   require explicit provider automation and activation-policy configuration.
