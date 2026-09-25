@@ -1612,7 +1612,8 @@ function renderSelectedPolicy(provider: ProviderRead): string {
   };
   const description = selectedPolicyDescription(provider, policy);
   const status = selectedPolicyStatus(provider, policy);
-  return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p><p class="provider-policy-status">${escapeHtml(status)}</p></div><a href="${escapeHtml(scheduleHref)}">Change</a></section>`;
+  const statusMarkup = status ? `<p class="provider-policy-status">${escapeHtml(status)}</p>` : '';
+  return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p>${statusMarkup}</div><a href="${escapeHtml(scheduleHref)}">Change</a></section>`;
 }
 
 function selectedPolicyDescription(provider: ProviderRead, policy: ActivationPolicy): string {
@@ -1631,7 +1632,7 @@ function selectedPolicyDescription(provider: ProviderRead, policy: ActivationPol
   }
   const window = managedWindow ?? 'Any available usage window';
   if (policy.kind === 'auto') {
-    return `${window} · Starts after a fresh check confirms availability.`;
+    return window;
   }
   const timezone =
     policy.timezone === 'UTC' ? 'UTC' : `${timeZoneDisplayName(policy.timezone)} local time`;
@@ -1648,7 +1649,7 @@ function selectedPolicyDescription(provider: ProviderRead, policy: ActivationPol
   return `${window} · Daily during ${periods} · ${timezone}.`;
 }
 
-function selectedPolicyStatus(provider: ProviderRead, policy: ActivationPolicy): string {
+function selectedPolicyStatus(provider: ProviderRead, policy: ActivationPolicy): string | null {
   if (!policy.enabled) return 'Paused · this policy will not plan new starts.';
   if (!provider.enabled) return 'Monitoring is paused for this provider.';
   if (policy.kind === 'manual') return 'Automatic starts are off; you start windows yourself.';
@@ -1657,7 +1658,7 @@ function selectedPolicyStatus(provider: ProviderRead, policy: ActivationPolicy):
   if (provider.capabilities?.windowTrigger.supported !== true) {
     return 'Unavailable because this provider does not support automatic starts.';
   }
-  return 'Active · each start still requires a fresh provider check.';
+  return null;
 }
 
 function formatPolicyTime(value: string): string {

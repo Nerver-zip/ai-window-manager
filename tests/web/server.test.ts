@@ -367,7 +367,7 @@ describe('web server persisted overview', () => {
       kind: 'auto' as const,
       config: { windowKind: 'five_hour' },
       title: 'Whenever possible',
-      detail: '5-hour window · Starts after a fresh check confirms availability.',
+      detail: '5-hour window',
     },
     {
       name: 'repeating-cycle',
@@ -466,7 +466,8 @@ describe('web server persisted overview', () => {
       seedActivationPolicy(repositories, 'auto', { windowKind: 'five_hour' });
     }, automationInspectionSpy('fake'));
     const activePage = await active.app.inject('/');
-    expect(activePage.body).toContain('Active · each start still requires a fresh provider check.');
+    expect(activePage.body).not.toContain('provider-policy-status');
+    expect(activePage.body).not.toContain('fresh provider check');
   });
 
   it('asks the user to review an invalid saved policy instead of showing an internal value', async () => {

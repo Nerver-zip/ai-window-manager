@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Simplified the active start-policy summary on Overview; paused and
+  unavailable states remain visible without repeating the fresh-check notice.
 - Trigger-enabled providers now default to automation with a “Whenever
   possible” policy on fresh databases; migration upgrades only old implicit
   defaults and preserves explicit Off/Manual choices. Exact window selection is

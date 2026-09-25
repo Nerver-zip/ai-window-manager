@@ -27,10 +27,19 @@ function openFixture() {
   return { db, dir, repositories };
 }
 
-function seed(repositories: StorageRepositories, triggerEnabled: boolean): void {
+function seed(
+  repositories: StorageRepositories,
+  triggerEnabled: boolean,
+  providerId = 'antigravity',
+  kind = 'antigravity',
+): void {
   seedBootstrapProviderDefaults({
     repositories,
-    provider: { id: 'antigravity', kind: 'antigravity', config: { home: '/agy-state' } },
+    provider: {
+      id: providerId,
+      kind,
+      config: kind === 'antigravity' ? { home: '/agy-state' } : { codexHome: '/codex-state' },
+    },
     nowMs: 1_000,
     pollIntervalSeconds: 30,
     timezone: 'America/Sao_Paulo',
@@ -48,16 +57,22 @@ function reopen(fixture: ReturnType<typeof openFixture>): StorageRepositories {
 }
 
 describe('bootstrap provider defaults', () => {
-  it('defaults to automation only when the provider trigger gate is enabled', () => {
-    const { repositories } = openFixture();
+  it.each([
+    { providerId: 'codex', kind: 'codex' },
+    { providerId: 'antigravity', kind: 'antigravity' },
+  ])(
+    'defaults $providerId to automation when its trigger gate is enabled',
+    ({ providerId, kind }) => {
+      const { repositories } = openFixture();
 
-    seed(repositories, true);
+      seed(repositories, true, providerId, kind);
 
-    expect(repositories.providers.get('antigravity')?.mode).toBe('automation');
-    expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
-      { id: 'activation-antigravity', kind: 'auto', enabled: true, config: {} },
-    ]);
-  });
+      expect(repositories.providers.get(providerId)?.mode).toBe('automation');
+      expect(repositories.schedulePolicies.list(providerId)).toMatchObject([
+        { id: `activation-${providerId}`, kind: 'auto', enabled: true, config: {} },
+      ]);
+    },
+  );
 
   it('defaults to monitor-only and manual when the provider trigger gate is disabled', () => {
     const { repositories } = openFixture();
