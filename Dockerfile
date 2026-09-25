@@ -12,6 +12,7 @@ RUN --mount=type=cache,id=awm-pnpm,target=/pnpm/store \
 FROM deps AS build
 COPY tsconfig.json vitest.config.ts eslint.config.js .prettierrc.json ./
 COPY src ./src
+COPY scripts/auth-hash.ts ./scripts/auth-hash.ts
 COPY migrations ./migrations
 COPY assets ./assets
 RUN pnpm build

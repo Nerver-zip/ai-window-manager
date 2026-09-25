@@ -68,12 +68,25 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full A–Z implementation plan and [`
 Prerequisites: Node 24+, pnpm 10+, or Docker.
 
 ```bash
+pnpm install --frozen-lockfile
 cp .env.example .env
+chmod 600 .env
+pnpm auth:hash
+# Paste the generated hash into AWM_AUTH_PASSWORD_HASH in .env,
+# keeping it surrounded by single quotes.
 docker compose up --build -d
 docker compose ps
 ```
 
-Open `http://127.0.0.1:8878/`.
+Choose `AWM_AUTH_USERNAME` in `.env`, generate your password hash with
+`pnpm auth:hash`, and replace the example placeholder before starting the
+container. The command reads the password twice without echoing it and prints
+only an Argon2id PHC hash. Sign in at `http://127.0.0.1:8878/` with that
+username and password at `http://<server-lan-ip>:8878/`. The host port binds
+all interfaces for trusted-LAN use; direct HTTP does not encrypt the password
+or session cookie. Restrict it with the server firewall and never port-forward
+it from the public Internet. AWM has one local operator account; it has no
+public registration or multi-user account management.
 
 The checked-in example mirrors the local `awm` Compose profile: Codex and
 Antigravity monitoring and their trigger capability gates are enabled, with
@@ -87,14 +100,13 @@ remain disabled when these variables are absent.
 For source development, install dependencies and use `pnpm dev` separately;
 the example's provider executable paths are container paths.
 
-Docker:
-
-```bash
-docker compose up --build -d
-docker compose ps
-```
-
-The Compose default publishes the service only on `127.0.0.1`. Set `AWM_HOST_BIND` deliberately for LAN/Tailscale access.
+Compose publishes on `0.0.0.0` by default so trusted devices on the local
+network can reach the login page. This is not a substitute for transport
+encryption: direct HTTP exposes the password and session cookie to anyone able
+to observe that network. Use a trusted LAN with host firewall rules, or put a
+TLS reverse proxy/VPN in front; do not forward the service port from your
+router to the public internet. See [deployment](docs/deployment.md) for the
+network boundary and optional trusted-proxy configuration.
 
 Keep `pnpm-lock.yaml` synchronized with `package.json`; CI and Docker builds use frozen-lockfile installation.
 

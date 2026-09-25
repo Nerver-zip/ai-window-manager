@@ -27,3 +27,8 @@ AI Window Manager is a private, self-hosted usage-window daemon. Its responsibil
 - Kubernetes, message brokers, Redis and Postgres for the MVP.
 
 A new feature that does not improve window observation, timing, safe action, history, configuration or operability belongs elsewhere.
+
+The web console is for one self-hosted operator and always requires native AWM
+authentication. Network placement (trusted LAN, VPN/Tailscale or HTTPS proxy)
+is a deployment choice, not an authentication bypass. Multi-user accounts and
+public Internet SaaS remain out of scope.

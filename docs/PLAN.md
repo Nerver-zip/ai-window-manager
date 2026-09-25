@@ -165,7 +165,7 @@ uncertain post-dispatch result.
 
 ## D. Product boundaries
 
-Build only observation, normalized state, timing/recommendations, minimal supported actions, history, settings, metrics/health/logs and private-network UI. Explicitly exclude agent orchestration, prompt/task management, LLM routing/proxying, billing, account rotation, quota bypass, generic scheduler, public SaaS, ML/LLM recommendations and observability-platform scope.
+Build only observation, normalized state, timing/recommendations, minimal supported actions, history, settings, metrics/health/logs and a single-operator private-network UI. Compose binds all interfaces for trusted-LAN access only because native authentication is mandatory. Explicitly exclude agent orchestration, prompt/task management, LLM routing/proxying, billing, account rotation, quota bypass, generic scheduler, public SaaS, ML/LLM recommendations and observability-platform scope.
 
 ## E. Requirements
 
@@ -186,7 +186,10 @@ Build only observation, normalized state, timing/recommendations, minimal suppor
 ### Non-functional
 
 - one easy-to-operate container;
-- secure loopback/private-network defaults;
+- mandatory native single-operator login with Argon2id password hash and
+  bounded in-memory sessions; public health/assets/login only;
+- LAN-first host bind guarded by login, with explicit HTTP confidentiality and
+  firewall warnings; optional VPN/TLS proxy, never an assumed Tailscale setup;
 - no secrets in image/DB/browser/logs/metrics;
 - all instants UTC; IANA timezone for wall-clock schedules;
 - highly deterministic time tests;
@@ -320,7 +323,13 @@ survived forced recreation and `docker compose restart` on 2026-09-24, followed
 by fresh read-only observations. Fresh login/keyring setup in another
 deployment still requires operator acceptance.
 
-Threat model and HTTP mitigations are detailed in `docs/security.md`. Loopback is default. No full app auth in MVP under private-network assumption, but untrusted LAN exposure requires upstream auth or a future native auth feature. Mutations still require CSRF/Origin checks.
+Threat model and HTTP mitigations are detailed in `docs/security.md`. The app
+requires one native operator credential before exposing product state. Its
+default Compose host bind is `0.0.0.0` for trusted-LAN use; direct HTTP still
+does not encrypt credentials or cookies, so use firewall rules and no public
+router forwarding. An HTTPS proxy/private VPN is optional; forwarded headers
+are ignored unless exact proxy source IP/CIDRs are configured. Mutations retain
+CSRF/Origin checks.
 
 ## N. API
 
@@ -336,7 +345,7 @@ Prometheus gauges/counters use only provider/window/bounded enum labels. No acco
 
 ## Q. Docker/deployment
 
-Multi-stage image, non-root UID 10001, read-only rootfs where feasible, `/tmp` tmpfs, named `/data` volume, `cap_drop: ALL`, `no-new-privileges`, healthcheck, graceful SIGTERM, `restart: unless-stopped`. Compose default publishes loopback only and remains Dockge-compatible without Dockge-specific dependencies.
+Multi-stage image, non-root UID 10001, read-only rootfs where feasible, `/tmp` tmpfs, named `/data` volume, `cap_drop: ALL`, `no-new-privileges`, healthcheck, graceful SIGTERM, `restart: unless-stopped`. Compose publishes all host interfaces by default for a trusted LAN, guarded by mandatory native operator authentication; operators can override the host bind to loopback. Direct HTTP is not encrypted, and the deployment remains unsuitable for public router forwarding.
 
 ## R. Repository layout
 
@@ -608,7 +617,12 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 ### P2
 
 - SQLite corruption/backup errors: WAL-safe backup docs and integrity checks.
-- Private-network unauthorized access: loopback default + proxy/VPN + CSRF; add native auth only if deployment threat model changes.
+- Direct LAN HTTP can expose login passwords/session cookies to a network
+  observer. Host firewall/no public port-forwarding are required; use HTTPS/VPN
+  on networks that are not trusted.
+- Operator credential `.env` hash can be brute-forced offline if disclosed;
+  protect it and the generated PHC string. Password changes require environment
+  update/restart; no browser reset is included.
 
 ## Z. Future work
 
@@ -617,7 +631,9 @@ Natural post-MVP only:
 - bounded catch-up policy for missed actions;
 - third provider using the same adapter contract;
 - richer deterministic usage recommendations after enough history;
-- lightweight native auth if untrusted-LAN exposure becomes common;
+- multi-user account management, OAuth/OIDC, recovery, MFA and proxy identity
+  integration remain explicitly out of scope unless a new product decision
+  expands beyond the single-operator home/homelab model;
 - backup/export/import UI;
 - chart polish;
 - optional notification when a target is missed/provider auth expires;

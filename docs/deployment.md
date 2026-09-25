@@ -3,8 +3,21 @@
 ## Target
 
 ```bash
-docker compose up -d
+pnpm install --frozen-lockfile
+cp .env.example .env
+chmod 600 .env
+pnpm auth:hash
+# Set AWM_AUTH_USERNAME and paste the generated PHC value into .env,
+# wrapped in single quotes. Replace the example placeholder first.
+docker compose config --quiet
+docker compose up --build -d
 ```
+
+The password prompt is hidden and asks for confirmation. It prints only an
+Argon2id hash; copy that value to `.env` and never commit or share the file. The
+application refuses to start with the example placeholder or missing operator
+credentials. After startup, sign in through the browser. AWM supports one local
+operator account and has no public registration or browser-based password reset.
 
 One application container with separate SQLite, Codex state, Antigravity CLI
 state, and Antigravity keyring volumes. No host home, D-Bus socket, or host
@@ -12,7 +25,7 @@ keyring is mounted.
 
 ## Defaults
 
-- host bind: `127.0.0.1`;
+- host bind: `0.0.0.0` for trusted-LAN access (override with `AWM_HOST_BIND`);
 - container port: `8787`;
 - data: named volume at `/data`;
 - optional Codex state: separate named volume at `/codex-state`;
@@ -30,8 +43,9 @@ keyring is mounted.
 
 The checked-in `.env.example` deliberately matches the local `awm` profile
 rather than these unset-variable Compose defaults: it uses host port `8878`,
-enables both official provider clients and both action capability gates, and
-sets action timeouts to 60 seconds. It contains no credentials or keyring
+binds all host interfaces, requires a locally generated operator hash, enables
+both official provider clients and both action capability gates, and sets
+action timeouts to 60 seconds. It contains no usable credential or keyring
 unlock value. The gates expose supported actions but do not enable automatic
 scheduling in a fresh database. Providers are seeded `monitor_only` with
 manual policies, so authenticate and explicitly configure provider mode,
@@ -124,18 +138,25 @@ trigger capability unless the explicit trigger gate is enabled.
 
 `compose.yaml` is ordinary Docker Compose and needs no Dockge-specific keys. Point Dockge at the repository/stack directory and configure `.env`/mount paths there.
 
-## LAN/Tailscale
+## LAN, HTTPS and optional proxy
 
-Default is intentionally loopback-only. Examples:
+Compose binds `0.0.0.0` by default so other devices on a trusted LAN can access
+the native login. This exposes the port on **every host interface**, potentially
+including a public one. Host firewall rules must restrict who can reach it; do
+not create router port-forwarding to AWM. `AWM_HOST_BIND` can be set to a
+specific host address or `127.0.0.1` when a local proxy is preferred.
 
-```env
-# all host interfaces; use only on a trusted network / protected reverse proxy
-AWM_HOST_BIND=0.0.0.0
+The login page being public does not protect credentials in transit. Direct
+HTTP sends the password and bearer session cookie without transport encryption.
+Use direct HTTP only on a network you trust. When that is not true, use a TLS
+reverse proxy or a private VPN such as Tailscale. These are optional deployment
+choices, not prerequisites to running AWM.
 
-# or bind directly to a specific host/Tailscale address if Compose/runtime supports the host address
-```
-
-Prefer a private reverse proxy or Tailscale ACL/auth over building user management into the MVP.
+Do not trust forwarded headers by default. If using a reverse proxy, configure
+`AWM_TRUST_PROXY` with only the proxy's actual source IP/CIDR, so Fastify can
+honor the original HTTPS scheme and set `Secure` cookies. Do not set broad
+entries such as `0.0.0.0/0` or `::/0`; do not trust headers from arbitrary LAN
+clients.
 
 ## Provider homes/secrets
 
@@ -162,28 +183,19 @@ must be verified by an operator before relying on the integration.
 
 ## Smoke test checklist
 
+Run the disposable authenticated Compose smoke test. It uses a unique Compose
+project/port and generated synthetic credentials; cleanup is scoped to that
+project and does not touch the normal `awm` stack or its volumes.
+
 ```bash
 docker compose config --quiet
-docker compose up --build -d
-# wait for healthy
-docker compose ps
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/healthz
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/metrics
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/usage
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/logs
-# Legacy HTML alias redirects while preserving query parameters.
-curl --fail --location http://127.0.0.1:${AWM_HOST_PORT:-8787}/history?range=24h
-curl --fail http://127.0.0.1:${AWM_HOST_PORT:-8787}/api/v1/usage
+./scripts/docker_auth_smoke.sh
 ```
 
-Then restart:
-
-```bash
-docker compose restart ai-window-manager
-```
-
-Verify health returns and the same SQLite data remains.
+The smoke test proves health readiness, anonymous redirects/401s, login,
+session/CSRF enforcement, and SQLite persistence after restart and stop/up. For
+the normally deployed service, `/healthz` stays public for Docker healthchecks;
+dashboard/API/metrics requests require signing in.
 
 The focused Codex runtime check, without credentials or a turn, is:
 

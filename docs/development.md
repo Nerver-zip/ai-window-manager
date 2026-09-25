@@ -9,13 +9,20 @@
 ## Setup
 
 ```bash
+pnpm install --frozen-lockfile
 cp .env.example .env
-pnpm install
+chmod 600 .env
+pnpm auth:hash
+# Replace the placeholder AWM_AUTH_PASSWORD_HASH value in .env with the
+# generated PHC value, surrounded by single quotes.
 ```
 
 `.env.example` mirrors the local Docker profile and uses container-only
 provider executable paths. For the application in Docker, run
-`docker compose up --build -d` and open `http://127.0.0.1:8878/`. For source
+`docker compose up --build -d` and sign in at `http://127.0.0.1:8878/`. The
+Compose port binds all host interfaces by default; use it only on a trusted LAN,
+restrict access with a firewall, and do not forward it from your router. Direct
+HTTP does not encrypt passwords or session cookies. For source
 development with `pnpm dev`, use the host's installed provider CLI paths and
 explicitly configure the provider environment as needed; do not assume the
 container paths in `.env.example` exist on the host.

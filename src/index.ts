@@ -5,6 +5,7 @@ import { CodexProvider } from './providers/codex/index.js';
 import { AntigravityProvider } from './providers/antigravity/index.js';
 import { filterVisibleProviders } from './providers/visibility.js';
 import { AuthSessionManager } from './auth/session-manager.js';
+import { OperatorAuthService } from './auth/operator-auth.js';
 import { createProviderAuthDrivers } from './auth/provider-drivers.js';
 import {
   recordInspection,
@@ -84,6 +85,12 @@ const authSessions = new AuthSessionManager({
     reconcileRequested = true;
   },
 });
+const operatorAuth = new OperatorAuthService({
+  username: config.AWM_AUTH_USERNAME,
+  passwordHash: config.AWM_AUTH_PASSWORD_HASH,
+  sessionTtlMs: config.AWM_AUTH_SESSION_TTL_SECONDS * 1000,
+  clock,
+});
 const app = buildServer({
   config,
   db,
@@ -91,6 +98,7 @@ const app = buildServer({
   adapters,
   clock,
   authSessions,
+  operatorAuth,
   requestReconcile: () => {
     reconcileRequested = true;
   },
@@ -171,6 +179,7 @@ async function shutdown(signal: string): Promise<void> {
   if (reconcileInFlight) await reconcileInFlight;
   if (executorInFlight) await executorInFlight;
   await authSessions.shutdown();
+  operatorAuth.clearSessions();
   await app.close();
   db.close();
 }

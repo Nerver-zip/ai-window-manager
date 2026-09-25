@@ -20,6 +20,17 @@ verifies completion through the provider adapter. Credentials remain in the
 official client's dedicated state/keyring; auth sessions and submitted codes
 are not stored in SQLite.
 
+The application itself has a separate single-operator authentication
+boundary. The username and Argon2id password hash are required bootstrap
+environment values generated with `pnpm auth:hash`; only hash digests of
+cryptographically random, bounded-lifetime browser session tokens are held in
+memory. No operator account or session is persisted in SQLite, and a process
+restart invalidates sessions. Fastify applies a default-deny route gate before
+page/API handlers; only the minimal health route, static assets and login are
+public. Logout confirmation/actions require a valid session. Provider sign-in
+sessions and the operator session are independent mechanisms and must not be
+conflated.
+
 ### Why TypeScript rather than C++ for this project
 
 Both are viable given the existing repositories. C++ would produce a lean runtime and matches `ghinfo`, but this product's hardest work is external-client orchestration, JSON/schema evolution, time-policy tests, a tiny web UI and rapid provider adaptation—not compute. TypeScript reduces implementation surface for those concerns and aligns with the user's current pnpm/TypeScript agent workflow without requiring a frontend framework.
@@ -88,6 +99,12 @@ provider policy replaces that target for future planning.
 HTTP handlers do not inspect providers or dispatch actions. Settings and
 activation-policy forms validate non-secret values and persist them in SQLite; all
 mutations require same-origin Origin and double-submit CSRF proof.
+
+Compose binds `0.0.0.0` for trusted-LAN access because app authentication is
+mandatory. This does not encrypt direct HTTP; operators must restrict it with a
+host firewall and avoid public router forwarding. TLS/reverse proxy or a
+private VPN is optional. Forwarded headers are honored only for explicitly
+configured `AWM_TRUST_PROXY` source IP/CIDR entries.
 
 The server-rendered Overview may create a manual intent for an exact normalized
 window using a protected form. That command path persists the intent and asks

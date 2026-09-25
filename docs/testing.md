@@ -39,4 +39,10 @@ test explicitly invokes the executor with a synthetic non-quota action.
 
 ## Secret scanning
 
-Install Gitleaks and run `pnpm secret:scan` before review. CI runs the pinned Gitleaks Action on pushes and pull requests; real secrets must never be committed, including in fixtures or examples.
+Install Gitleaks and run `pnpm secret:scan` before review. CI checks out full
+history for the security job, installs the pinned Gitleaks CLI release after
+verifying its published checksum, and runs the same `pnpm secret:scan` command
+on pushes and pull requests. The Docker job runs an isolated authenticated
+Compose smoke test with synthetic credentials, including anonymous-route
+rejection, login, CSRF, restart invalidation and SQLite persistence. Real
+secrets must never be committed, including in fixtures or examples.

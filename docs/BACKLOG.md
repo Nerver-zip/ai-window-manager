@@ -57,6 +57,38 @@ Antigravity quota actions are a separate, experimental, quota-consuming
 capability. They remain disabled by default and require both the environment
 gate and provider automation mode.
 
+## Native operator access milestone — complete
+
+The self-hosted service now requires a native single-operator login before
+product state is served. This does not introduce multi-user account management.
+
+- **AUTH-APP-001 — Argon2id bootstrap credential**: required username/hash env,
+  hidden interactive hash generator, bounded PHC validation, and fail-closed
+  startup. Passwords are never stored as env values or persisted.
+- **AUTH-APP-002 — Ephemeral operator sessions**: high-entropy session cookies,
+  bounded in-memory session store, logout and restart invalidation.
+- **AUTH-APP-003 — Central route gate**: default deny before application
+  handlers; only health, static assets and login are public; logout, HTML
+  redirects and API/metrics are session-protected with 401 for machine clients.
+- **AUTH-APP-004 — Login throttling**: in-memory per-source (5 failures / 5
+  minutes) and global (60 failures / 5 minutes) limits with bounded state and
+  `Retry-After` responses.
+- **SEC-002 — Preserve browser mutation defenses**: login, logout and existing
+  product mutations require same-origin Origin plus CSRF; trusted proxy
+  headers are opt-in and limited to configured source IP/CIDR.
+- **OPS-004 — LAN-first Compose exposure**: publish all host interfaces by
+  default, document that HTTP does not encrypt credentials/cookies, and require
+  firewall/no-public-forwarding guidance. Tailscale/TLS proxy remain optional.
+- **CI-002 — Authenticated Docker smoke**: disposable synthetic account verifies
+  auth boundary, CSRF, session invalidation and SQLite persistence over
+  restart/stop-up without touching the operator's Compose project or provider
+  credentials.
+- **DOC-002 — Reconcile setup/security docs**: update setup, UI, API, threat
+  model, deployment and agent invariants for mandatory single-operator auth.
+
+No account recovery, signup, roles, multi-user support, OAuth/OIDC, trusted
+identity headers or credential storage in SQLite is in scope.
+
 ## CORE-001 — Finalize evidence/window domain types
 
 **Scope**: implement validated domain types and invariants for facts, provider health, window phase, observations and capabilities.  
@@ -264,7 +296,7 @@ work).
 
 **Status: complete (2026-09-19).**
 
-**Scope**: multi-stage image, non-root, read-only rootfs, tmpfs, healthcheck, graceful shutdown, Compose loopback default.  
+**Scope**: multi-stage image, non-root, read-only rootfs, tmpfs, healthcheck, graceful shutdown. Its historical loopback-only host bind was superseded by OPS-004 after native authentication became mandatory.
 **Acceptance**: clean build/up healthy; restart persistence; no secret in image.  
 **Dependencies**: scaffold baseline.  
 **Parallel**: core domain.

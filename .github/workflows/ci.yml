@@ -72,44 +72,5 @@ jobs:
     needs: [quality, security]
     steps:
       - uses: actions/checkout@v4.2.2
-      - run: cp .env.example .env
-      - run: docker compose config --quiet
-      - run: docker build -t ai-window-manager:ci .
-      - name: Compose hardening and persistence smoke test
-        run: |
-          set -euo pipefail
-          export COMPOSE_PROJECT_NAME=awm-ci
-          export AWM_HOST_PORT=18787
-          trap 'docker compose down --volumes || true' EXIT
-          wait_for_health() {
-            local attempts=30
-            for i in $(seq 1 "$attempts"); do
-              if curl --fail --silent "http://127.0.0.1:${AWM_HOST_PORT}/healthz" >/dev/null 2>&1; then
-                return 0
-              fi
-              sleep 1
-            done
-            docker compose ps
-            docker compose logs --no-color
-            return 1
-          }
-          docker compose up -d --build
-          wait_for_health
-          docker compose ps
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/healthz"
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/metrics" >/dev/null
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/" >/dev/null
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/history" >/dev/null
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/api/v1/providers" >/dev/null
-          docker compose restart ai-window-manager
-          wait_for_health
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/healthz" >/dev/null
-          docker compose stop ai-window-manager
-          docker compose up -d
-          wait_for_health
-          curl --fail "http://127.0.0.1:${AWM_HOST_PORT}/healthz" >/dev/null
-          logs="$(docker compose logs --no-color)"
-          if printf '%s\n' "$logs" | grep -Eiq 'unhandled|sqlite_error|secret|token|authorization:'; then
-            printf '%s\n' "$logs"
-            exit 1
-          fi
+      - name: Authenticated Compose persistence smoke test
+        run: ./scripts/docker_auth_smoke.sh

@@ -7,12 +7,15 @@ import { APP_CSS } from './ui/styles.js';
 import { APP_JS } from './ui/chart-interactions.js';
 import { AUTH_ONBOARDING_CSS } from './ui/auth-onboarding-styles.js';
 import { AUTH_ONBOARDING_JS } from './ui/auth-onboarding-interactions.js';
+import { OPERATOR_AUTH_CSS } from './ui/operator-auth-styles.js';
+import { renderOperatorLoginPage, renderOperatorLogoutPage } from './ui/operator-auth.js';
 import {
   AuthSessionError,
   type AuthProviderId,
   type AuthSessionManager,
   type AuthSessionSnapshot,
 } from '../auth/session-manager.js';
+import { OPERATOR_SESSION_COOKIE_NAME, type OperatorAuthService } from '../auth/operator-auth.js';
 import type { AppConfig } from '../config.js';
 import type {
   ActivationPolicy,
@@ -72,8 +75,11 @@ import {
 } from './logs-ui.js';
 import {
   DEFAULT_HTTP_BODY_LIMIT_BYTES,
+  createCsrfToken,
   ensureCsrfToken,
   getSecurityHeaders,
+  readCookie,
+  serializeCsrfCookie,
   validateCsrf,
   validateMutationOrigin,
 } from './security.js';
@@ -99,7 +105,7 @@ const STATIC_MIME_TYPES: Readonly<Record<string, string>> = {
 
 const ASSETS_DIR = path.resolve(process.cwd(), 'assets');
 const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity'];
-const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}`;
+const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}\n${OPERATOR_AUTH_CSS}`;
 const APP_JS_WITH_AUTH = `${APP_JS}\n${AUTH_ONBOARDING_JS}`;
 
 export interface BuildServerInput {
@@ -109,6 +115,7 @@ export interface BuildServerInput {
   adapters: ReadonlyMap<string, ProviderAdapter>;
   clock: Clock;
   authSessions?: AuthSessionManager;
+  operatorAuth: OperatorAuthService;
   requestReconcile?: () => void;
 }
 
@@ -142,6 +149,59 @@ export function buildServer(input: BuildServerInput) {
   const app = Fastify({
     logger: { level: input.config.AWM_LOG_LEVEL },
     bodyLimit: DEFAULT_HTTP_BODY_LIMIT_BYTES,
+    trustProxy: input.config.AWM_TRUST_PROXY.length ? input.config.AWM_TRUST_PROXY : false,
+  });
+
+  app.addHook('onRequest', async (request, reply) => {
+    if (isPublicRequest(request.method, request.url)) return;
+    const sessionToken = readCookie(request.headers.cookie, OPERATOR_SESSION_COOKIE_NAME);
+    if (input.operatorAuth.sessions.has(sessionToken)) return;
+
+    const routePath = request.url.split('?', 1)[0] ?? '/';
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      !routePath.startsWith('/api/') &&
+      routePath !== '/metrics'
+    ) {
+      const next = safeInternalPath(request.raw.url);
+      const reason = sessionToken ? 'session_expired' : undefined;
+      return reply.code(303).redirect(loginHref(next, reason));
+    }
+
+    return reply.code(401).send({
+      error: { code: 'AUTH_REQUIRED', message: 'authentication required' },
+    });
+  });
+
+  app.addHook('onSend', async (request, reply, payload) => {
+    const routePath = request.url.split('?', 1)[0] ?? '/';
+    const headers = getSecurityHeaders({ noStore: !isStaticPath(routePath) });
+    for (const [name, value] of Object.entries(headers)) reply.header(name, value);
+    return payload;
+  });
+
+  app.addHook('preHandler', async (request, reply) => {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return;
+    const origin = validateMutationOrigin(request.method, request.headers.origin, {
+      expectedOrigin: expectedOrigin(request, input.config.AWM_PORT),
+    });
+    if (!origin.ok) {
+      return reply.code(403).send({
+        accepted: false,
+        error: { code: 'ORIGIN_REJECTED', message: 'mutation origin is not allowed' },
+      });
+    }
+    const csrf = validateCsrf({
+      cookieHeader: request.headers.cookie,
+      headerToken: request.headers['x-csrf-token'],
+      formToken: bodyCsrfToken(request.body),
+    });
+    if (!csrf.ok) {
+      return reply.code(403).send({
+        accepted: false,
+        error: { code: 'CSRF_REJECTED', message: 'csrf validation failed' },
+      });
+    }
   });
 
   const readApi = createReadApi({
@@ -205,36 +265,67 @@ export function buildServer(input: BuildServerInput) {
     },
   );
 
-  app.addHook('onSend', async (request, reply, payload) => {
-    const headers = getSecurityHeaders({
-      noStore: request.url.startsWith('/api/') || request.url === '/metrics',
-    });
-    for (const [name, value] of Object.entries(headers)) reply.header(name, value);
-    return payload;
+  app.get('/login', async (request, reply) => {
+    const query = asRecord(request.query);
+    const next = safeInternalPath(stringValue(query.next));
+    const sessionToken = readCookie(request.headers.cookie, OPERATOR_SESSION_COOKIE_NAME);
+    if (input.operatorAuth.sessions.has(sessionToken)) return reply.code(303).redirect(next);
+    const csrf = ensureCsrfToken(request.headers.cookie, { secure: isSecureRequest(request) });
+    if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
+    reply.type('text/html; charset=utf-8');
+    const error = loginPageError(stringValue(query.reason));
+    return renderOperatorLoginPage({ csrfToken: csrf.token, next, ...(error ? { error } : {}) });
   });
 
-  app.addHook('preHandler', async (request, reply) => {
-    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return;
-    const origin = validateMutationOrigin(request.method, request.headers.origin, {
-      expectedOrigin: expectedOrigin(request, input.config.AWM_PORT),
-    });
-    if (!origin.ok) {
-      return reply.code(403).send({
-        accepted: false,
-        error: { code: 'ORIGIN_REJECTED', message: 'mutation origin is not allowed' },
-      });
+  app.post('/login', async (request, reply) => {
+    const body = asRecord(request.body);
+    const next = safeInternalPath(stringValue(body.next));
+    const previousToken = readCookie(request.headers.cookie, OPERATOR_SESSION_COOKIE_NAME);
+    if (previousToken) input.operatorAuth.sessions.destroy(previousToken);
+    const result = await input.operatorAuth.login(body.username, body.password, request.ip);
+    if (result.status === 'authenticated') {
+      const csrfToken = createCsrfToken();
+      const secure = isSecureRequest(request);
+      reply.header('Set-Cookie', [
+        serializeOperatorSessionCookie(
+          result.session.token,
+          input.config.AWM_AUTH_SESSION_TTL_SECONDS,
+          secure,
+        ),
+        serializeCsrfCookie(csrfToken, { secure }),
+      ]);
+      return reply.code(303).redirect(next);
     }
-    const csrf = validateCsrf({
-      cookieHeader: request.headers.cookie,
-      headerToken: request.headers['x-csrf-token'],
-      formToken: bodyCsrfToken(request.body),
+
+    const throttled = result.status === 'too_many_attempts';
+    if (throttled) reply.header('Retry-After', String(result.retryAfterSeconds));
+    reply.code(throttled ? 429 : 401);
+    reply.type('text/html; charset=utf-8');
+    const csrf = ensureCsrfToken(request.headers.cookie, { secure: isSecureRequest(request) });
+    if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
+    return renderOperatorLoginPage({
+      csrfToken: csrf.token,
+      next,
+      error: throttled ? 'too_many_attempts' : 'invalid_credentials',
     });
-    if (!csrf.ok) {
-      return reply.code(403).send({
-        accepted: false,
-        error: { code: 'CSRF_REJECTED', message: 'csrf validation failed' },
-      });
-    }
+  });
+
+  app.get('/logout', async (request, reply) => {
+    const csrf = ensureCsrfToken(request.headers.cookie, { secure: isSecureRequest(request) });
+    if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
+    reply.type('text/html; charset=utf-8');
+    return renderOperatorLogoutPage({ csrfToken: csrf.token });
+  });
+
+  app.post('/logout', async (request, reply) => {
+    const sessionToken = readCookie(request.headers.cookie, OPERATOR_SESSION_COOKIE_NAME);
+    if (sessionToken) input.operatorAuth.sessions.destroy(sessionToken);
+    const secure = isSecureRequest(request) ? '; Secure' : '';
+    reply.header('Set-Cookie', [
+      `${OPERATOR_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`,
+      `awm_csrf=; Path=/; SameSite=Strict; Max-Age=0${secure}`,
+    ]);
+    return reply.code(303).redirect('/login');
   });
 
   app.get('/healthz', async (_request, reply) => {
@@ -467,7 +558,7 @@ export function buildServer(input: BuildServerInput) {
 
   app.get('/settings', async (request, reply) => {
     const csrf = ensureCsrfToken(request.headers.cookie, {
-      secure: request.protocol === 'https',
+      secure: isSecureRequest(request),
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     reply.type('text/html; charset=utf-8');
@@ -485,7 +576,7 @@ export function buildServer(input: BuildServerInput) {
 
   app.get('/schedule', async (request, reply) => {
     const csrf = ensureCsrfToken(request.headers.cookie, {
-      secure: request.protocol === 'https',
+      secure: isSecureRequest(request),
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     reply.type('text/html; charset=utf-8');
@@ -646,7 +737,7 @@ export function buildServer(input: BuildServerInput) {
     const providers = readProviders(input);
     reply.type('text/html; charset=utf-8');
     const csrf = ensureCsrfToken(request.headers.cookie, {
-      secure: request.protocol === 'https',
+      secure: isSecureRequest(request),
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     const timezone =
@@ -676,11 +767,86 @@ function expectedOrigin(
   },
   fallbackPort: number,
 ): string {
-  const forwardedProto = request.headers['x-forwarded-proto'];
-  const protocol = forwardedProto === 'https' || request.protocol === 'https' ? 'https' : 'http';
+  const protocol = isSecureRequest(request) ? 'https' : 'http';
   const host =
     typeof request.headers.host === 'string' ? request.headers.host : `127.0.0.1:${fallbackPort}`;
   return `${protocol}://${host}`;
+}
+
+function isSecureRequest(request: { protocol: string }): boolean {
+  return request.protocol === 'https';
+}
+
+function isPublicRequest(method: string, requestUrl: string): boolean {
+  const pathname = requestUrl.split('?', 1)[0] ?? '/';
+  const readOnlyMethod = method === 'GET' || method === 'HEAD';
+  if (readOnlyMethod && (pathname === '/healthz' || pathname === '/favicon.ico')) return true;
+  if (readOnlyMethod && pathname.startsWith('/assets/')) return true;
+  return pathname === '/login' && (method === 'GET' || method === 'POST');
+}
+
+function isStaticPath(pathname: string): boolean {
+  return pathname === '/favicon.ico' || pathname.startsWith('/assets/');
+}
+
+function safeInternalPath(candidate: unknown): string {
+  if (
+    typeof candidate !== 'string' ||
+    !candidate.startsWith('/') ||
+    candidate.startsWith('//') ||
+    candidate.includes('\\') ||
+    containsControlCharacter(candidate)
+  ) {
+    return '/';
+  }
+  try {
+    const target = new URL(candidate, 'http://awm.invalid');
+    if (
+      target.origin !== 'http://awm.invalid' ||
+      target.hash !== '' ||
+      target.pathname === '/login' ||
+      target.pathname === '/logout'
+    ) {
+      return '/';
+    }
+    return `${target.pathname}${target.search}`;
+  } catch {
+    return '/';
+  }
+}
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function loginHref(next: string, reason?: string): string {
+  const query = new URLSearchParams({ next });
+  if (reason === 'session_expired') query.set('reason', reason);
+  return `/login?${query.toString()}`;
+}
+
+function loginPageError(reason: string | null): 'session_expired' | undefined {
+  return reason === 'session_expired' ? reason : undefined;
+}
+
+function serializeOperatorSessionCookie(
+  token: string,
+  maxAgeSeconds: number,
+  secure: boolean,
+): string {
+  const attributes = [
+    `${OPERATOR_SESSION_COOKIE_NAME}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+  if (secure) attributes.push('Secure');
+  return attributes.join('; ');
 }
 
 function configuredAuthProviderId(

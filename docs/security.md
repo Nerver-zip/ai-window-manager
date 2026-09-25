@@ -76,33 +76,69 @@ authenticated local deployment resumed usage reads after recreation/restart on
 2026-09-24; this does not prove fresh account/keyring setup elsewhere. Do not
 represent offline keyring startup as proof that account authentication works.
 
+## Native operator authentication
+
+AWM has one local operator account, not a multi-user system. Configure
+`AWM_AUTH_USERNAME` and `AWM_AUTH_PASSWORD_HASH` in the ignored `.env` file.
+Generate the hash locally with `pnpm auth:hash`; the password is entered twice
+without terminal echo and is never accepted as an environment variable. The
+hash is Argon2id (`m=19456,t=2,p=1`) and should be treated as sensitive because
+it permits offline password guessing if copied. Keep `.env` mode `0600`, out of
+Git and backups that are not protected. Startup fails closed if either value is
+missing or invalid. Changing the hash and restarting changes the one operator
+credential and invalidates all existing sessions.
+
+Passwords are compared with a bounded Argon2id verifier. Five failed attempts
+per source address or 60 failed attempts across all sources in five minutes
+trigger a temporary throttle; the verifier also caps concurrent work. Both
+failure windows use bounded in-memory state. A
+successful login receives a cryptographically random opaque session token. The
+server stores only its SHA-256 digest in memory, not SQLite. The cookie is
+`HttpOnly`, `SameSite=Strict`, path-wide, and has a bounded lifetime (12 hours
+by default, configurable from 15 minutes to seven days); it is `Secure` when
+the request is HTTPS. Restarting AWM invalidates all sessions.
+Mutation routes still require same-origin `Origin` plus the existing
+double-submit CSRF token.
+
+Only `GET /healthz`, static assets, and the login page are anonymous. The
+logout confirmation and logout mutation both require a valid operator session;
+the mutation additionally requires same-origin Origin and CSRF validation.
+Every dashboard route, API endpoint, and `/metrics` requires a session. HTML
+navigation redirects to login; APIs and metrics return `401 AUTH_REQUIRED`.
+No account signup, password reset page, roles, OAuth or trusted-auth-header
+bypass is implemented. There is no password-setting endpoint in the browser.
+
 ## Network exposure
 
-MVP has no full user-account system. Safe default:
+Compose publishes `0.0.0.0` by default for a trusted local network, and the
+native login is mandatory even when used only at home. This does **not** encrypt
+traffic: direct HTTP sends the password and session cookie unencrypted across
+the LAN. Restrict access with host firewall rules and do not forward the app
+port from a router to the public internet. For a network that cannot be trusted,
+use an HTTPS reverse proxy or private VPN. Tailscale is an option, not a
+prerequisite. Never use HTTP on a hostile/shared network.
 
-- Compose publishes `127.0.0.1` only;
-- LAN/Tailscale access requires an explicit bind/reverse-proxy decision;
-- private reverse proxy/Tailscale auth can be used externally;
-- state-changing HTTP routes use CSRF token + same-origin/Origin checks;
-- browser pages never contain credentials.
-
-If the service is exposed to an untrusted LAN, authentication becomes a requirement, not a “nice to have”.
+Forwarded protocol/client information is ignored unless `AWM_TRUST_PROXY`
+explicitly lists the reverse proxy's source IP/CIDR. Configure only the actual
+proxy hop; never trust all networks. When no proxy is configured, HTTP headers
+cannot mark cookies secure or influence source-based throttling.
 
 ## Threat model
 
-| Threat                            | Risk        | MVP mitigation                                                                                                                   |
-| --------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| host/volume theft                 | High        | dedicated least-privilege provider state; no whole-home mount; protect host disk/backups; keep secrets outside DB where possible |
-| provider token theft              | High        | official client-owned auth, dedicated permissions, redact logs, no browser/API exposure                                          |
-| unauthorized LAN UI/action        | Medium-High | loopback default, private VPN/reverse proxy, CSRF + Origin checks; document need for auth on untrusted networks                  |
-| CSRF                              | Medium      | per-session CSRF token for state changes, Origin/SameSite checks                                                                 |
-| XSS                               | Medium      | server-side escaping, strict CSP, no unsafe HTML from provider payloads                                                          |
-| malicious provider response       | Medium      | strict schemas, length bounds, escaped rendering, fail closed                                                                    |
-| secrets in logs/crash             | High        | structured allow-list logging, redaction, never log raw payload/auth env                                                         |
-| container escape                  | Low-Medium  | non-root, cap_drop ALL, no-new-privileges, read-only rootfs where feasible, no Docker socket                                     |
-| dependency/supply-chain           | Medium      | lockfile, minimal dependencies, Dependabot/audit, pin build actions/image bases deliberately                                     |
-| SQLite corruption                 | Medium      | WAL, transactional migrations, health check, backups, integrity recovery documentation                                           |
-| UI operator error causing trigger | Medium      | separate opt-in gates, explicit exact-window start button, quota warning, durable intent and fresh preflight                     |
+| Threat                            | Risk       | MVP mitigation                                                                                                                   |
+| --------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| host/volume theft                 | High       | dedicated least-privilege provider state; no whole-home mount; protect host disk/backups; keep secrets outside DB where possible |
+| provider token theft              | High       | official client-owned auth, dedicated permissions, redact logs, no browser/API exposure                                          |
+| unauthorized LAN UI/action        | High       | required single-operator login, bounded sessions, throttling, CSRF + Origin checks; restrict LAN with firewall                   |
+| password/session sniffing on LAN  | High       | HTTPS/VPN recommended; direct HTTP is supported only on a trusted network and is not confidential                                |
+| CSRF                              | Medium     | per-session CSRF token for state changes, Origin/SameSite checks                                                                 |
+| XSS                               | Medium     | server-side escaping, strict CSP, no unsafe HTML from provider payloads                                                          |
+| malicious provider response       | Medium     | strict schemas, length bounds, escaped rendering, fail closed                                                                    |
+| secrets in logs/crash             | High       | structured allow-list logging, redaction, never log raw payload/auth env                                                         |
+| container escape                  | Low-Medium | non-root, cap_drop ALL, no-new-privileges, read-only rootfs where feasible, no Docker socket                                     |
+| dependency/supply-chain           | Medium     | lockfile, minimal dependencies, Dependabot/audit, pin build actions/image bases deliberately                                     |
+| SQLite corruption                 | Medium     | WAL, transactional migrations, health check, backups, integrity recovery documentation                                           |
+| UI operator error causing trigger | Medium     | separate opt-in gates, explicit exact-window start button, quota warning, durable intent and fresh preflight                     |
 
 ## HTTP baseline
 
@@ -113,9 +149,16 @@ If the service is exposed to an untrusted LAN, authentication becomes a requirem
 - no inline rendering of provider HTML.
 - request body size limits.
 - state-changing routes reject unexpected Origins.
+- all dynamic HTML, JSON, and metrics responses use `Cache-Control: no-store`;
+- private pages/API/metrics are gated centrally before application handlers;
+- the only anonymous application-data route is the minimal database health
+  result; static assets and the login page are public, while logout requires a
+  session.
 - API errors are sanitized; detailed provider errors stay in structured logs/events.
 
-The current mutation surface is `/settings/providers/:id`, `/schedule`,
+The login mutation at `POST /login` is Origin + CSRF protected; `POST /logout`
+is also protected and invalidates the presented session. The current product
+mutation surface is `/settings/providers/:id`, `/schedule`,
 `/providers/:id/trigger`, and the read/command API endpoints. It accepts only
 validated non-secret fields; command
 handlers create intent/reconcile signals and never call provider adapters. The

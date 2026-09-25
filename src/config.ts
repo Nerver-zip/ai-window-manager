@@ -1,4 +1,33 @@
 import { z } from 'zod';
+import { isIP } from 'node:net';
+import { validateArgon2idPasswordHash } from './auth/operator-password.js';
+
+const trustedProxySchema = z
+  .string()
+  .default('')
+  .transform((value) => (value.trim() === '' ? [] : value.split(',').map((entry) => entry.trim())))
+  .superRefine((entries, context) => {
+    for (const entry of entries) {
+      const [address, prefix, ...extra] = entry.split('/');
+      const version = address ? isIP(address) : 0;
+      const maxPrefix = version === 4 ? 32 : version === 6 ? 128 : -1;
+      const validPrefix =
+        prefix === undefined ||
+        (/^\d+$/.test(prefix) && Number(prefix) >= 0 && Number(prefix) <= maxPrefix);
+      if (
+        extra.length > 0 ||
+        version === 0 ||
+        !validPrefix ||
+        (prefix !== undefined && maxPrefix < 0)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'AWM_TRUST_PROXY must contain valid IP addresses or CIDR ranges',
+        });
+        return;
+      }
+    }
+  });
 
 const envSchema = z.object({
   AWM_BIND: z.string().default('0.0.0.0'),
@@ -27,6 +56,22 @@ const envSchema = z.object({
   AWM_CODEX_EXECUTABLE: z.string().default('codex'),
   AWM_CODEX_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(30),
   AWM_AUTH_SESSION_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(1800).default(900),
+  AWM_AUTH_USERNAME: z
+    .string()
+    .trim()
+    .min(1, { message: 'AWM_AUTH_USERNAME must not be empty' })
+    .max(64, { message: 'AWM_AUTH_USERNAME must be 64 characters or fewer' })
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, {
+      message: 'AWM_AUTH_USERNAME must use only letters, numbers, dot, underscore or hyphen',
+    }),
+  AWM_AUTH_PASSWORD_HASH: z
+    .string()
+    .min(1, { message: 'AWM_AUTH_PASSWORD_HASH must be configured' })
+    .refine(validateArgon2idPasswordHash, {
+      message: 'AWM_AUTH_PASSWORD_HASH must be a valid Argon2id hash with approved parameters',
+    }),
+  AWM_AUTH_SESSION_TTL_SECONDS: z.coerce.number().int().min(900).max(604800).default(43200),
+  AWM_TRUST_PROXY: trustedProxySchema,
   AWM_ANTIGRAVITY_ENABLED: z
     .enum(['true', 'false'])
     .default('false')

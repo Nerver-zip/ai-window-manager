@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadConfig } from '../../src/config.js';
+import { loadTestConfig } from '../helpers/operator-auth.js';
+import { attachDefaultTestSession, createTestOperatorAuth } from '../helpers/operator-auth.js';
 import {
   type AuthOutputStream,
   AuthSessionManager,
@@ -169,14 +170,17 @@ function createAuthApp(providerId: AuthProviderId = 'codex') {
       });
     },
   });
+  const operatorAuth = createTestOperatorAuth(clock);
   const app = buildServer({
-    config: loadConfig({ AWM_DB_PATH: dbPath, AWM_LOG_LEVEL: 'silent' }),
+    config: loadTestConfig({ AWM_DB_PATH: dbPath, AWM_LOG_LEVEL: 'silent' }),
     db,
     repositories,
     adapters: new Map([[providerId, adapter]]),
     clock,
     authSessions: auth,
+    operatorAuth,
   });
+  attachDefaultTestSession(app, operatorAuth.sessions.create().token);
   resources.push({ app, db, dir, auth });
   return { app, auth, db, driver };
 }

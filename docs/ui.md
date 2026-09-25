@@ -5,6 +5,14 @@ The deterministic FakeProvider is shown only when
 fake state is omitted from the overview, provider settings, schedule, history,
 JSON read/command routes, Usage, and metrics; SQLite history is preserved.
 
+The application has a standalone sign-in page for one local operator. The login
+screen uses the same design tokens but no application navigation or provider
+data; authenticated pages expose a deliberate Sign out action. The username and
+password hash come from bootstrap environment configuration, not the UI. There
+is no signup, user-management or password-reset screen. An unauthenticated
+HTML request returns to login with a safe same-origin destination; JSON and
+metrics clients receive `401` instead of an HTML redirect.
+
 The overview should answer at a glance:
 
 1. which usage windows are available?

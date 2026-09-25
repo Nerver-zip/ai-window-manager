@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadConfig } from '../../src/config.js';
+import { loadTestConfig } from '../helpers/operator-auth.js';
+import { attachDefaultTestSession, createTestOperatorAuth } from '../helpers/operator-auth.js';
 import type {
   ProviderCapabilities,
   ProviderObservation,
@@ -53,8 +54,9 @@ function createApp(
   const clock = new FakeClock(NOW);
   const repositories = createRepositories(db);
   seed(repositories, clock);
+  const operatorAuth = createTestOperatorAuth(clock);
   const app = buildServer({
-    config: loadConfig({
+    config: loadTestConfig({
       AWM_DB_PATH: dbPath,
       AWM_LOG_LEVEL: 'silent',
       AWM_FAKE_PROVIDER_ENABLED: String(fakeProviderEnabled),
@@ -63,8 +65,10 @@ function createApp(
     repositories,
     adapters: adapter ? new Map([[adapter.id, adapter]]) : new Map(),
     clock,
+    operatorAuth,
     ...(requestReconcile ? { requestReconcile } : {}),
   });
+  attachDefaultTestSession(app, operatorAuth.sessions.create().token);
   resources.push({ app, db, dir });
   return { app, clock, repositories };
 }
@@ -971,11 +975,12 @@ describe('web server persisted overview', () => {
       },
     } as unknown as SqliteDatabase;
     const app = buildServer({
-      config: loadConfig({ AWM_LOG_LEVEL: 'silent' }),
+      config: loadTestConfig({ AWM_LOG_LEVEL: 'silent' }),
       db,
       repositories: createRepositories(db),
       adapters: new Map(),
       clock: new FakeClock(NOW),
+      operatorAuth: createTestOperatorAuth(new FakeClock(NOW)),
     });
 
     const response = await app.inject('/healthz');

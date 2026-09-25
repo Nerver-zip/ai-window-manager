@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadConfig } from '../../src/config.js';
+import {
+  attachDefaultTestSession,
+  createTestOperatorAuth,
+  loadTestConfig,
+} from '../helpers/operator-auth.js';
 import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
@@ -29,6 +33,7 @@ function setup() {
   const db = openDatabase(path.join(dir, 'awm.db'));
   const repositories = createRepositories(db);
   const clock = new FakeClock('2026-09-19T12:00:00.000Z');
+  const operatorAuth = createTestOperatorAuth(clock);
   const fake = new FakeProvider(clock);
   const provider: ProviderRecord = {
     id: 'fake',
@@ -43,7 +48,7 @@ function setup() {
   };
   repositories.providers.upsert(provider);
   const app = buildServer({
-    config: loadConfig({
+    config: loadTestConfig({
       AWM_DB_PATH: path.join(dir, 'awm.db'),
       AWM_LOG_LEVEL: 'silent',
       AWM_FAKE_PROVIDER_ENABLED: 'true',
@@ -52,7 +57,9 @@ function setup() {
     repositories,
     adapters: new Map([['fake', fake]]),
     clock,
+    operatorAuth,
   });
+  attachDefaultTestSession(app, operatorAuth.sessions.create().token);
   resources.push({ app, db, dir });
   return { app, repositories, fake };
 }

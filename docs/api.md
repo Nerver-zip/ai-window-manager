@@ -2,11 +2,23 @@
 
 The API exists to support the small UI and local automation/inspection. It is not a public platform API.
 
+The web service has mandatory native single-operator authentication. `GET
+/healthz`, static assets, and `/login` are public; every dashboard route, JSON
+endpoint, `/metrics`, and both logout routes require the in-memory operator
+session. Unauthenticated HTML navigation redirects to `/login`; JSON and
+metrics return `401` with `AUTH_REQUIRED`. `POST /login` and `POST /logout` are
+same-origin and CSRF protected. The login cookie is browser-only; there is no
+API password, bearer-token, public-registration or trusted-header bypass.
+
 Proposed final MVP endpoints:
 
 ```text
 GET  /healthz
 GET  /metrics
+GET  /login
+POST /login
+GET  /logout
+POST /logout
 GET  /
 GET  /schedule
 GET  /logs
@@ -58,6 +70,8 @@ Notes:
 Current HTML mutation routes are:
 
 ```text
+POST /login
+POST /logout
 POST /settings/providers/:id
 POST /schedule
 POST /providers/:id/trigger

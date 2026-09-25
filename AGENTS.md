@@ -51,6 +51,11 @@ If a proposed change broadens the product beyond usage-window observation/timing
 - A persisted `executing` intent recovered after restart becomes `uncertain` before any new scheduling decision.
 - `succeeded` is not terminal until confirmation; retention must preserve intents that still require confirmation.
 - Runtime settings are SQLite-authoritative after bootstrap; settings forms may persist non-secret fields only and must enforce Origin plus CSRF checks.
+- The web UI is protected by mandatory, native single-operator authentication. Do not expand this into signup, roles, public multi-user management, OAuth/OIDC, trusted-header auth or a password-reset service without a separate scope decision.
+- `AWM_AUTH_USERNAME` and a validated Argon2id `AWM_AUTH_PASSWORD_HASH` are required bootstrap configuration. Generate hashes only with `pnpm auth:hash`; never accept/store raw operator passwords in env, SQLite, browser output, Git or logs.
+- Keep operator sessions opaque, bounded, in-memory and invalidated on restart. Central route auth must be default-deny before page/API handlers; only the minimal health endpoint, static assets and login are public. Logout, application pages, APIs and metrics require a session too.
+- Bound operator login attempts both per source (5 failures / 5 minutes) and globally (60 failures / 5 minutes); both limiters must remain in-memory, bounded and clock-testable.
+- `AWM_TRUST_PROXY` stays empty unless exact proxy source IP/CIDR entries are configured. Never trust arbitrary forwarded auth/protocol/client headers. Direct HTTP on a `0.0.0.0` LAN bind does not encrypt passwords or cookies; document host firewall/no-public-port-forwarding and recommend TLS/VPN on untrusted networks.
 - Store instants in UTC. Interpret user schedules with an IANA timezone.
 - Inject clocks into scheduling logic. Do not scatter `Date.now()`/`setTimeout()` through domain code.
 - Reconcile state periodically instead of persisting fragile long-lived timers.
@@ -62,6 +67,7 @@ If a proposed change broadens the product beyond usage-window observation/timing
 - Coverage is a permanent quality gate: global lines, statements, functions, and branches must each remain at or above 90%. Do not lower thresholds, exclude relevant production code, remove tests, or skip tests to make a change pass.
 - Gitleaks is a mandatory secret-scanning gate. Never disable it to accommodate a finding; fixtures and examples must use clearly synthetic values and never real credentials.
 - Do not claim provider behavior, tests, CI, or deployment success without evidence.
+- Authentication tests must cover anonymous route denial, same-origin/CSRF login/logout, expiry/throttling, safe post-login redirects, and restart invalidation; do not add a production auth bypass to simplify test setup.
 
 ## Canonical validation
 

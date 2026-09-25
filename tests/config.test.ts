@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { TEST_OPERATOR_ENV, loadTestConfig } from './helpers/operator-auth.js';
 
 describe('loadConfig', () => {
   it('uses safe defaults including the configured IANA timezone', () => {
-    const config = loadConfig({});
+    const config = loadTestConfig({});
 
     expect(config.AWM_BIND).toBe('0.0.0.0');
     expect(config.AWM_PORT).toBe(8787);
@@ -14,6 +15,9 @@ describe('loadConfig', () => {
     expect(config.AWM_CODEX_HOME).toBe('./data/codex');
     expect(config.AWM_CODEX_ACTION_TIMEOUT_SECONDS).toBe(30);
     expect(config.AWM_AUTH_SESSION_TIMEOUT_SECONDS).toBe(900);
+    expect(config.AWM_AUTH_USERNAME).toBe('test-operator');
+    expect(config.AWM_AUTH_SESSION_TTL_SECONDS).toBe(43200);
+    expect(config.AWM_TRUST_PROXY).toEqual([]);
     expect(config.AWM_ANTIGRAVITY_ENABLED).toBe(false);
     expect(config.AWM_ANTIGRAVITY_TRIGGER_ENABLED).toBe(false);
     expect(config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS).toBe(30);
@@ -27,32 +31,56 @@ describe('loadConfig', () => {
   });
 
   it('rejects an invalid timezone before startup', () => {
-    expect(() => loadConfig({ AWM_TIMEZONE: 'Not/AZone' })).toThrow(/valid IANA timezone/);
+    expect(() => loadTestConfig({ AWM_TIMEZONE: 'Not/AZone' })).toThrow(/valid IANA timezone/);
+  });
+
+  it('requires a valid single-operator username and approved Argon2id hash', () => {
+    expect(() => loadConfig({})).toThrow();
+    expect(() => loadConfig({ AWM_AUTH_USERNAME: TEST_OPERATOR_ENV.AWM_AUTH_USERNAME })).toThrow();
+    expect(() => loadTestConfig({ AWM_AUTH_USERNAME: 'operator name' })).toThrow(
+      /AWM_AUTH_USERNAME must use only/,
+    );
+    expect(() => loadTestConfig({ AWM_AUTH_PASSWORD_HASH: 'not-a-password-hash' })).toThrow(
+      /valid Argon2id hash/,
+    );
+  });
+
+  it('accepts only explicit trusted proxy IP/CIDR entries', () => {
+    expect(loadTestConfig({ AWM_TRUST_PROXY: '10.0.0.2,fd00::/8' }).AWM_TRUST_PROXY).toEqual([
+      '10.0.0.2',
+      'fd00::/8',
+    ]);
+    expect(() => loadTestConfig({ AWM_TRUST_PROXY: '0.0.0.0/33' })).toThrow(
+      /AWM_TRUST_PROXY must contain valid IP/,
+    );
+    expect(() => loadTestConfig({ AWM_TRUST_PROXY: '*' })).toThrow(
+      /AWM_TRUST_PROXY must contain valid IP/,
+    );
   });
 
   it('accepts a bounded Codex action timeout independently from the read path', () => {
     expect(
-      loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '45' }).AWM_CODEX_ACTION_TIMEOUT_SECONDS,
+      loadTestConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '45' }).AWM_CODEX_ACTION_TIMEOUT_SECONDS,
     ).toBe(45);
-    expect(() => loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '4' })).toThrow();
-    expect(() => loadConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
+    expect(() => loadTestConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '4' })).toThrow();
+    expect(() => loadTestConfig({ AWM_CODEX_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
   });
 
   it('bounds auth sessions and keeps Antigravity opt-in', () => {
     expect(
-      loadConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '1200', AWM_ANTIGRAVITY_ENABLED: 'true' }),
+      loadTestConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '1200', AWM_ANTIGRAVITY_ENABLED: 'true' }),
     ).toMatchObject({
       AWM_AUTH_SESSION_TIMEOUT_SECONDS: 1200,
       AWM_ANTIGRAVITY_ENABLED: true,
     });
-    expect(() => loadConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '59' })).toThrow();
-    expect(() => loadConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '1801' })).toThrow();
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_ENABLED: 'yes' })).toThrow();
+    expect(() => loadTestConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '59' })).toThrow();
+    expect(() => loadTestConfig({ AWM_AUTH_SESSION_TIMEOUT_SECONDS: '1801' })).toThrow();
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_ENABLED: 'yes' })).toThrow();
   });
 
   it('accepts Antigravity trigger overrides with a bounded action timeout', () => {
     expect(
-      loadConfig({
+      loadTestConfig({
         AWM_ANTIGRAVITY_TRIGGER_ENABLED: 'true',
         AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '45',
         AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: ' gemini-test-model ',
@@ -66,27 +94,27 @@ describe('loadConfig', () => {
     });
 
     expect(
-      loadConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '5' })
+      loadTestConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '5' })
         .AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
     ).toBe(5);
     expect(
-      loadConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '120' })
+      loadTestConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '120' })
         .AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
     ).toBe(120);
   });
 
   it('rejects invalid Antigravity trigger configuration', () => {
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_TRIGGER_ENABLED: 'yes' })).toThrow();
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '4' })).toThrow();
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: 'invalid' })).toThrow();
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: '' })).toThrow(
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_TRIGGER_ENABLED: 'yes' })).toThrow();
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '4' })).toThrow();
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: 'invalid' })).toThrow();
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: '' })).toThrow(
       /AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL must not be empty/,
     );
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL: '   ' })).toThrow(
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL: '   ' })).toThrow(
       /AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL must not be empty/,
     );
-    expect(() => loadConfig({ AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: 'm'.repeat(129) })).toThrow(
+    expect(() => loadTestConfig({ AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: 'm'.repeat(129) })).toThrow(
       /AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL must be 128 characters or fewer/,
     );
   });

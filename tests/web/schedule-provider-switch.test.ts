@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { Script } from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadConfig } from '../../src/config.js';
+import {
+  attachDefaultTestSession,
+  createTestOperatorAuth,
+  loadTestConfig,
+} from '../helpers/operator-auth.js';
 import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { openDatabase, type SqliteDatabase } from '../../src/storage/database.js';
@@ -59,8 +63,9 @@ function createScheduleApp(requestReconcile: () => void = () => {}) {
     times: ['09:30'],
     toleranceSeconds: 600,
   });
+  const operatorAuth = createTestOperatorAuth(clock);
   const app = buildServer({
-    config: loadConfig({
+    config: loadTestConfig({
       AWM_DB_PATH: dbPath,
       AWM_LOG_LEVEL: 'silent',
       AWM_FAKE_PROVIDER_ENABLED: 'false',
@@ -69,8 +74,10 @@ function createScheduleApp(requestReconcile: () => void = () => {}) {
     repositories,
     adapters: new Map(),
     clock,
+    operatorAuth,
     requestReconcile,
   });
+  attachDefaultTestSession(app, operatorAuth.sessions.create().token);
   resources.push({ app, db, directory });
   return { app, repositories };
 }
