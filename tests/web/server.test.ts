@@ -689,6 +689,9 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('aria-label="Start Gemini Models, 5-hour window now"');
     expect(page.body).not.toContain('data-quota-confirm');
     expect(page.body).not.toContain('normal provider quota');
+    expect(page.body).not.toContain('Starting a window sends one');
+    expect(page.body).not.toContain('The same prompt may affect both');
+    expect(page.body).not.toContain('A fresh safety check runs before sending');
     expect(page.body).not.toContain('provider-action-notice');
     expect(page.body).not.toContain('aria-describedby="provider-action-note-antigravity"');
     expect(page.body.match(/action="\/providers\/antigravity\/trigger"/g)).toHaveLength(4);
@@ -1259,6 +1262,8 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Start this window now');
     expect(page.body).not.toContain('data-quota-confirm');
     expect(page.body).not.toContain('normal provider quota');
+    expect(page.body).not.toContain('Starting a window sends one');
+    expect(page.body).not.toContain('A fresh safety check runs before sending');
     expect(page.body).not.toContain('provider-action-notice');
     const setCookie = page.headers['set-cookie'];
     const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0];

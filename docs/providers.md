@@ -12,7 +12,7 @@ Provider-specific parsing ends at the runtime-validated `ProviderObservationSche
 
 These concepts must not be collapsed. For example, an inferred reset can be deterministic and high-confidence, while a trigger mechanism can be `official_client_internal`. Window phase is also a fact, so adapters must return `phase: Fact<WindowPhase>` rather than a bare lifecycle string.
 
-Capabilities remain truthful and explicit. Read capabilities use `supported` plus a `CapabilityContract`; trigger capabilities additionally set `consumesQuota` to `true`, `false`, or `'unknown'`. Unsupported or unaccepted behavior remains monitor-only. Experimental/unversioned paths require explicit project acceptance, truthful classification, and a separate opt-in; they must not be emulated through undocumented endpoints or credential handling.
+Capabilities remain truthful and explicit. Read capabilities use `supported` plus a `CapabilityContract`; trigger capabilities additionally set `consumesQuota` to `true`, `false`, or `'unknown'`. Unsupported or unaccepted behavior remains monitor-only. Experimental/unversioned paths require explicit project acceptance, truthful classification, and an explicit runtime gate; the application default for an accepted provider can be disabled by the operator. They must not be emulated through undocumented endpoints or credential handling.
 
 The words below are contractual classifications, not rhetorical labels:
 
@@ -30,14 +30,16 @@ The words below are contractual classifications, not rhetorical labels:
 - Current allowance and reset times are surfaced in Settings → Usage; limits vary by plan and workload/model/settings affect consumption.
 - The official open-source Codex app-server protocol includes `account/rateLimits/read` and rate-limit update notifications. Its schema represents used percentage, reset time/window duration and multiple quota buckets.
 - The official app-server also exposes `thread/start`, `turn/start` and the
-  `turn/completed` lifecycle used by the opt-in Codex action adapter.
+  `turn/completed` lifecycle used by the quota-consuming Codex action adapter.
 - Codex supports authenticated ChatGPT account flows in its official client; auth ownership should remain with the official client rather than this project reimplementing OAuth.
 
 SPIKE-001 confirmed that the documented app-server stdio/JSONL lifecycle and
 `account/rateLimits/read` are suitable for the adapter. The adapter is
 implemented in `src/providers/codex/`, requires a dedicated persistent
-`CODEX_HOME` and official client-owned authentication, and keeps quota action
-disabled by default.
+`CODEX_HOME` and official client-owned authentication. In the application,
+the quota-action gate defaults on for an enabled provider; operators can set
+`AWM_CODEX_TRIGGER_ENABLED=false` or choose monitoring-only/manual settings to
+opt out.
 
 ### Observed / internal
 
@@ -52,7 +54,7 @@ disabled by default.
   dedicated runtime. Before the turn, fresh inspections projected the reset
   forward; after it, the reset stayed anchored and counted down. This validates
   the operational effect, not a new official lifecycle field: reset-time phase
-  remains explicitly inferred and opt-in.
+  remains explicitly inferred; the operator can disable automatic starts.
 
 ### Unknown
 
@@ -145,7 +147,8 @@ blindly retried.
 
 The project-level decision accepts a self-hosted, single-operator integration
 that invokes the **official `agy` CLI itself**, including an experimental,
-quota-consuming `Hi!` action behind an explicit environment gate. This does not
+quota-consuming `Hi!` action behind an environment gate that defaults on for
+an enabled provider and can be explicitly disabled. This does not
 relax the technical boundary: never extract/replay login tokens, reproduce
 internal backend calls, or impersonate the client. The official CLI owns login
 and its Secret Service credentials; AWM validates bounded usage/action output.
@@ -157,7 +160,7 @@ is not a dedicated start-only operation.
 ```text
 can_query_usage       = experimental/conditional, official CLI headless JSON only
 can_query_reset       = experimental/conditional, only with validated bucket reset fields
-can_trigger_window    = opt-in, observed_undocumented, exact allowlisted targets
+can_trigger_window    = gate-controlled (default on), observed_undocumented, exact allowlisted targets
 trigger_consumes_quota= true
 public_usage_api      = false / none found
 ```
@@ -166,12 +169,12 @@ SPIKE-002 concludes `VIABLE_OFFICIAL_READ_PATH`; the monitor-only adapter now
 uses pinned `agy -p /usage --output-format json` and fails closed on schema
 changes. SPIKE-003's original `NO_SUPPORTED_CONTAINER_PATH` conclusion remains
 the accurate result of that research-only investigation. This milestone
-supersedes its implementation recommendation with an isolated, opt-in
+supersedes its implementation recommendation with an isolated, separately gated
 in-container D-Bus/Secret-Service/keyring design and a file-mounted unlock
 secret. That runtime has offline packaging/probe coverage, but authenticated
 login reuse after restart still requires explicit operator acceptance. The
 trigger is advertised per exact target when
-`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` and that target's group model is
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` (the default) and that target's group model is
 configured; dispatch additionally requires the provider to be in automation
 mode. Its allowlist contains `antigravity_gemini_five_hour`,
 `antigravity_gemini_weekly`, `antigravity_claude_gpt_five_hour`, and

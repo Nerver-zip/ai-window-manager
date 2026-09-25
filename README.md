@@ -134,8 +134,9 @@ Included now:
   detailed provider samples are retained for 90 days;
 - read-only command endpoints plus CSRF/Origin-protected settings and target-reset schedule forms;
 - bounded retention maintenance for samples, events and terminal intent history;
-- official Codex app-server adapter with offline protocol fixtures and an opt-in
-  fixed `Hi!` turn;
+- official Codex app-server adapter with offline protocol fixtures and a fixed,
+  quota-consuming `Hi!` turn; automatic starts default on for enabled providers
+  and can be explicitly disabled in settings or through the environment;
 - target-specific Antigravity `Hi!` actions through the official `agy`
   CLI, with separate Gemini and Claude/GPT model selection, fresh target-window
   confirmation, and no blind retry after ambiguous dispatch;

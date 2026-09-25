@@ -130,12 +130,15 @@ interface TriggerCapability extends ReadCapability {
 }
 ```
 
-Trigger quota consumption is always explicit. When `supportedWindowKinds` is
+Trigger quota consumption is always explicitly declared in the capability
+contract. When `supportedWindowKinds` is
 present, only those exact normalized targets may be dispatched; an unlisted
 future target remains monitorable but is not triggerable. Antigravity uses this
 allowlist for its four known group/cadence targets. Its `observed_undocumented`
-contract remains disabled by default and is exposed only when the explicit
-feature gate is enabled. `ProviderActionResult.status` remains separate from
+contract is exposed only when the application feature gate is enabled (enabled
+by default for configured providers, with an explicit opt-out). Provider mode,
+a supported exact target and a fresh preflight remain required.
+`ProviderActionResult.status` remains separate from
 the persisted scheduler lifecycle state.
 
 ## Other entities and invariants

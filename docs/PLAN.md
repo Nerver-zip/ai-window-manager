@@ -1,7 +1,7 @@
 # AI Window Manager — implementation plan
 
 Prepared: **2026-09-19**
-Scope: safe observation-to-action-intent vertical slice; quota-consuming provider actions are explicit opt-in only.
+Scope: safe observation-to-action-intent vertical slice; quota-consuming provider actions default on for configured providers and remain explicitly disableable.
 
 ## A. Executive summary
 
@@ -9,7 +9,7 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an explicitly enabled adapter capability; Codex and Antigravity have separate opt-in quota-consuming paths, with Antigravity's window-positioning effect still experimental.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an enabled adapter capability; Codex and Antigravity have separate configurable quota-consuming paths, enabled by default for configured providers and explicitly disableable, with Antigravity's window-positioning effect still experimental.
 
 ## Current milestone status
 
@@ -36,7 +36,7 @@ does not replace fresh sign-in acceptance in another deployment.
 `WINDOW-001` and `WEB-005` now provide exact target scoping
 and safe per-window manual controls. `WINDOW-001` restricts each provider to one exact selected
 window for policy planning. `ANT-002` has account-specific operator evidence
-recorded in `SPIKE-005`; `AGY-TRIGGER-001` implements an opt-in official-CLI
+recorded in `SPIKE-005`; `AGY-TRIGGER-001` implements an official-CLI
 action with synthetic process coverage, but live AWM action acceptance remains
 pending. The Antigravity effect is experimental and not a provider-wide
 guarantee. Work-window recommendations and broader statistics remain out of
@@ -53,8 +53,8 @@ optional mounted unlock file. No token extraction or backend impersonation is
 allowed. SPIKE-005 records operator-provided evidence that one `Hi!` anchored
 the selected family's five-hour window on one account/CLI/model path. This is
 not a universal guarantee. The official-CLI action is implemented behind an
-independent gate that is off when unset; the checked-in local profile enables
-it and defaults to automation unless explicitly disabled. Live AWM action
+independent gate that defaults on for configured providers and can be disabled
+through environment or persisted settings. Live AWM action
 acceptance remains pending.
 Authenticated state reuse after recreation/restart was verified for the local
 operator deployment on 2026-09-24; this does not generalize to a fresh install.
@@ -512,35 +512,36 @@ remain capability-gated.**
 
 **Status: CODEX-001 offline adapter and OPS-002 runtime packaging complete;
 operator-authorized live monitor/heartbeat acceptance complete. The trigger
-gate remains off when unset; the local profile enables it and defaults to
-automation unless explicitly disabled.**
+gate defaults on for configured providers; settings or an explicit false
+environment value opt out.**
 
 **Goal**: real read-only Codex state through official client surface.  
 **Components**: dedicated client state, adapter, parser/schema validation.  
 **Tests**: fixture contract; optional manual live acceptance.  
 **Acceptance**: current multi-window state visible; no direct internal API call from AWM.
 
-### Phase 5 — Codex opt-in action
+### Phase 5 — Codex quota-consuming action
 
 **Status: implementation and one live heartbeat acceptance complete; read/action
 timeout separation and uncertain-outcome confirmation are enforced.**
 
 **Goal**: position an inactive Codex window using one minimal legitimate normal
-request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
-`automation`. The action sends only `Hi!`; the environment gate is off when
-unset, while the checked-in local profile enables automatic starts by default.
+request when `AWM_CODEX_TRIGGER_ENABLED=true` (the default) and provider mode
+is `automation`. The action sends only `Hi!`; set the environment gate to
+`false` or choose monitoring-only/manual in Settings to opt out.
 
 ### Phase 6 — Antigravity monitor and experimental action
 
-**Status**: official monitor and opt-in action implementation have offline
+**Status**: official monitor and gated action implementation have offline
 coverage. SPIKE-005 has account-specific operator evidence. Existing
 authenticated state survived recreation/restart in the local operator
 deployment on 2026-09-24; live AWM action acceptance remains pending.
 **Goal**: official-CLI-only read path and one target-specific `Hi!` action.
 **Acceptance**: safe auth persistence, strict parser, exact target confirmation,
 durable intent and no retry after an uncertain result.
-**Trigger**: disabled when its environment gate is unset; automatic starts are
-the gate-enabled default unless explicitly disabled in SQLite. The observed
+**Trigger**: its environment gate defaults on for configured providers;
+automatic starts are the initial default unless explicitly disabled in SQLite
+or through the environment. The observed
 effect is not a universal start-window guarantee.
 
 ### Phase 7 — Settings/logs/usage polish
@@ -588,11 +589,11 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [x] SQLite initializes/migrates automatically and survives container/host restart.
 - [x] FakeProvider exercises active/inactive/reset/failure/action-uncertain flows.
 - [x] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
-- [x] Codex automation, if enabled, is explicit opt-in and performs only one persisted/confirmed minimal ordinary action per target cycle.
+- [x] Codex automation defaults on for configured providers, can be explicitly disabled, and performs only one persisted/confirmed minimal ordinary action per target cycle.
 - [x] Antigravity monitoring uses only the official CLI; unavailable/auth-required states are explicit and no token/backend workaround exists.
 - [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
 - [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service, optional mounted unlock file, and remains disabled by default.
-- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger support is independently gated, exact-target allowlisted, and disabled by default.
+- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger support is independently gated, exact-target allowlisted, on by default for configured providers, and explicitly disableable.
 - [ ] Fresh Web-assisted Codex and Antigravity sign-in is verified by an operator in each intended deployment. Existing sessions in the current local deployment survived recreation/restart and resumed provider reads on 2026-09-24.
 - [x] Antigravity trigger semantics have account-specific operator evidence and are explicitly classified experimental; no universal guarantee is claimed.
 - [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
@@ -620,7 +621,7 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 
 - **Codex official-client integration lifecycle/auth in headless container**: SPIKE-001.
 - **Antigravity keyring/DBus in container**: isolated runtime is implemented; existing authenticated state survived restart in the local deployment, while fresh setups still require acceptance.
-- **Antigravity window-start semantics**: one account-specific operator test is documented; other accounts/plans/CLI versions remain unknown, so the trigger stays opt-in and uncertain outcomes cannot retry.
+- **Antigravity window-start semantics**: one account-specific operator test is documented; other accounts/plans/CLI versions remain unknown. The accepted trigger defaults on for configured providers but can be explicitly disabled, and uncertain outcomes cannot retry.
 - **Clock/DST mis-scheduling**: dedicated temporal tests + skip missed actions.
 
 ### P2
@@ -683,4 +684,4 @@ Explicitly still not future goals: agent orchestration, prompt management, accou
 27. **Authority**: SQLite after initialization.
 28. **Threat model**: token/volume theft, LAN access, CSRF/XSS, container escape, supply-chain, malicious response, logs/crashes, Docker permissions; mitigations documented.
 29. **Skills**: provider-adapter, scheduler, testing-time, docker-deployment, database-migration, release. Generic coding skill intentionally omitted.
-30. **MVP scope**: Fake vertical slice, Codex monitor + safe opt-in trigger, Antigravity official monitor + separately gated experimental exact-target trigger, scheduler/config/history/metrics/private UI/Docker; generalized optimization and all other broader platform work remain out.
+30. **MVP scope**: Fake vertical slice, Codex monitor + safe configurable trigger, Antigravity official monitor + separately gated experimental exact-target trigger, scheduler/config/history/metrics/private UI/Docker; generalized optimization and all other broader platform work remain out.

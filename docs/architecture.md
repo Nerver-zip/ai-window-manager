@@ -90,8 +90,10 @@ planned intent
 ```
 
 For Codex the action is one `turn/start` through the official app-server. For
-Antigravity the opt-in experimental action is one fixed `Hi!` invocation through
-the official headless `agy -p` CLI. The scheduler and generic executor contain
+Antigravity the experimental action is one fixed `Hi!` invocation through
+the official headless `agy -p` CLI. The application enables automatic starts
+by default for configured providers; operators can opt out in settings or
+through the corresponding environment gate. The scheduler and generic executor contain
 no provider endpoint, token format, CLI model semantics, or credential parsing.
 Each intent stores one exact normalized window target; changing the canonical
 provider policy replaces that target for future planning.

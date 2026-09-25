@@ -43,7 +43,7 @@ If a proposed change broadens the product beyond usage-window observation/timing
 - Provider observations must cross the canonical `ProviderObservationSchema` boundary before downstream consumers use them.
 - Never call undocumented/internal provider endpoints unless an ADR explicitly accepts the risk. The MVP should prefer official client surfaces.
 - Never use extracted Antigravity credentials from a third-party client. The official Antigravity FAQ explicitly rejects third-party access with Antigravity login.
-- `trigger` is opt-in and provider-capability-gated. Unsupported/unknown providers are monitor-only.
+- Quota-consuming trigger gates default to enabled for configured providers; operators must be able to explicitly opt out with the environment gate or persisted monitoring-only/manual settings. Every action remains provider-capability-gated and exact-target-gated. Unsupported/unknown providers are monitor-only.
 - A trigger whose outcome is uncertain must **not** be blindly retried.
 - Every trigger attempt must have a persisted idempotency/dedupe key before execution.
 - Only the application action executor may dispatch a provider action; HTTP handlers may create intents or reconcile hints but must never call provider actions directly.

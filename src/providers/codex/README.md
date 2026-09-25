@@ -6,7 +6,7 @@ The adapter uses the official `codex app-server` stdio JSONL protocol:
 2. `initialized` notification;
 3. `account/rateLimits/read`.
 
-For the explicit opt-in action path it additionally uses the official
+For the quota-consuming action path it additionally uses the official
 app-server lifecycle:
 
 1. `thread/start` with an ephemeral thread, `approvalPolicy=never` and
@@ -15,8 +15,10 @@ app-server lifecycle:
 3. wait for the matching `turn/completed` notification;
 4. close the child process cleanly.
 
-The action path is disabled until both `AWM_CODEX_TRIGGER_ENABLED=true` and the
-provider's persisted mode is `automation`. It never calls `/api/codex/usage` or
+The application defaults `AWM_CODEX_TRIGGER_ENABLED` to `true`; set it to
+`false` to explicitly disable quota-consuming actions. Dispatch also requires
+the provider's persisted mode to be `automation` and a supported exact target.
+It never calls `/api/codex/usage` or
 `/wham/usage`, accepts `chatgptAuthTokens`, parses cookies or JWTs, or copies
 credentials from a workstation. The caller must provide a dedicated persistent
 `CODEX_HOME` directory owned by the official Codex client.

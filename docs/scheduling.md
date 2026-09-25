@@ -64,8 +64,10 @@ only when the provider is enabled, its persisted mode is `automation`, its
 trigger capability is enabled for that exact `windowKind`, and a fresh preflight
 inspection says the action is eligible. The HTTP handler only validates and
 queues the intent; the executor performs provider I/O. Codex additionally
-requires `AWM_CODEX_TRIGGER_ENABLED=true`. Antigravity additionally requires
-`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` and the selected window's configured
+requires `AWM_CODEX_TRIGGER_ENABLED=true` (the default; set it to `false` to
+opt out). Antigravity additionally requires
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` (also default-on; set it to `false` to
+opt out) and the selected window's configured
 model. Its only implemented action is one ordinary `Hi!` through official
 `agy -p`; it consumes normal quota. A selected model family is targeted, but
 the provider may also account that request against the family's other window.

@@ -35,11 +35,12 @@ recreation/restart and resumed read-only observations on 2026-09-24. This does
 not validate a fresh Web-assisted sign-in or keyring setup in another
 deployment; operators must verify those there.
 
-The quota-consuming trigger gate defaults to disabled when unset; the local
-`.env.example` sets it to `true`. With the gate enabled, a fresh database uses
-automation mode and an automatic policy unless the operator explicitly chooses
-Off or “Only when I ask”; dispatch still requires a supported exact target. The
-adapter then sends one fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
+Quota-consuming trigger gates default to enabled for configured providers;
+set the relevant gate to `false` to opt out. With a gate enabled, a fresh
+database uses automation mode and an automatic policy unless the operator
+explicitly chooses Off or “Only when I ask”; dispatch still requires a
+supported exact target. The adapter then sends one fixed `Hi!` turn in an
+ephemeral read-only workspace. Reset-time phase inference
 is explicitly marked inferred; it must not be treated as an official lifecycle
 field. Read-only app-server requests retain a short timeout; the quota-consuming
 action uses the separately bounded `AWM_CODEX_ACTION_TIMEOUT_SECONDS` setting,
@@ -140,7 +141,7 @@ cannot mark cookies secure or influence source-based throttling.
 | container escape                  | Low-Medium | non-root, cap_drop ALL, no-new-privileges, read-only rootfs where feasible, no Docker socket                                     |
 | dependency/supply-chain           | Medium     | lockfile, minimal dependencies, Dependabot/audit, pin build actions/image bases deliberately                                     |
 | SQLite corruption                 | Medium     | WAL, transactional migrations, health check, backups, integrity recovery documentation                                           |
-| UI operator error causing trigger | Medium     | separate opt-in gates, explicit exact-window start button, durable intent and fresh preflight                                    |
+| UI operator error causing trigger | Medium     | explicit opt-out gates, persisted monitoring-only/manual controls, exact-window checks, durable intent and fresh preflight       |
 
 ## HTTP baseline
 

@@ -24,9 +24,11 @@ Environment/.env/Compose controls process/container concerns:
 - `AWM_TRUST_PROXY` (empty by default; optional comma-separated source IP/CIDR
   entries for explicitly trusted reverse proxies);
 - `AWM_ANTIGRAVITY_ENABLED` (default `false`) to opt into the official CLI monitor;
-- `AWM_ANTIGRAVITY_TRIGGER_ENABLED` (default `false`) as a separate gate for the
+- `AWM_CODEX_TRIGGER_ENABLED` (default `true`) as the Codex quota-consuming
+  action gate; set it to `false` to disable Codex actions;
+- `AWM_ANTIGRAVITY_TRIGGER_ENABLED` (default `true`) as a separate gate for the
   experimental quota-consuming action; persisted provider mode must also be
-  `automation`;
+  `automation`; set it to `false` to disable Antigravity actions;
 - `AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS` (5–120, default `30`);
 - `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL` (default `gemini-3.8-flash-low`) and
   `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL` (default `claude-sonnet-4-6`),
@@ -41,14 +43,16 @@ host interfaces, requires the operator to replace the username/hash bootstrap
 placeholder, enables Codex and Antigravity monitoring and their trigger
 capability gates, and uses 60-second action timeouts. It contains no usable
 operator credential, provider credentials or keyring unlock secret. The
-application/Compose defaults remain disabled for provider gates when these
-variables are absent; Compose refuses to start without the operator settings.
+application defaults enable trigger gates; set a gate to `false` to explicitly
+opt out. Provider monitoring itself remains disabled unless the corresponding
+provider is enabled. Compose refuses to start without the operator settings.
 
 The environment gates determine which trigger capabilities are available and
 are also the initial automation default for a newly seeded provider. When a
-gate is enabled, a fresh database seeds that provider in `automation` mode with
-an enabled `auto` (“Whenever possible”) policy. When a gate is absent or false,
-the initial mode is `monitor_only` with a manual policy. On upgrade, the
+gate is enabled (the default), a fresh database seeds that provider in
+`automation` mode with an enabled `auto` (“Whenever possible”) policy. When a
+gate is explicitly disabled, the initial mode is `monitor_only` with a manual
+policy. On upgrade, the
 migration restores saved provider/policy choices from the configuration audit
 and marks them explicit. A legacy `monitor_only`/manual pair that has no saved
 operator choice is upgraded to the automatic defaults when its trigger gate is

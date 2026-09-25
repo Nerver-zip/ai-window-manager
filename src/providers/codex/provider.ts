@@ -248,7 +248,7 @@ export class CodexProvider implements ProviderAdapter {
         contract: 'official_supported',
         consumesQuota: true,
         notes: this.triggerEnabled
-          ? 'Enabled opt-in ordinary official app-server turn; sends a fixed minimal Hi! message'
+          ? 'Enabled ordinary official app-server turn; sends a fixed minimal Hi! message and uses provider quota'
           : 'Disabled by AWM_CODEX_TRIGGER_ENABLED; no quota-consuming action is available',
       },
     };

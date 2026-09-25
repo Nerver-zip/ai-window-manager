@@ -54,8 +54,9 @@ deployment remains operator acceptance; no quota-consuming action was run.
   test coverage.
 
 Antigravity quota actions are a separate, experimental, quota-consuming
-capability. They remain disabled by default and require both the environment
-gate and provider automation mode.
+capability. Their environment gate defaults on for configured providers and
+can be explicitly set to false; provider automation mode, a saved target and
+all normal preflight checks are still required.
 
 ## Native operator access milestone — complete
 
@@ -162,8 +163,8 @@ are distinct from Claude/GPT five-hour and Claude/GPT weekly.
 Use only the pinned official `agy` CLI with one fixed `Hi!`, the model mapped
 to the exact selected quota family, a durable intent, fresh target-window
 preflight/confirmation, and no blind retry after any ambiguous post-spawn
-result. `AWM_ANTIGRAVITY_TRIGGER_ENABLED` defaults to false. CI uses synthetic
-processes and never spends quota.
+result. `AWM_ANTIGRAVITY_TRIGGER_ENABLED` defaults to true; set it to false to
+opt out. CI uses synthetic processes and never spends quota.
 
 ## WEB-005 — Add safe manual start controls to Overview
 
@@ -191,14 +192,14 @@ HTTP handler never inspects or dispatches a provider action.
 **Acceptance**: monitor-only real provider works; partial/null fields degrade safely; offline contract tests.  
 **Dependencies**: SPIKE-001, CORE-001.
 
-## CODEX-002 — Implement opt-in Codex trigger
+## CODEX-002 — Implement Codex quota-consuming trigger
 
 **Status: implementation and one operator-authorized live heartbeat complete (2026-09-20); read/action timeout separation and uncertain-outcome confirmation are enforced.**
 
 **Context**: official docs say first message after prior 5h window ends starts a new window.  
 **Scope**: minimal ordinary official-client turn, empty workspace/scoped permissions, persisted intent, confirmation read.  
 **Acceptance**: explicit quota-consuming flag; never uses banked reset; uncertain transport result cannot blind-retry; manual live acceptance procedure documented.  
-**Dependencies**: CODEX-001, SCHED-003, explicit operator enablement and live acceptance.
+**Dependencies**: CODEX-001, SCHED-003, explicit quota policy and live acceptance.
 
 ## ANT-001 — Implement Antigravity read-only adapter if spikes pass
 
@@ -215,9 +216,10 @@ HTTP handler never inspects or dispatches a provider action.
 An operator observed that one official `agy -p "Hi!"` turn with each family’s
 configured model anchored that family’s five-hour reset. See
 [`SPIKE-005`](research/spikes/SPIKE-005-antigravity-window-trigger.md). This
-supports an experimental opt-in implementation, but does not establish a
+supports an experimental implementation, but does not establish a
 dedicated start API or generalize to all accounts/versions. The capability is
-`observed_undocumented`, quota-consuming, and off by default.
+`observed_undocumented` and quota-consuming; its runtime gate defaults on for
+configured providers and can be explicitly disabled.
 
 **Dependencies**: ANT-001. No undocumented provider endpoint or token handling.
 
@@ -337,7 +339,8 @@ expired window and confirm a new window after one ordinary turn.
 **Result**: an operator-authorized AWM `Hi!` turn anchored the five-hour reset
 in the real Codex account. AWM recorded `action_uncertain` because the response
 arrived after the five-second deadline, while subsequent persisted observations
-confirmed the reset remained anchored. Automatic action stays explicit opt-in;
-no blind retry is allowed.
+confirmed the reset remained anchored. At the time of this experiment,
+automatic action was opt-in; it now defaults on for configured providers but
+can be explicitly disabled. No blind retry is allowed.
 **Dependencies**: satisfied for the current explicitly authorized account;
 repeat only as a controlled manual acceptance when provider behavior changes.

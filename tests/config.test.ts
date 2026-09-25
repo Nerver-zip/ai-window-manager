@@ -3,7 +3,7 @@ import { loadConfig } from '../src/config.js';
 import { TEST_OPERATOR_ENV, loadTestConfig } from './helpers/operator-auth.js';
 
 describe('loadConfig', () => {
-  it('uses safe defaults including the configured IANA timezone', () => {
+  it('uses product defaults including enabled automation gates for configured providers', () => {
     const config = loadTestConfig({});
 
     expect(config.AWM_BIND).toBe('0.0.0.0');
@@ -11,7 +11,7 @@ describe('loadConfig', () => {
     expect(config.AWM_TIMEZONE).toBe('America/Sao_Paulo');
     expect(config.AWM_FAKE_PROVIDER_ENABLED).toBe(false);
     expect(config.AWM_CODEX_ENABLED).toBe(false);
-    expect(config.AWM_CODEX_TRIGGER_ENABLED).toBe(false);
+    expect(config.AWM_CODEX_TRIGGER_ENABLED).toBe(true);
     expect(config.AWM_CODEX_HOME).toBe('./data/codex');
     expect(config.AWM_CODEX_ACTION_TIMEOUT_SECONDS).toBe(30);
     expect(config.AWM_AUTH_SESSION_TIMEOUT_SECONDS).toBe(900);
@@ -19,7 +19,7 @@ describe('loadConfig', () => {
     expect(config.AWM_AUTH_SESSION_TTL_SECONDS).toBe(43200);
     expect(config.AWM_TRUST_PROXY).toEqual([]);
     expect(config.AWM_ANTIGRAVITY_ENABLED).toBe(false);
-    expect(config.AWM_ANTIGRAVITY_TRIGGER_ENABLED).toBe(false);
+    expect(config.AWM_ANTIGRAVITY_TRIGGER_ENABLED).toBe(true);
     expect(config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS).toBe(30);
     expect(config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL).toBe('gemini-3.8-flash-low');
     expect(config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL).toBe('claude-sonnet-4-6');
@@ -28,6 +28,18 @@ describe('loadConfig', () => {
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
     expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);
     expect(config.AWM_RETENTION_INTERVAL_SECONDS).toBe(86400);
+  });
+
+  it('allows quota-consuming automation gates to be explicitly disabled', () => {
+    expect(
+      loadTestConfig({
+        AWM_CODEX_TRIGGER_ENABLED: 'false',
+        AWM_ANTIGRAVITY_TRIGGER_ENABLED: 'false',
+      }),
+    ).toMatchObject({
+      AWM_CODEX_TRIGGER_ENABLED: false,
+      AWM_ANTIGRAVITY_TRIGGER_ENABLED: false,
+    });
   });
 
   it('rejects an invalid timezone before startup', () => {

@@ -50,7 +50,7 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   AWM_CODEX_TRIGGER_ENABLED: z
     .enum(['true', 'false'])
-    .default('false')
+    .default('true')
     .transform((value) => value === 'true'),
   AWM_CODEX_HOME: z.string().default('./data/codex'),
   AWM_CODEX_EXECUTABLE: z.string().default('codex'),
@@ -78,7 +78,7 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   AWM_ANTIGRAVITY_TRIGGER_ENABLED: z
     .enum(['true', 'false'])
-    .default('false')
+    .default('true')
     .transform((value) => value === 'true'),
   AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(30),
   AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: z
