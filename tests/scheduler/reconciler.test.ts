@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import type { ProviderObservation } from '../../src/domain/types.js';
+import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { Reconciler, type ReconcilerInput } from '../../src/scheduler/reconciler.js';
@@ -100,6 +101,166 @@ function setup(initial = '2026-09-14T07:59:00.000Z') {
 }
 
 describe('Reconciler', () => {
+  it('evaluates Antigravity quota-family policies independently and plans only the selected family', async () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('provider missing');
+    context.repositories.providers.upsert({ ...provider, enabled: false });
+    context.repositories.providers.upsert({ ...provider, id: 'antigravity', kind: 'antigravity' });
+    const nowMs = context.clock.now().getTime();
+    const observed = await context.fake.inspect({});
+    const sourceWindow = observed.windows[0];
+    if (!sourceWindow) throw new Error('fake window missing');
+    const antigravityObservation = parseProviderObservation({
+      ...observed,
+      providerId: 'antigravity',
+      windows: [
+        {
+          ...sourceWindow,
+          providerId: 'antigravity',
+          windowKind: 'antigravity_gemini_five_hour',
+          phase: { ...sourceWindow.phase, value: 'INACTIVE', confidence: 'exact' },
+        },
+        {
+          ...sourceWindow,
+          providerId: 'antigravity',
+          windowKind: 'antigravity_claude_gpt_weekly',
+          phase: { ...sourceWindow.phase, value: 'INACTIVE', confidence: 'exact' },
+          durationSeconds: {
+            value: 604_800,
+            source: 'observed',
+            confidence: 'exact',
+            observedAt: observed.observedAt,
+          },
+        },
+      ],
+    });
+    context.repositories.providerState.upsert({
+      providerId: 'antigravity',
+      health: 'UP',
+      observedAtMs: nowMs,
+      staleAfterMs: antigravityObservation.staleAfterSeconds * 1000,
+      observation: antigravityObservation,
+      lastSuccessAtMs: nowMs,
+      lastErrorCode: null,
+      updatedAtMs: nowMs,
+    });
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-antigravity-gemini',
+      providerId: 'antigravity',
+      scope: 'gemini',
+      requiresReview: false,
+      kind: 'manual',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'antigravity_gemini_five_hour' },
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-antigravity-claude-gpt',
+      providerId: 'antigravity',
+      scope: 'claude_gpt',
+      requiresReview: false,
+      kind: 'auto',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'antigravity_claude_gpt_weekly' },
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+
+    const adapter: ProviderAdapter = { ...context.adapter, id: 'antigravity' };
+    const report = await new Reconciler({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([['antigravity', adapter]]),
+      idFactory: () => 'intent-1',
+    }).reconcile();
+
+    expect(report.createdIntentIds).toEqual(['intent-1']);
+    expect(context.repositories.actionIntents.listOpen()).toMatchObject([
+      { policyId: 'activation-antigravity-claude-gpt' },
+    ]);
+    expect(report.decisions.some((item) => item.policyId === 'activation-antigravity-gemini')).toBe(
+      true,
+    );
+    const claudeDecision = report.decisions.find(
+      (item) => item.policyId === 'activation-antigravity-claude-gpt',
+    );
+    expect(claudeDecision?.decision.kind).toBe('START');
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('does not plan or create intents from a migration policy until its family is reviewed', async () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('provider missing');
+    context.repositories.providers.upsert({ ...provider, enabled: false });
+    context.repositories.providers.upsert({ ...provider, id: 'antigravity', kind: 'antigravity' });
+    const nowMs = context.clock.now().getTime();
+    const observed = await context.fake.inspect({});
+    const sourceWindow = observed.windows[0];
+    if (!sourceWindow) throw new Error('fake window missing');
+    const antigravityObservation = parseProviderObservation({
+      ...observed,
+      providerId: 'antigravity',
+      windows: [
+        {
+          ...sourceWindow,
+          providerId: 'antigravity',
+          windowKind: 'antigravity_gemini_five_hour',
+          phase: { ...sourceWindow.phase, value: 'INACTIVE', confidence: 'exact' },
+        },
+      ],
+    });
+    context.repositories.providerState.upsert({
+      providerId: 'antigravity',
+      health: 'UP',
+      observedAtMs: nowMs,
+      staleAfterMs: antigravityObservation.staleAfterSeconds * 1000,
+      observation: antigravityObservation,
+      lastSuccessAtMs: nowMs,
+      lastErrorCode: null,
+      updatedAtMs: nowMs,
+    });
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-antigravity-gemini',
+      providerId: 'antigravity',
+      scope: 'gemini',
+      requiresReview: true,
+      kind: 'auto',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'antigravity_gemini_five_hour' },
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+
+    const adapter: ProviderAdapter = { ...context.adapter, id: 'antigravity' };
+    const report = await new Reconciler({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([['antigravity', adapter]]),
+      idFactory: () => 'intent-1',
+    }).reconcile();
+
+    expect(report.createdIntentIds).toEqual([]);
+    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
+    expect(context.repositories.events.list('antigravity')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'schedule_policy_review_required',
+          reasonCode: 'POLICY_REVIEW_REQUIRED',
+          data: { policyId: 'activation-antigravity-gemini', scope: 'gemini' },
+        }),
+      ]),
+    );
+    expect(context.triggerCount).toBe(0);
+  });
+
   it('persists observations, plans one intent at the target, and never triggers the provider', async () => {
     const context = setup();
     const reconciler = context.reconciler();

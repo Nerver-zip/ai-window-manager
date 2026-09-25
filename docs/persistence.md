@@ -19,13 +19,13 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
 - `action_intents`: durable side-effect state and duplicate prevention.
 - `settings`/`providers`/`schedule_policies`: current runtime config.
 
-The activation-policy write path uses exactly one canonical policy ID,
-`activation-${providerId}`, per provider. Its normalized `windowKind` is the
-exact target for automatic decisions; manual action requests also persist their
-exact target in the action intent. Changing the saved target changes future
-planning and does not rewrite previous intents or history. No schema migration
-is needed for the normalized target field because it is stored in the existing
-policy JSON and intent explanation.
+Codex retains the canonical `activation-codex` policy. Antigravity stores two
+independent policies: `activation-antigravity-gemini` and
+`activation-antigravity-claude-gpt`. Each row records a family scope, an exact
+normalized `windowKind`, and whether an operator review is required. Manual
+action requests persist their exact target in the action intent. Changing a
+saved policy changes future planning only and does not rewrite previous intents
+or history.
 
 This is **not event sourcing**.
 
@@ -124,6 +124,10 @@ The forward-only schema currently consists of:
 - `migrations/005_explicit_automation_preferences.sql` for explicit opt-out
   markers, restoring the latest audited provider/schedule preference, and
   distinguishing operator choices from old bootstrap defaults.
+- `migrations/006_antigravity_policy_scopes.sql` for family-scoped Antigravity
+  schedules. It preserves the former row as a disabled tombstone, creates
+  disabled review-gated family rows, and copies a legacy target only when its
+  exact family is provable.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

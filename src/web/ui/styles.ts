@@ -117,6 +117,9 @@ main { width: 100%; max-width: var(--content-width); min-width: 0; margin: auto;
 .provider-policy strong { font-size: 14px; font-weight: 620; }
 .provider-policy a { display: inline-flex; align-items: center; min-height: 44px; flex: 0 0 auto; color: var(--accent-strong); font-size: 12px; }
 .provider-policy-status { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; }
+.provider-policy-families { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 8px; }
+.provider-policy-family { display: grid; align-content: start; justify-items: start; gap: 4px; min-width: 0; border-left: 2px solid var(--border-strong); padding-left: 12px; }
+.policy-scope-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
 .section-heading h2 { margin-bottom: 0; }
 .section-heading > :first-child > :last-child { margin-bottom: 0; }
@@ -543,6 +546,7 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   .card-header, .provider-header { display: block; }
   .card-header > :last-child, .provider-header > :last-child { margin-top: 14px; }
   .provider-policy { align-items: flex-start; gap: 12px; }
+  .provider-policy-families { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .summary-grid { gap: 12px; }
   .summary-stat { padding: 12px 0; }
   .summary-stat strong { font-size: 23px; }

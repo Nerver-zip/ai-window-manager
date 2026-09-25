@@ -93,10 +93,11 @@ For Codex the action is one `turn/start` through the official app-server. For
 Antigravity the experimental action is one fixed `Hi!` invocation through
 the official headless `agy -p` CLI. The application enables automatic starts
 by default for configured providers; operators can opt out in settings or
-through the corresponding environment gate. The scheduler and generic executor contain
-no provider endpoint, token format, CLI model semantics, or credential parsing.
-Each intent stores one exact normalized window target; changing the canonical
-provider policy replaces that target for future planning.
+through the corresponding environment gate. The scheduler and generic executor
+contain no provider endpoint, token format, CLI model semantics, or credential
+parsing. Each intent stores one exact normalized window target. Antigravity has
+independent policy IDs for the Gemini and Claude/GPT families, each constrained
+to its own allowlisted window keys.
 
 HTTP handlers do not inspect providers or dispatch actions. Settings and
 activation-policy forms validate non-secret values and persist them in SQLite; all

@@ -63,6 +63,11 @@ function createScheduleApp(requestReconcile: () => void = () => {}) {
     times: ['09:30'],
     toleranceSeconds: 600,
   });
+  seedPolicy(repositories, 'antigravity', 'fixed', {
+    windowKind: 'antigravity_claude_gpt_weekly',
+    anchorLocalTime: '20:15',
+    toleranceSeconds: 900,
+  });
   const operatorAuth = createTestOperatorAuth(clock);
   const app = buildServer({
     config: loadTestConfig({
@@ -140,9 +145,23 @@ function seedPolicy(
   kind: SchedulePolicyRecord['kind'],
   config: unknown,
 ): void {
+  const windowKind =
+    typeof config === 'object' && config !== null && !Array.isArray(config)
+      ? (config as Record<string, unknown>).windowKind
+      : undefined;
+  const scope =
+    providerId !== 'antigravity'
+      ? 'default'
+      : typeof windowKind === 'string' && windowKind.startsWith('antigravity_claude_gpt_')
+        ? 'claude_gpt'
+        : 'gemini';
   repositories.schedulePolicies.upsert({
-    id: `activation-${providerId}`,
+    id:
+      providerId === 'antigravity'
+        ? `activation-antigravity-${scope === 'claude_gpt' ? 'claude-gpt' : 'gemini'}`
+        : `activation-${providerId}`,
     providerId,
+    scope,
     kind,
     enabled: true,
     timezone: 'America/Sao_Paulo',
@@ -152,10 +171,14 @@ function seedPolicy(
   });
 }
 
-function schedulePolicy(repositories: StorageRepositories, providerId: string) {
+function schedulePolicy(repositories: StorageRepositories, providerId: string, scope = 'default') {
   return repositories.schedulePolicies
     .list(providerId)
-    .find((policy) => policy.id === `activation-${providerId}`);
+    .find((policy) =>
+      providerId !== 'antigravity'
+        ? policy.id === `activation-${providerId}`
+        : policy.scope === scope,
+    );
 }
 
 describe('schedule provider switching', () => {
@@ -165,7 +188,8 @@ describe('schedule provider switching', () => {
       reconcileRequests += 1;
     });
     const beforeCodex = schedulePolicy(repositories, 'codex');
-    const beforeAntigravity = schedulePolicy(repositories, 'antigravity');
+    const beforeAntigravityGemini = schedulePolicy(repositories, 'antigravity', 'gemini');
+    const beforeAntigravityClaude = schedulePolicy(repositories, 'antigravity', 'claude_gpt');
 
     const codexPage = await app.inject('/schedule?providerId=codex');
     expect(codexPage.statusCode).toBe(200);
@@ -182,6 +206,11 @@ describe('schedule provider switching', () => {
     );
     expect(antigravityPage.body).toContain('name="policyKind" value="custom_schedule" checked');
     expect(antigravityPage.body).toContain('value="09:30"');
+    expect(antigravityPage.body).toContain('name="scope" value="gemini"');
+    expect(antigravityPage.body).toContain(
+      'href="/schedule?providerId=antigravity&amp;scope=claude_gpt"',
+    );
+    expect(antigravityPage.body).not.toContain('value="antigravity_claude_gpt_weekly"');
 
     const selector = antigravityPage.body.match(
       /<form class="schedule-provider-selection"[\s\S]*?<\/form>/,
@@ -201,7 +230,10 @@ describe('schedule provider switching', () => {
       'Choose a provider to load its saved schedule. This does not save changes.',
     );
     expect(schedulePolicy(repositories, 'codex')).toEqual(beforeCodex);
-    expect(schedulePolicy(repositories, 'antigravity')).toEqual(beforeAntigravity);
+    expect(schedulePolicy(repositories, 'antigravity', 'gemini')).toEqual(beforeAntigravityGemini);
+    expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')).toEqual(
+      beforeAntigravityClaude,
+    );
     expect(reconcileRequests).toBe(0);
   });
 
@@ -210,12 +242,18 @@ describe('schedule provider switching', () => {
     const { app, repositories } = createScheduleApp(() => {
       reconcileRequests += 1;
     });
+    const migratedClaudePolicy = schedulePolicy(repositories, 'antigravity', 'claude_gpt');
+    if (!migratedClaudePolicy) throw new Error('expected Claude and GPT policy');
+    repositories.schedulePolicies.upsert({ ...migratedClaudePolicy, requiresReview: true });
     const codexBefore = schedulePolicy(repositories, 'codex');
     const page = await app.inject({
       method: 'GET',
-      url: '/schedule?providerId=antigravity',
+      url: '/schedule?providerId=antigravity&scope=claude_gpt',
       headers: { host: 'localhost:8787' },
     });
+    expect(page.body).toContain(
+      'Review and save this family schedule before automatic starts can resume.',
+    );
     const setCookie = page.headers['set-cookie'];
     const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0];
     const csrfToken = page.body.match(/name="csrfToken" value="([^"]+)"/)?.[1];
@@ -234,6 +272,7 @@ describe('schedule provider switching', () => {
       payload: new URLSearchParams({
         csrfToken: csrfToken ?? '',
         providerId: 'antigravity',
+        scope: 'claude_gpt',
         policyKind: 'fixed',
         enabled: 'true',
         timezone: 'America/Sao_Paulo',
@@ -244,15 +283,25 @@ describe('schedule provider switching', () => {
     });
 
     expect(response.statusCode).toBe(303);
-    expect(response.headers.location).toBe('/schedule?updated=schedule&providerId=antigravity');
+    expect(response.headers.location).toBe(
+      '/schedule?updated=schedule&providerId=antigravity&scope=claude_gpt',
+    );
     expect(schedulePolicy(repositories, 'codex')).toEqual(codexBefore);
-    expect(schedulePolicy(repositories, 'antigravity')?.kind).toBe('fixed');
-    expect(schedulePolicy(repositories, 'antigravity')?.config).toMatchObject({
+    expect(schedulePolicy(repositories, 'antigravity', 'gemini')?.kind).toBe('custom_schedule');
+    expect(schedulePolicy(repositories, 'antigravity', 'gemini')?.config).toMatchObject({
+      windowKind: 'antigravity_gemini_weekly',
+      times: ['09:30'],
+    });
+    expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')?.kind).toBe('fixed');
+    expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')?.config).toMatchObject({
       windowKind: 'antigravity_claude_gpt_weekly',
       anchorLocalTime: '10:30',
     });
-    expect(repositories.schedulePolicies.list('antigravity')).toHaveLength(1);
-    expect(schedulePolicy(repositories, 'antigravity')?.id).toBe('activation-antigravity');
+    expect(repositories.schedulePolicies.list('antigravity')).toHaveLength(2);
+    expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')?.id).toBe(
+      'activation-antigravity-claude-gpt',
+    );
+    expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')?.requiresReview).toBe(false);
     expect(reconcileRequests).toBe(1);
   });
 

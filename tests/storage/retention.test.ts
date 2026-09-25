@@ -268,6 +268,8 @@ function schedulePolicy(updatedAtMs: number): SchedulePolicyRecord {
   return {
     id: 'policy-1',
     providerId: 'fake',
+    scope: 'default',
+    requiresReview: false,
     kind: 'target_reset',
     kindExplicit: false,
     enabled: true,

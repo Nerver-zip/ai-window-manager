@@ -28,8 +28,9 @@ timezone:
 
 - `manual`: observe only; never create an automatic start intent;
 - `auto`: start when the selected provider window is inactive, fresh and safely
-  triggerable; each provider has one canonical `activation-${providerId}` policy
-  whose exact `windowKind` selects the only window that policy may manage;
+  triggerable; Codex has one canonical `activation-codex` policy, while
+  Antigravity has independent `activation-antigravity-gemini` and
+  `activation-antigravity-claude-gpt` policies;
 - `fixed`: repeat one local anchor using the observed window duration;
 - `custom_schedule`: evaluate a bounded list of local times;
 - `active_hours`: start only while enough time remains in a configured local
@@ -42,12 +43,20 @@ When a policy selects a specific window kind, current-window derivation is scope
 to that window; an active weekly window cannot incorrectly suppress a scheduled
 five-hour start.
 
-The target is required for every policy as soon as the provider has persisted
-usage windows. For compatibility, an older manual policy may omit it while no
-window has ever been observed; after observations exist, the overview flags that
-policy for review and the schedule form requires one exact reported window.
-Saving a different target updates the same canonical policy instead of creating
-parallel policies for one provider.
+Each policy target is one exact provider-reported `windowKind`. Antigravity
+policies accept only windows from their own model family; the Schedule page
+offers a read-only family switch and loads that family's independent saved
+policy. Editing one family never overwrites the other. For compatibility, an
+older manual policy may omit its target while no window has ever been observed;
+after observations exist, it is flagged for review and the form requires one
+exact reported window.
+
+Migration from the former single Antigravity policy never guesses whether an
+ambiguous `five_hour` or `weekly` target meant Gemini or Claude/GPT. Both new
+policies are disabled and marked for review; a family-specific exact target is
+copied only to its matching family. The legacy row remains as an inert tombstone
+for historical action-intent references. No migrated policy may schedule an
+action until the operator reviews and saves it.
 
 Legacy `target_reset` and `work_window` records remain readable and are handled
 by the compatibility path in the reconciler. The activation schedule API only
@@ -74,8 +83,9 @@ the provider may also account that request against the family's other window.
 The Overview does not add a separate warning before a manual start. A
 post-dispatch uncertain result is never blindly retried.
 
-Manual starts remain separate from the saved automatic schedule: selecting a
-provider/window for the action does not alter that provider's one saved policy.
+Manual starts remain separate from saved automatic schedules: selecting a
+provider/window for the action does not alter that provider's saved policy or
+either Antigravity family policy.
 
 ### Legacy target reset compatibility
 

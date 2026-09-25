@@ -1,4 +1,5 @@
 import type { StorageRepositories } from '../storage/repositories.js';
+import { activationPolicyId, activationPolicyScopes } from '../scheduler/policy-scope.js';
 
 export interface BootstrapProviderDefaultsInput {
   repositories: StorageRepositories;
@@ -35,31 +36,51 @@ export function seedBootstrapProviderDefaults(input: BootstrapProviderDefaultsIn
     }
   }
 
-  if (repositories.schedulePolicies.list(provider.id).length === 0) {
-    repositories.schedulePolicies.upsert({
-      id: `activation-${provider.id}`,
-      providerId: provider.id,
-      kind: triggerEnabled ? 'auto' : 'manual',
-      kindExplicit: false,
-      enabled: true,
-      timezone,
-      config: {},
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    });
-    return;
-  }
+  const savedPolicies = repositories.schedulePolicies.list(provider.id);
+  const scopes = activationPolicyScopes(provider.kind);
+  const hasLegacySchedule = savedPolicies.some(
+    (policy) =>
+      policy.scope === 'legacy' || policy.kind === 'target_reset' || policy.kind === 'work_window',
+  );
+  const hasAnyScopedPolicy = savedPolicies.some((policy) =>
+    scopes.some(
+      (scope) => policy.scope === scope || (policy.scope === undefined && scope === 'default'),
+    ),
+  );
+  if (!hasAnyScopedPolicy && hasLegacySchedule) return;
 
-  const policyId = `activation-${provider.id}`;
-  const existingPolicy = repositories.schedulePolicies.get(policyId);
-  if (triggerEnabled && existingPolicy && !existingPolicy.kindExplicit) {
-    const shouldUseAutomaticDefault =
-      existingPolicy.kind === 'manual' &&
-      existingPolicy.enabled &&
-      isEmptyConfig(existingPolicy.config);
-    const kind = shouldUseAutomaticDefault ? 'auto' : existingPolicy.kind;
-    if (kind !== existingPolicy.kind) {
-      repositories.schedulePolicies.upsert({ ...existingPolicy, kind, updatedAtMs: nowMs });
+  for (const scope of scopes) {
+    const policyId = activationPolicyId(provider.id, scope);
+    const existingPolicy = repositories.schedulePolicies.get(policyId);
+    if (!existingPolicy) {
+      repositories.schedulePolicies.upsert({
+        id: policyId,
+        providerId: provider.id,
+        scope,
+        requiresReview: false,
+        kind: triggerEnabled ? 'auto' : 'manual',
+        kindExplicit: false,
+        enabled: true,
+        timezone,
+        config: {},
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      });
+      continue;
+    }
+
+    if (triggerEnabled && !existingPolicy.kindExplicit && !existingPolicy.requiresReview) {
+      const shouldUseAutomaticDefault =
+        existingPolicy.kind === 'manual' &&
+        existingPolicy.enabled &&
+        isEmptyConfig(existingPolicy.config);
+      if (shouldUseAutomaticDefault) {
+        repositories.schedulePolicies.upsert({
+          ...existingPolicy,
+          kind: 'auto',
+          updatedAtMs: nowMs,
+        });
+      }
     }
   }
 }

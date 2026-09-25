@@ -305,8 +305,9 @@ describe('settings UI helpers', () => {
         },
       ],
       selectedProviderId: 'antigravity',
+      policyScope: 'gemini',
       policy: {
-        id: 'activation-antigravity',
+        id: 'activation-antigravity-gemini',
         providerId: 'antigravity',
         kind: 'auto',
         enabled: true,
@@ -323,14 +324,15 @@ describe('settings UI helpers', () => {
       '<option value="antigravity_gemini_weekly" selected>Weekly window</option>',
     );
     expect(control).toContain('<optgroup label="Gemini Models">');
-    expect(control).toContain('<optgroup label="Claude and GPT Models">');
-    expect(control).toContain('<optgroup label="Future Team">');
-    expect(control).toContain('<optgroup label="&lt;Script&gt;">');
-    expect(control).not.toContain('<optgroup label="<script>');
+    expect(control).not.toContain('<optgroup label="Claude and GPT Models">');
+    expect(control).not.toContain('<optgroup label="Future Team">');
+    expect(control).not.toContain('<optgroup label="&lt;Script&gt;">');
     expect(control).toContain('value="antigravity_gemini_five_hour">5-hour window');
-    expect(control).toContain('value="antigravity_claude_gpt_five_hour">5-hour window');
+    expect(control).not.toContain('antigravity_claude_gpt_five_hour');
     expect(html).toContain('Currently managing');
     expect(html).toContain('Gemini Models · Weekly window');
+    expect(html).toContain('href="/schedule?providerId=antigravity&amp;scope=claude_gpt"');
+    expect(html).toContain('name="scope" value="gemini"');
     expect(html).toContain(
       '<span class="field-label">Trigger model</span><code>gemini-3.8-flash-low</code>',
     );
@@ -362,8 +364,9 @@ describe('settings UI helpers', () => {
         },
       ],
       selectedProviderId: 'antigravity',
+      policyScope: 'claude_gpt',
       policy: {
-        id: 'activation-antigravity',
+        id: 'activation-antigravity-claude-gpt',
         providerId: 'antigravity',
         kind: 'manual',
         enabled: true,
@@ -376,6 +379,7 @@ describe('settings UI helpers', () => {
     });
 
     expect(html).toContain('Claude and GPT Models · Weekly window');
+    expect(html).not.toContain('value="antigravity_gemini_weekly"');
     expect(html).toContain(
       '<span class="field-label">Trigger model</span><code>claude-sonnet-4-6</code>',
     );

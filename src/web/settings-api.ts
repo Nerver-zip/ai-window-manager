@@ -10,6 +10,12 @@ import {
   validateToleranceAgainstDuration,
 } from '../scheduler/policy.js';
 import { resolveLocalOccurrence } from '../scheduler/time.js';
+import {
+  activationPolicyId,
+  policyScopeForWindowKind,
+  windowKindBelongsToPolicyScope,
+  type ActivationPolicyScope,
+} from '../scheduler/policy-scope.js';
 import type {
   ProviderMode,
   SchedulePolicyRecord,
@@ -45,6 +51,7 @@ export const ScheduleSettingsSchema = z
 const ActivationPolicyBaseSchema = z.object({
   enabled: z.boolean().default(true),
   providerId: ID,
+  scope: z.enum(['default', 'gemini', 'claude_gpt']).optional(),
   timezone: z.string().min(1).max(128).optional(),
 });
 
@@ -118,6 +125,7 @@ export interface ScheduleSettingsValue {
 
 export interface ActivationPolicySettingsValue {
   policy: ActivationPolicy;
+  scope: ActivationPolicyScope;
   timezone: TimezoneSetting;
 }
 
@@ -169,10 +177,30 @@ export function updateActivationPolicy(
   const provider = input.repositories.providers.get(parsed.data.providerId);
   if (!provider) return failure(404, 'NOT_FOUND', 'provider not found');
 
+  const requestedWindowKind = 'windowKind' in parsed.data ? parsed.data.windowKind : undefined;
+  let scope: ActivationPolicyScope;
+  if (provider.kind === 'antigravity') {
+    if (parsed.data.scope === 'default') {
+      return failure(400, 'POLICY_SCOPE_REQUIRED', 'choose an Antigravity quota family');
+    }
+    const inferredScope = requestedWindowKind
+      ? policyScopeForWindowKind(requestedWindowKind)
+      : undefined;
+    const selectedScope = parsed.data.scope ?? inferredScope;
+    if (selectedScope !== 'gemini' && selectedScope !== 'claude_gpt') {
+      return failure(400, 'POLICY_SCOPE_REQUIRED', 'choose an Antigravity quota family');
+    }
+    scope = selectedScope;
+  } else {
+    if (parsed.data.scope && parsed.data.scope !== 'default') {
+      return failure(400, 'INVALID_POLICY_SCOPE', 'this provider does not support quota families');
+    }
+    scope = 'default';
+  }
+
   const existingTimezone = readTimezoneSetting(input);
-  const existingPolicy = input.repositories.schedulePolicies
-    .list(parsed.data.providerId)
-    .find((candidate) => candidate.id === `activation-${parsed.data.providerId}`);
+  const policyId = activationPolicyId(parsed.data.providerId, scope);
+  const existingPolicy = input.repositories.schedulePolicies.get(policyId);
   const timezone = parsed.data.timezone ?? existingTimezone?.timezone ?? existingPolicy?.timezone;
   if (!timezone || !isValidTimeZone(timezone)) {
     return failure(400, 'TIMEZONE_REQUIRED', 'choose a valid time zone before saving this policy');
@@ -185,7 +213,6 @@ export function updateActivationPolicy(
   const currentObservation = input.repositories.providerState.get(
     parsed.data.providerId,
   )?.observation;
-  const requestedWindowKind = 'windowKind' in parsed.data ? parsed.data.windowKind : undefined;
   let windowKind: string | undefined;
   if (requestedWindowKind) {
     const target = resolveWindowTarget(requestedWindowKind, currentObservation?.windows ?? []);
@@ -204,6 +231,13 @@ export function updateActivationPolicy(
       );
     }
     windowKind = target.windowKind;
+    if (provider.kind === 'antigravity' && !windowKindBelongsToPolicyScope(windowKind, scope)) {
+      return failure(
+        400,
+        'WINDOW_SCOPE_MISMATCH',
+        'choose a usage window from the selected quota family',
+      );
+    }
   }
   if (
     !windowKind &&
@@ -234,8 +268,7 @@ export function updateActivationPolicy(
   }
 
   const nowMs = input.clock.now().getTime();
-  const policyId = `activation-${parsed.data.providerId}`;
-  const previous = input.repositories.schedulePolicies.get(policyId);
+  const previous = existingPolicy;
   const config: Record<string, unknown> = {};
   if (windowKind) config.windowKind = windowKind;
   if (parsed.data.kind === 'fixed') {
@@ -250,6 +283,8 @@ export function updateActivationPolicy(
   const record = {
     id: policyId,
     providerId: parsed.data.providerId,
+    scope,
+    requiresReview: false,
     kind: parsed.data.kind,
     kindExplicit: true,
     enabled: parsed.data.enabled,
@@ -291,12 +326,13 @@ export function updateActivationPolicy(
     type: 'schedule_policy_updated',
     severity: 'info',
     reasonCode: 'SCHEDULE_POLICY_UPDATED',
-    data: { policyId, policyKind: policy.kind, enabled: policy.enabled, timezone },
+    data: { policyId, scope, policyKind: policy.kind, enabled: policy.enabled, timezone },
   });
   return {
     ok: true,
     value: {
       policy,
+      scope,
       timezone: {
         timezone,
         source: timezoneChanged ? 'manual' : (existingTimezone?.source ?? 'detected'),

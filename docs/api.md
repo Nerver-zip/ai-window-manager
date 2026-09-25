@@ -48,8 +48,12 @@ inspect providers or execute intents. `/api/v1/providers` includes normalized
 windows, freshness, capabilities, current-window state and the latest
 persisted scheduler decision. `/api/v1/scheduling` exposes the persisted
 timezone, activation policy, current window, upcoming occurrences and planner
-decision without provider I/O. Trigger requests create a durable intent and
-return `202`, while inspect requests append a reconcile hint and return `202`.
+decision without provider I/O. For Antigravity, each provider DTO additionally
+contains `policyScopes[]` for `gemini` and `claude_gpt`; each entry has its own
+policy, current window, decision, upcoming occurrences and `requiresReview`
+flag. The older top-level fields remain a Gemini-family-compatible view for
+existing clients. Trigger requests create a durable intent and return `202`,
+while inspect requests append a reconcile hint and return `202`.
 
 `/usage` and `/api/v1/usage` read the persisted weekly-usage projection. The
 JSON response is bounded to 365 local calendar days and selected chart windows;
@@ -79,6 +83,10 @@ POST /providers/:id/trigger
 
 The JSON settings routes accept only validated non-secret timezone and
 activation-policy fields. They use the same SQLite services as the HTML forms.
+An Antigravity activation-policy write includes `scope=gemini` or
+`scope=claude_gpt`; the server derives its canonical row ID and rejects a
+window target from the other family. Switching the family on `/schedule` is a
+read-only GET and does not save either policy.
 
 The former HTML route `/history` redirects permanently to `/logs`, preserving
 its query string. The JSON endpoint `/api/v1/history` remains unchanged.

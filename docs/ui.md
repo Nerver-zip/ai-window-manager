@@ -86,13 +86,15 @@ inspects a provider while rendering either page.
 - upcoming occurrences and the authoritative next decision/reason;
 - manual `Trigger now` only when capability/automation mode permits.
 
-Each provider has one saved activation policy and one exact selected quota
-window. Switching providers loads the other provider's saved policy without
-saving; selecting a window scopes future decisions to that window only. Older
-manual policies without a target are flagged for review once observations are
+Codex has one saved activation policy. Antigravity has independent saved
+policies for Gemini Models and Claude and GPT Models; a family switch loads the
+selected policy without saving, and saving it leaves the other family intact.
+Each policy targets one exact observed window from its family. Ambiguous legacy
+Antigravity schedules require review before they can resume. Older manual
+policies without a target are flagged for review once observations are
 available. If the experimental Antigravity trigger is enabled, the selected
-model is shown as secondary detail; the selected group determines which model
-is used, while a prompt may still affect both cadence windows in that group.
+model is shown as secondary detail; a prompt may affect both cadence windows in
+that family.
 
 The current server-rendered `/schedule` page reveals only the fields relevant to
 the selected preference. The next-start preview uses saved provider information

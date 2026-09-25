@@ -46,8 +46,9 @@ deployment remains operator acceptance; no quota-consuming action was run.
   only to the active official process, and provider-read verification. Mutations
   use Origin + CSRF checks.
 - **OPS-003**: pinned `agy` runtime with separate CLI/keyring volumes, private
-  D-Bus/Secret Service, non-root execution, optional mounted unlock-file secret,
-  and Antigravity disabled by default.
+  D-Bus/Secret Service, non-root execution and optional mounted unlock-file
+  secret. For configured providers, automatic starts are on by default and may
+  be explicitly opted out in provider settings or through the environment gate.
 - **AGY-001**: official headless `/usage` read-only adapter with strict
   normalization and independent Gemini / Claude-GPT quota windows.
 - **WEB-004 / TEST-004**: Settings onboarding UI and offline lifecycle/runtime
@@ -148,13 +149,20 @@ identity headers or credential storage in SQLite is in scope.
 
 **Status: complete.**
 
-Each provider has one canonical `activation-${providerId}` policy. When usage
-windows are available, every policy selects exactly one reported
-`windowKind`; a legacy targetless manual policy remains compatible only until
-the first observation, then is flagged for review. Changing the selected target
-invalidates earlier open intents before dispatch. Antigravity targets
-include both model family and cadence, so Gemini five-hour and Gemini weekly
-are distinct from Claude/GPT five-hour and Claude/GPT weekly.
+Codex has one canonical `activation-codex` policy. Antigravity has separate
+`activation-antigravity-gemini` and
+`activation-antigravity-claude-gpt` policies. Each policy selects exactly one
+reported `windowKind` in its scope. Changing the selected target invalidates
+earlier open intents before dispatch.
+
+## AGY-POLICY-001 — Independent Antigravity family schedules
+
+**Status: complete.**
+
+Persist Gemini and Claude/GPT schedules independently, expose a read-only family
+switch on Schedule and both policies on Overview, and constrain each target to
+its exact family. Migration preserves the old row as an inert tombstone and
+requires review of both new policies before any migrated automatic action.
 
 ## AGY-TRIGGER-001 — Implement durable target-specific Antigravity actions
 

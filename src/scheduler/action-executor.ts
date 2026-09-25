@@ -1,5 +1,6 @@
 import { parseProviderObservation } from '../domain/schemas.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
+import { activationPolicyId, policyScopeForWindowKind } from './policy-scope.js';
 import type {
   ProviderActionResult,
   ProviderActionStatus,
@@ -522,6 +523,16 @@ function policyStillCurrent(
   const expected = asRecord(intent.explanation).policyUpdatedAtMs;
   if (typeof expected === 'number' && expected !== policy.updatedAtMs) return false;
   const expectedWindowKind = windowKindFor(intent);
+  if (intent.providerId === 'antigravity') {
+    const scope = expectedWindowKind ? policyScopeForWindowKind(expectedWindowKind) : undefined;
+    if (
+      !scope ||
+      policy.scope !== scope ||
+      intent.policyId !== activationPolicyId(intent.providerId, scope)
+    ) {
+      return false;
+    }
+  }
   if (expectedWindowKind) {
     const configuredWindowKind = asRecord(policy.config).windowKind;
     if (configuredWindowKind === expectedWindowKind) return true;

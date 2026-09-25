@@ -197,9 +197,23 @@ function seedActivationPolicy(
   enabled = true,
   providerId = 'fake',
 ): void {
+  const windowKind =
+    typeof config === 'object' && config !== null && !Array.isArray(config)
+      ? (config as Record<string, unknown>).windowKind
+      : undefined;
+  const scope =
+    providerId !== 'antigravity'
+      ? 'default'
+      : typeof windowKind === 'string' && windowKind.startsWith('antigravity_claude_gpt_')
+        ? 'claude_gpt'
+        : 'gemini';
   repositories.schedulePolicies.upsert({
-    id: `activation-${providerId}`,
+    id:
+      providerId === 'antigravity'
+        ? `activation-antigravity-${scope === 'claude_gpt' ? 'claude-gpt' : 'gemini'}`
+        : `activation-${providerId}`,
     providerId,
+    scope,
     kind,
     enabled,
     timezone: 'America/Sao_Paulo',
@@ -629,6 +643,13 @@ describe('web server persisted overview', () => {
         true,
         'antigravity',
       );
+      seedActivationPolicy(
+        repositories,
+        'auto',
+        { windowKind: 'antigravity_gemini_five_hour' },
+        true,
+        'antigravity',
+      );
     });
 
     const page = await app.inject('/');
@@ -636,6 +657,11 @@ describe('web server persisted overview', () => {
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain('aria-label="Gemini Models"');
     expect(page.body).toContain('aria-label="Claude and GPT Models"');
+    expect(page.body).toContain('aria-label="Selected start policies"');
+    expect(page.body).toContain('Gemini Models · Whenever possible');
+    expect(page.body).toContain('Claude and GPT Models · Only when I ask');
+    expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=gemini"');
+    expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=claude_gpt"');
     expect(page.body).toContain('<h4>Weekly window</h4>');
     expect(page.body).toContain('<h4>5-hour window</h4>');
     expect(page.body).not.toContain('>Usage window<');
@@ -643,7 +669,12 @@ describe('web server persisted overview', () => {
     expect(page.body).not.toContain('antigravity_claude_gpt');
     expect(page.body).toContain('Claude and GPT Models · Weekly window');
 
-    const schedule = await app.inject('/schedule?providerId=antigravity');
+    const geminiSchedule = await app.inject('/schedule?providerId=antigravity');
+    expect(geminiSchedule.body).toContain('Currently managing');
+    expect(geminiSchedule.body).toContain('Gemini Models · 5-hour window');
+    expect(geminiSchedule.body).not.toContain('value="antigravity_claude_gpt_weekly"');
+
+    const schedule = await app.inject('/schedule?providerId=antigravity&scope=claude_gpt');
     expect(schedule.body).toContain('Currently managing');
     expect(schedule.body).toContain('Claude and GPT Models · Weekly window');
     expect(schedule.body).toContain('Expected reset');

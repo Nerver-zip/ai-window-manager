@@ -7,6 +7,11 @@ import { decideTargetReset, type SchedulerDecision } from './decision.js';
 import { deriveCurrentWindow, deriveCurrentWindowForTarget } from './current-window.js';
 import { planWindowAction, type PlannerDecision } from './planner.js';
 import { activationPolicyFromRecord } from './policy.js';
+import {
+  activationPolicyId,
+  activationPolicyScopes,
+  windowKindBelongsToPolicyScope,
+} from './policy-scope.js';
 import type { Clock } from './clock.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import {
@@ -131,15 +136,47 @@ export class Reconciler {
       if (inspectionFailed || !state?.observation || state.health !== 'UP') continue;
 
       const policies = this.input.repositories.schedulePolicies.list(provider.id);
+      const activationPolicyIds = new Set(
+        activationPolicyScopes(provider.kind).map((scope) =>
+          activationPolicyId(provider.id, scope),
+        ),
+      );
       const hasActivationPolicy = policies.some(
-        (candidate) => candidate.id === `activation-${provider.id}`,
+        (candidate) => candidate.scope !== 'legacy' && activationPolicyIds.has(candidate.id),
       );
       for (const policy of policies) {
+        if (policy.scope === 'legacy') continue;
+        if (
+          provider.kind === 'antigravity' &&
+          ((policy.scope !== 'gemini' && policy.scope !== 'claude_gpt') ||
+            policy.id !== activationPolicyId(provider.id, policy.scope))
+        ) {
+          this.appendEventIfChanged({
+            occurredAtMs: nowMs,
+            providerId: provider.id,
+            type: 'schedule_policy_invalid',
+            severity: 'warn',
+            reasonCode: 'POLICY_SCOPE_ID_MISMATCH',
+            data: { policyId: policy.id, scope: policy.scope ?? 'default' },
+          });
+          continue;
+        }
         if (
           hasActivationPolicy &&
           (policy.kind === 'target_reset' || policy.kind === 'work_window') &&
-          policy.id !== `activation-${provider.id}`
+          !activationPolicyIds.has(policy.id)
         ) {
+          continue;
+        }
+        if (policy.requiresReview) {
+          this.appendEventIfChanged({
+            occurredAtMs: nowMs,
+            providerId: provider.id,
+            type: 'schedule_policy_review_required',
+            severity: 'warn',
+            reasonCode: 'POLICY_REVIEW_REQUIRED',
+            data: { policyId: policy.id, scope: policy.scope ?? 'default' },
+          });
           continue;
         }
         if (!policy.enabled && policy.kind === 'target_reset') continue;
@@ -169,6 +206,23 @@ export class Reconciler {
           typeof config.windowKind === 'string'
             ? config.windowKind
             : activationPolicyWindowKind(activationPolicy);
+        if (
+          provider.kind === 'antigravity' &&
+          requestedWindowKind &&
+          (policy.scope !== 'gemini' && policy.scope !== 'claude_gpt'
+            ? true
+            : !windowKindBelongsToPolicyScope(requestedWindowKind, policy.scope))
+        ) {
+          this.appendEventIfChanged({
+            occurredAtMs: nowMs,
+            providerId: provider.id,
+            type: 'schedule_policy_invalid',
+            severity: 'warn',
+            reasonCode: 'POLICY_WINDOW_SCOPE_MISMATCH',
+            data: { policyId: policy.id, scope: policy.scope ?? 'default' },
+          });
+          continue;
+        }
         const targetResolution = resolveWindowTarget(
           requestedWindowKind,
           state.observation.windows,

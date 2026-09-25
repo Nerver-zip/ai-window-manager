@@ -68,9 +68,27 @@ describe('bootstrap provider defaults', () => {
       seed(repositories, true, providerId, kind);
 
       expect(repositories.providers.get(providerId)?.mode).toBe('automation');
-      expect(repositories.schedulePolicies.list(providerId)).toMatchObject([
-        { id: `activation-${providerId}`, kind: 'auto', enabled: true, config: {} },
-      ]);
+      const policies = repositories.schedulePolicies.list(providerId);
+      expect(policies).toMatchObject(
+        providerId === 'antigravity'
+          ? [
+              {
+                id: 'activation-antigravity-claude-gpt',
+                scope: 'claude_gpt',
+                kind: 'auto',
+                enabled: true,
+                config: {},
+              },
+              {
+                id: 'activation-antigravity-gemini',
+                scope: 'gemini',
+                kind: 'auto',
+                enabled: true,
+                config: {},
+              },
+            ]
+          : [{ id: `activation-${providerId}`, scope: 'default', kind: 'auto', enabled: true }],
+      );
     },
   );
 
@@ -82,7 +100,16 @@ describe('bootstrap provider defaults', () => {
     expect(repositories.providers.get('antigravity')?.mode).toBe('monitor_only');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
       {
-        id: 'activation-antigravity',
+        id: 'activation-antigravity-claude-gpt',
+        scope: 'claude_gpt',
+        kind: 'manual',
+        kindExplicit: false,
+        enabled: true,
+        config: {},
+      },
+      {
+        id: 'activation-antigravity-gemini',
+        scope: 'gemini',
         kind: 'manual',
         kindExplicit: false,
         enabled: true,
@@ -101,7 +128,13 @@ describe('bootstrap provider defaults', () => {
       mode: 'automation',
       modeExplicit: false,
     });
-    expect(repositories.schedulePolicies.get('activation-antigravity')).toMatchObject({
+    expect(repositories.schedulePolicies.get('activation-antigravity-gemini')).toMatchObject({
+      scope: 'gemini',
+      kind: 'auto',
+      kindExplicit: false,
+    });
+    expect(repositories.schedulePolicies.get('activation-antigravity-claude-gpt')).toMatchObject({
+      scope: 'claude_gpt',
       kind: 'auto',
       kindExplicit: false,
     });
@@ -111,7 +144,7 @@ describe('bootstrap provider defaults', () => {
     const { repositories } = openFixture();
     seed(repositories, true);
     const provider = repositories.providers.get('antigravity');
-    const policy = repositories.schedulePolicies.get('activation-antigravity');
+    const policy = repositories.schedulePolicies.get('activation-antigravity-gemini');
     if (!provider || !policy) throw new Error('bootstrap defaults were not created');
     repositories.providers.upsert({
       ...provider,
@@ -132,9 +165,13 @@ describe('bootstrap provider defaults', () => {
       mode: 'monitor_only',
       modeExplicit: true,
     });
-    expect(repositories.schedulePolicies.get('activation-antigravity')).toMatchObject({
+    expect(repositories.schedulePolicies.get('activation-antigravity-gemini')).toMatchObject({
       kind: 'manual',
       kindExplicit: true,
+    });
+    expect(repositories.schedulePolicies.get('activation-antigravity-claude-gpt')).toMatchObject({
+      kind: 'auto',
+      kindExplicit: false,
     });
   });
 
@@ -147,7 +184,8 @@ describe('bootstrap provider defaults', () => {
 
     expect(repositories.providers.get('antigravity')?.mode).toBe('automation');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
-      { id: 'activation-antigravity', kind: 'auto' },
+      { id: 'activation-antigravity-claude-gpt', kind: 'auto' },
+      { id: 'activation-antigravity-gemini', kind: 'auto' },
     ]);
   });
 
@@ -155,7 +193,7 @@ describe('bootstrap provider defaults', () => {
     const fixture = openFixture();
     seed(fixture.repositories, true);
     const provider = fixture.repositories.providers.get('antigravity');
-    const policy = fixture.repositories.schedulePolicies.list('antigravity')[0];
+    const policy = fixture.repositories.schedulePolicies.get('activation-antigravity-gemini');
     if (!provider || !policy) throw new Error('bootstrap defaults were not created');
     fixture.repositories.providers.upsert({
       ...provider,
@@ -175,7 +213,8 @@ describe('bootstrap provider defaults', () => {
 
     expect(repositories.providers.get('antigravity')?.mode).toBe('monitor_only');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
-      { id: 'activation-antigravity', kind: 'manual' },
+      { id: 'activation-antigravity-claude-gpt', kind: 'auto' },
+      { id: 'activation-antigravity-gemini', kind: 'manual' },
     ]);
   });
 });

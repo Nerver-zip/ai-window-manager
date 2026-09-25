@@ -105,8 +105,11 @@ function setup(targetWindowKind: string, triggerOutput: string) {
     updatedAtMs: nowMs,
   });
   repositories.schedulePolicies.upsert({
-    id: 'activation-antigravity',
+    id: targetWindowKind.startsWith('antigravity_claude_gpt_')
+      ? 'activation-antigravity-claude-gpt'
+      : 'activation-antigravity-gemini',
     providerId: 'antigravity',
+    scope: targetWindowKind.startsWith('antigravity_claude_gpt_') ? 'claude_gpt' : 'gemini',
     kind: 'auto',
     enabled: true,
     timezone: 'UTC',
@@ -117,9 +120,11 @@ function setup(targetWindowKind: string, triggerOutput: string) {
   repositories.actionIntents.createIfAbsent({
     id: 'agy-intent',
     providerId: 'antigravity',
-    policyId: 'activation-antigravity',
+    policyId: targetWindowKind.startsWith('antigravity_claude_gpt_')
+      ? 'activation-antigravity-claude-gpt'
+      : 'activation-antigravity-gemini',
     actionType: 'trigger_window',
-    dedupeKey: `antigravity:trigger_window:activation-antigravity:${targetWindowKind}:cycle-1`,
+    dedupeKey: `antigravity:trigger_window:${targetWindowKind.startsWith('antigravity_claude_gpt_') ? 'activation-antigravity-claude-gpt' : 'activation-antigravity-gemini'}:${targetWindowKind}:cycle-1`,
     state: 'planned',
     scheduledForMs: nowMs,
     notBeforeMs: null,
@@ -214,5 +219,24 @@ describe('Antigravity trigger through the durable executor', () => {
     });
     expect(context.repositories.actionIntents.get('agy-intent')?.state).toBe('confirmed');
     expect(context.dispatchCount).toBe(1);
+  });
+
+  it('skips a durable intent when the persisted family no longer matches its canonical policy', async () => {
+    const context = setup(
+      'antigravity_gemini_five_hour',
+      JSON.stringify({ status: 'SUCCESS', response: 'Hello.', num_turns: 1 }),
+    );
+    const policy = context.repositories.schedulePolicies.get('activation-antigravity-gemini');
+    if (!policy) throw new Error('Gemini policy missing');
+    context.repositories.schedulePolicies.upsert({ ...policy, scope: 'claude_gpt' });
+
+    const report = await context.executor.executeDue();
+
+    expect(report.skippedIntentIds).toEqual(['agy-intent']);
+    expect(context.dispatchCount).toBe(0);
+    expect(context.repositories.actionIntents.get('agy-intent')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_POLICY_CHANGED',
+    });
   });
 });

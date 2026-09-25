@@ -592,7 +592,7 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [x] Codex automation defaults on for configured providers, can be explicitly disabled, and performs only one persisted/confirmed minimal ordinary action per target cycle.
 - [x] Antigravity monitoring uses only the official CLI; unavailable/auth-required states are explicit and no token/backend workaround exists.
 - [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
-- [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service, optional mounted unlock file, and remains disabled by default.
+- [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service and optional mounted unlock file. For configured providers, automatic starts default on with explicit settings/environment opt-out; migrated family policies require review.
 - [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger support is independently gated, exact-target allowlisted, on by default for configured providers, and explicitly disableable.
 - [ ] Fresh Web-assisted Codex and Antigravity sign-in is verified by an operator in each intended deployment. Existing sessions in the current local deployment survived recreation/restart and resumed provider reads on 2026-09-24.
 - [x] Antigravity trigger semantics have account-specific operator evidence and are explicitly classified experimental; no universal guarantee is claimed.

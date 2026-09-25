@@ -311,4 +311,76 @@ describe('readScheduling', () => {
       decision: null,
     });
   });
+
+  it('returns independent Antigravity family policies and withholds a review-gated decision', () => {
+    const context = setup();
+    const nowMs = context.clock.now().getTime();
+    const antigravity = provider({ id: 'antigravity', kind: 'antigravity' });
+    context.repositories.providers.upsert(antigravity);
+    const observed = observation();
+    observed.providerId = 'antigravity';
+    observed.windows = [
+      ...observed.windows.map((window) => ({
+        ...window,
+        providerId: 'antigravity',
+        windowKind: 'antigravity_gemini_five_hour',
+      })),
+      {
+        ...observed.windows[0]!,
+        providerId: 'antigravity',
+        windowKind: 'antigravity_claude_gpt_weekly',
+      },
+    ];
+    context.repositories.providerState.upsert({
+      providerId: 'antigravity',
+      health: 'UP',
+      observedAtMs: nowMs,
+      staleAfterMs: 300_000,
+      observation: observed,
+      lastSuccessAtMs: nowMs,
+      lastErrorCode: null,
+      updatedAtMs: nowMs,
+    });
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-antigravity-gemini',
+      providerId: 'antigravity',
+      scope: 'gemini',
+      requiresReview: false,
+      kind: 'auto',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind: 'antigravity_gemini_five_hour' },
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+    context.repositories.schedulePolicies.upsert({
+      id: 'activation-antigravity-claude-gpt',
+      providerId: 'antigravity',
+      scope: 'claude_gpt',
+      requiresReview: true,
+      kind: 'manual',
+      enabled: false,
+      timezone: 'UTC',
+      config: {},
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+
+    const result = readScheduling({
+      repositories: context.repositories,
+      adapters: new Map([['antigravity', context.fake]]),
+      clock: context.clock,
+    });
+
+    const antigravityRead = result.providers.find((item) => item.providerId === 'antigravity');
+    const geminiPolicy = antigravityRead?.policyScopes?.find((item) => item.scope === 'gemini');
+    const claudePolicy = antigravityRead?.policyScopes?.find((item) => item.scope === 'claude_gpt');
+    expect(geminiPolicy?.policy?.id).toBe('activation-antigravity-gemini');
+    expect(geminiPolicy?.policy?.windowKind).toBe('antigravity_gemini_five_hour');
+    expect(geminiPolicy?.requiresReview).toBe(false);
+    expect(claudePolicy?.policy?.id).toBe('activation-antigravity-claude-gpt');
+    expect(claudePolicy?.policy?.kind).toBe('manual');
+    expect(claudePolicy?.decision).toBeNull();
+    expect(claudePolicy?.requiresReview).toBe(true);
+  });
 });

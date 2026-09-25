@@ -15,6 +15,8 @@ import {
 } from '../scheduler/planner.js';
 import { localTimeMinutes, type TimezoneSetting } from '../scheduler/policy.js';
 import type { ProviderMode } from '../storage/repositories.js';
+import type { ActivationPolicyScope } from '../scheduler/policy-scope.js';
+import { windowKindBelongsToPolicyScope } from '../scheduler/policy-scope.js';
 import { renderAppShell } from './ui/layout.js';
 import { renderProviderPicker } from './ui/provider-picker.js';
 import { renderAuthOnboarding, type AuthOnboardingInput } from './ui/auth-onboarding.js';
@@ -131,6 +133,8 @@ export interface ActivationSchedulePageInput {
   providers: readonly SettingsProviderView[];
   selectedProviderId?: string;
   policy?: ActivationPolicy;
+  policyScope?: ActivationPolicyScope;
+  policyNeedsReview?: boolean;
   timezone?: TimezoneSetting;
   currentWindow?: CurrentWindowState;
   decision?: PlannerDecision | null;
@@ -154,8 +158,14 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
   const policy = input.policy;
   const providerId = policy?.providerId ?? input.selectedProviderId ?? input.providers[0]?.id ?? '';
   const selectedProvider = input.providers.find((provider) => provider.id === providerId);
+  const policyScope =
+    selectedProvider?.kind === 'antigravity' ? (input.policyScope ?? 'gemini') : 'default';
   const configuredWindowKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
-  const windowTargets = observedWindowTargets(providerId, selectedProvider?.windows);
+  const windowTargets = observedWindowTargets(providerId, selectedProvider?.windows).filter(
+    (target) =>
+      selectedProvider?.kind !== 'antigravity' ||
+      (policyScope !== 'default' && windowKindBelongsToPolicyScope(target.windowKind, policyScope)),
+  );
   const targetResolution = resolveWindowTarget(configuredWindowKind, windowTargets);
   const timezone = input.timezone?.timezone ?? policy?.timezone ?? '';
   const kind = policy?.kind ?? 'manual';
@@ -224,11 +234,15 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">Choose a pattern. We only start when fresh usage information and provider safety checks allow it.</p></div></div>
         <form class="schedule-provider-selection" method="get" action="/schedule" data-provider-picker-auto-submit>
           ${providerPicker}
+          <input type="hidden" name="scope" value="${escapeAttribute(policyScope)}">
           <noscript><div class="form-actions"><button type="submit">View provider schedule</button></div></noscript>
         </form>
+        ${selectedProvider?.kind === 'antigravity' ? renderPolicyScopeNavigation(providerId, policyScope) : ''}
+        ${input.policyNeedsReview ? '<p class="notice" role="status">Review and save this family schedule before automatic starts can resume. No action will run until you save it.</p>' : ''}
         <form method="post" action="/schedule" data-policy-form data-schedule-preview-form>
           ${csrfInput(csrfToken)}
           <input type="hidden" name="providerId" value="${escapeAttribute(providerId)}">
+          <input type="hidden" name="scope" value="${escapeAttribute(policyScope)}">
           <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
           <input type="hidden" name="toleranceSeconds" value="${tolerance}">
           <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><p class="field-help">Choose a pattern. You can change it later without affecting the current window.</p><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value, noObservedTargets && value !== 'manual')).join('')}</div></fieldset>
@@ -246,6 +260,22 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
       <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}</section>
     </div>`,
   });
+}
+
+function renderPolicyScopeNavigation(
+  providerId: string,
+  selectedScope: 'gemini' | 'claude_gpt' | 'default',
+): string {
+  const options = [
+    ['gemini', 'Gemini Models'],
+    ['claude_gpt', 'Claude and GPT Models'],
+  ] as const;
+  return `<nav class="policy-scope-navigation" aria-label="Antigravity quota family">${options
+    .map(
+      ([scope, label]) =>
+        `<a class="button${selectedScope === scope ? ' button-primary' : ' button-secondary'}" href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}"${selectedScope === scope ? ' aria-current="page"' : ''}>${label}</a>`,
+    )
+    .join('')}</nav>`;
 }
 
 function renderCurrentWindowSummary(

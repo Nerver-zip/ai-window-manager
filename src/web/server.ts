@@ -28,6 +28,13 @@ import type { ProviderAdapter } from '../providers/provider.js';
 import { filterVisibleProviders, isProviderVisible } from '../providers/visibility.js';
 import type { Clock } from '../scheduler/clock.js';
 import { activationPolicyFromRecord, parseActivationPolicy } from '../scheduler/policy.js';
+import {
+  activationPolicyId,
+  activationPolicyScopes,
+  policyScopeForWindowKind,
+  type ActivationPolicyScope,
+  windowKindBelongsToPolicyScope,
+} from '../scheduler/policy-scope.js';
 import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
 import type { SqliteDatabase } from '../storage/database.js';
@@ -141,8 +148,15 @@ interface ProviderRead {
   freshness: FreshnessRead;
   activationPolicy: ActivationPolicy | null;
   activationPolicyNeedsAttention: boolean;
+  activationPolicies?: ProviderPolicyRead[];
   capabilities?: ProviderCapabilities;
   triggerModels?: { gemini: string; claudeGpt: string };
+}
+
+interface ProviderPolicyRead {
+  scope: ActivationPolicyScope;
+  policy: ActivationPolicy | null;
+  needsAttention: boolean;
 }
 
 interface OverviewAuthConnection {
@@ -603,6 +617,7 @@ export function buildServer(input: BuildServerInput) {
       fakeProviderEnabled: input.config.AWM_FAKE_PROVIDER_ENABLED,
     });
     const requestedProviderId = stringValue(asRecord(request.query).providerId);
+    const requestedScope = stringValue(asRecord(request.query).scope);
     const selected =
       (requestedProviderId
         ? scheduling.providers.find((provider) => provider.providerId === requestedProviderId)
@@ -611,15 +626,26 @@ export function buildServer(input: BuildServerInput) {
         (provider) => provider.policy?.providerId === provider.providerId,
       ) ??
       scheduling.providers[0];
+    const selectedScope: ActivationPolicyScope = selected?.policyScopes
+      ? requestedScope === 'claude_gpt'
+        ? 'claude_gpt'
+        : 'gemini'
+      : 'default';
+    const selectedPolicyScope = selected?.policyScopes?.find(
+      (scope) => scope.scope === selectedScope,
+    );
+    const scheduleRead = selectedPolicyScope ?? selected;
     return renderActivationSchedulePage({
       csrfToken: csrf.token,
       providers: settingsProviderViews(input),
       ...(selected ? { selectedProviderId: selected.providerId } : {}),
-      ...(selected?.policy ? { policy: selected.policy } : {}),
+      ...(scheduleRead?.policy ? { policy: scheduleRead.policy } : {}),
+      ...(selected ? { policyScope: selectedScope } : {}),
+      ...(selectedPolicyScope?.requiresReview ? { policyNeedsReview: true } : {}),
       ...(scheduling.timezone ? { timezone: scheduling.timezone } : {}),
-      ...(selected?.currentWindow ? { currentWindow: selected.currentWindow } : {}),
-      ...(selected?.decision ? { decision: selected.decision } : {}),
-      ...(selected?.upcoming ? { upcoming: selected.upcoming } : {}),
+      ...(scheduleRead?.currentWindow ? { currentWindow: scheduleRead.currentWindow } : {}),
+      ...(scheduleRead?.decision ? { decision: scheduleRead.decision } : {}),
+      ...(scheduleRead?.upcoming ? { upcoming: scheduleRead.upcoming } : {}),
       referenceInstant: input.clock.now(),
       ...(notice ? { notice } : {}),
     });
@@ -635,10 +661,31 @@ export function buildServer(input: BuildServerInput) {
         '<p class="horizon-empty" role="status">Complete the selected schedule to preview it.</p>',
       );
     }
+    const providerRecord = input.repositories.providers.get(parsed.data.providerId);
+    const parsedWindowKind = 'windowKind' in parsed.data ? parsed.data.windowKind : undefined;
+    const scope: ActivationPolicyScope =
+      providerRecord?.kind === 'antigravity'
+        ? parsed.data.scope === 'claude_gpt'
+          ? 'claude_gpt'
+          : parsed.data.scope === 'gemini'
+            ? 'gemini'
+            : ((parsedWindowKind ? policyScopeForWindowKind(parsedWindowKind) : undefined) ??
+              'gemini')
+        : 'default';
+    if (
+      providerRecord?.kind === 'antigravity' &&
+      parsedWindowKind &&
+      policyScopeForWindowKind(parsedWindowKind) !== scope
+    ) {
+      return reply.send(
+        '<p class="horizon-empty" role="status">Choose a usage window from the selected quota family.</p>',
+      );
+    }
+    const policyId = activationPolicyId(parsed.data.providerId, scope);
     const savedTimezone = readTimezoneSetting(settingsInput)?.timezone;
     const existingPolicy = input.repositories.schedulePolicies
       .list(parsed.data.providerId)
-      .find((candidate) => candidate.id === `activation-${parsed.data.providerId}`);
+      .find((candidate) => candidate.id === policyId);
     const timezone = parsed.data.timezone ?? savedTimezone ?? existingPolicy?.timezone;
     if (!timezone) {
       return reply.send(
@@ -649,7 +696,8 @@ export function buildServer(input: BuildServerInput) {
     try {
       policy = parseActivationPolicy({
         ...parsed.data,
-        id: `activation-${parsed.data.providerId}`,
+        id: policyId,
+        providerId: parsed.data.providerId,
         timezone,
         updatedAtMs: input.clock.now().getTime(),
       });
@@ -721,7 +769,9 @@ export function buildServer(input: BuildServerInput) {
     input.requestReconcile?.();
     const providerId = stringValue(asRecord(normalized).providerId);
     const providerQuery = providerId ? `&providerId=${encodeURIComponent(providerId)}` : '';
-    return reply.code(303).redirect(`/schedule?updated=schedule${providerQuery}`);
+    const scope = stringValue(asRecord(normalized).scope);
+    const scopeQuery = scope && scope !== 'default' ? `&scope=${encodeURIComponent(scope)}` : '';
+    return reply.code(303).redirect(`/schedule?updated=schedule${providerQuery}${scopeQuery}`);
   });
 
   app.post('/providers/:id/trigger', async (request, reply) => {
@@ -1124,6 +1174,7 @@ function normalizeActivationScheduleBody(body: unknown): unknown {
     kind: record.policyKind,
     providerId: record.providerId,
     enabled: formBoolean(record.enabled ?? true),
+    ...(typeof record.scope === 'string' ? { scope: record.scope } : {}),
   };
   if (typeof record.timezone === 'string' && record.timezone.length > 0) {
     (base as Record<string, unknown>).timezone = record.timezone;
@@ -1278,19 +1329,44 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
     const observation = state?.observation ?? null;
     const adapter = input.adapters.get(provider.id);
     const capabilities = adapter ? safeCapabilities(adapter) : undefined;
-    const policyRecord = input.repositories.schedulePolicies
-      .list(provider.id)
-      .find((candidate) => candidate.id === `activation-${provider.id}`);
-    let activationPolicy: ActivationPolicy | null = null;
-    let activationPolicyNeedsAttention = false;
-    if (policyRecord) {
-      try {
-        activationPolicy = activationPolicyFromRecord(policyRecord, timezone) ?? null;
-        activationPolicyNeedsAttention = activationPolicy === null;
-      } catch {
-        activationPolicyNeedsAttention = true;
+    const policyRecords = input.repositories.schedulePolicies.list(provider.id);
+    const activationPolicies = activationPolicyScopes(provider.kind).map((scope) => {
+      const policyRecord = policyRecords.find(
+        (candidate) => candidate.id === activationPolicyId(provider.id, scope),
+      );
+      let policy: ActivationPolicy | null = null;
+      let needsAttention = policyRecord?.requiresReview ?? false;
+      if (policyRecord) {
+        needsAttention ||= (policyRecord.scope ?? 'default') !== scope;
+        try {
+          policy = activationPolicyFromRecord(policyRecord, timezone) ?? null;
+          needsAttention ||= policy === null;
+        } catch {
+          needsAttention = true;
+        }
       }
-    }
+      const requestedWindowKind = policy && 'windowKind' in policy ? policy.windowKind : undefined;
+      const target = resolveWindowTarget(requestedWindowKind, observation?.windows ?? []);
+      const selectedWindowKind =
+        target.status === 'exact' || target.status === 'legacy_resolved'
+          ? target.windowKind
+          : undefined;
+      if (provider.kind === 'antigravity' && requestedWindowKind) {
+        if (!windowKindBelongsToPolicyScope(requestedWindowKind, scope)) {
+          needsAttention = true;
+        } else if (observation && target.status !== 'exact') {
+          needsAttention = true;
+        }
+      } else if (policy && !requestedWindowKind && (observation?.windows.length ?? 0) > 0) {
+        needsAttention = true;
+      }
+      if (selectedWindowKind && policy && 'windowKind' in policy) {
+        policy = { ...policy, windowKind: selectedWindowKind };
+      }
+      return { scope, policy, needsAttention } satisfies ProviderPolicyRead;
+    });
+    const activationPolicy = activationPolicies[0]?.policy ?? null;
+    const activationPolicyNeedsAttention = activationPolicies.some((item) => item.needsAttention);
     const requestedWindowKind =
       activationPolicy && 'windowKind' in activationPolicy
         ? activationPolicy.windowKind
@@ -1300,13 +1376,6 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
       target.status === 'exact' || target.status === 'legacy_resolved'
         ? target.windowKind
         : undefined;
-    if (selectedWindowKind && activationPolicy && 'windowKind' in activationPolicy) {
-      activationPolicy = { ...activationPolicy, windowKind: selectedWindowKind };
-    } else if (requestedWindowKind && observation && target.status !== 'exact') {
-      activationPolicyNeedsAttention = true;
-    } else if (activationPolicy && !requestedWindowKind && (observation?.windows.length ?? 0) > 0) {
-      activationPolicyNeedsAttention = true;
-    }
 
     return {
       id: provider.id,
@@ -1326,6 +1395,7 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
       freshness: freshness(state, nowMs),
       activationPolicy,
       activationPolicyNeedsAttention,
+      ...(provider.kind === 'antigravity' ? { activationPolicies } : {}),
       ...(capabilities ? { capabilities } : {}),
       ...(provider.kind === 'antigravity' && capabilities?.windowTrigger.supported
         ? {
@@ -1559,21 +1629,47 @@ function renderProviderCard(
       ? 'Sign-in required'
       : healthLabel(provider.health);
   const isConnected = provider.enabled && provider.health === 'UP';
+  const antigravitySchedules = provider.activationPolicies;
+  const antigravityHasAnyPolicy = antigravitySchedules?.some(({ policy }) => policy !== null);
+  const antigravityHasAutomaticPolicy = antigravitySchedules?.some(
+    ({ policy }) => policy?.enabled && policy.kind !== 'manual',
+  );
+  const antigravityOnlyManual = antigravitySchedules?.every(
+    ({ policy }) => !policy?.enabled || policy.kind === 'manual',
+  );
+  const antigravityHasEnabledPolicy = antigravitySchedules?.some(({ policy }) => policy?.enabled);
   const automationState = !provider.enabled
     ? 'Automatic starts paused'
     : provider.activationPolicyNeedsAttention
       ? 'Schedule needs attention'
-      : !provider.activationPolicy
+      : provider.kind === 'antigravity' && !antigravityHasAnyPolicy
         ? 'No start policy set'
-        : !provider.activationPolicy.enabled
-          ? 'Schedule paused'
-          : provider.activationPolicy.kind === 'manual'
-            ? 'Manual starts only'
-            : provider.mode !== 'automation'
-              ? 'Automatic starts off'
-              : provider.capabilities?.windowTrigger.supported === true
-                ? 'Automatic starts enabled'
-                : 'Automatic starts unavailable';
+        : provider.kind === 'antigravity' &&
+            antigravitySchedules?.every(({ policy }) => !policy?.enabled)
+          ? 'Schedules paused'
+          : provider.kind === 'antigravity' &&
+              provider.mode !== 'automation' &&
+              antigravityHasAutomaticPolicy
+            ? 'Automatic starts off'
+            : provider.kind === 'antigravity' &&
+                antigravityHasEnabledPolicy &&
+                antigravityOnlyManual
+              ? 'Manual starts only'
+              : provider.kind === 'antigravity' && antigravityHasAutomaticPolicy
+                ? provider.capabilities?.windowTrigger.supported === true
+                  ? 'Automatic starts enabled'
+                  : 'Automatic starts unavailable'
+                : !provider.activationPolicy
+                  ? 'No start policy set'
+                  : !provider.activationPolicy.enabled
+                    ? 'Schedule paused'
+                    : provider.activationPolicy.kind === 'manual'
+                      ? 'Manual starts only'
+                      : provider.mode !== 'automation'
+                        ? 'Automatic starts off'
+                        : provider.capabilities?.windowTrigger.supported === true
+                          ? 'Automatic starts enabled'
+                          : 'Automatic starts unavailable';
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
   const logoHtml = logoUrl
     ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
@@ -1630,6 +1726,11 @@ function renderProviderWindows(
 }
 
 function renderSelectedPolicy(provider: ProviderRead): string {
+  if (provider.activationPolicies) {
+    return `<section class="provider-policy" aria-label="Selected start policies"><div><span class="field-label">Selected start policies</span><div class="provider-policy-families">${provider.activationPolicies
+      .map((item) => renderProviderPolicyFamily(provider, item))
+      .join('')}</div></div></section>`;
+  }
   const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}`;
   if (provider.activationPolicyNeedsAttention) {
     return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>Saved policy needs attention</strong><p class="provider-meta">Review the schedule before relying on automatic starts.</p></div><a href="${escapeHtml(scheduleHref)}">Review schedule</a></section>`;
@@ -1651,6 +1752,27 @@ function renderSelectedPolicy(provider: ProviderRead): string {
   const status = selectedPolicyStatus(provider, policy);
   const statusMarkup = status ? `<p class="provider-policy-status">${escapeHtml(status)}</p>` : '';
   return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p>${statusMarkup}</div><a href="${escapeHtml(scheduleHref)}">Change</a></section>`;
+}
+
+function renderProviderPolicyFamily(provider: ProviderRead, item: ProviderPolicyRead): string {
+  const family = item.scope === 'gemini' ? 'Gemini Models' : 'Claude and GPT Models';
+  const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}&scope=${item.scope}`;
+  if (item.needsAttention) {
+    return `<article class="provider-policy-family"><strong>${family}</strong><p class="provider-policy-status">Schedule needs review before automatic starts can resume.</p><a href="${escapeHtml(scheduleHref)}">Review schedule</a></article>`;
+  }
+  const policy = item.policy;
+  if (!policy) {
+    return `<article class="provider-policy-family"><strong>${family}</strong><p class="provider-meta">No start policy selected.</p><a href="${escapeHtml(scheduleHref)}">Choose policy</a></article>`;
+  }
+  const labels: Record<ActivationPolicy['kind'], string> = {
+    manual: 'Only when I ask',
+    auto: 'Whenever possible',
+    fixed: 'On a repeating cycle',
+    custom_schedule: 'At specific times',
+    active_hours: 'Within active hours',
+  };
+  const status = selectedPolicyStatus(provider, policy);
+  return `<article class="provider-policy-family"><strong>${escapeHtml(family)} · ${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(selectedPolicyDescription(provider, policy))}</p>${status ? `<p class="provider-policy-status">${escapeHtml(status)}</p>` : ''}<a href="${escapeHtml(scheduleHref)}">Change</a></article>`;
 }
 
 function selectedPolicyDescription(provider: ProviderRead, policy: ActivationPolicy): string {

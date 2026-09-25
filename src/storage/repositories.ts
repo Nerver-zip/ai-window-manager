@@ -12,6 +12,7 @@ import type { UsageInterval, UsageSampleInput, UsageSeriesState } from '../usage
 import type { SqliteDatabase } from './database.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
+export type SchedulePolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'legacy';
 export type SchedulePolicyKind =
   'manual' | 'auto' | 'fixed' | 'custom_schedule' | 'active_hours' | 'target_reset' | 'work_window';
 export type ActionIntentState =
@@ -63,6 +64,8 @@ export interface EventRecord {
 export interface SchedulePolicyRecord {
   id: string;
   providerId: string;
+  scope?: SchedulePolicyScope;
+  requiresReview?: boolean;
   kind: SchedulePolicyKind;
   kindExplicit?: boolean;
   enabled: boolean;
@@ -712,10 +715,12 @@ export class SchedulePolicyRepository {
     this.db
       .prepare(
         `INSERT INTO schedule_policies (
-          id, provider_id, kind, kind_explicit, enabled, timezone, config_json, created_at_ms, updated_at_ms
-        ) VALUES (@id, @providerId, @kind, @kindExplicit, @enabled, @timezone, @config, @createdAtMs, @updatedAtMs)
+          id, provider_id, scope, requires_review, kind, kind_explicit, enabled, timezone, config_json, created_at_ms, updated_at_ms
+        ) VALUES (@id, @providerId, @scope, @requiresReview, @kind, @kindExplicit, @enabled, @timezone, @config, @createdAtMs, @updatedAtMs)
         ON CONFLICT(id) DO UPDATE SET
           provider_id = excluded.provider_id,
+          scope = excluded.scope,
+          requires_review = excluded.requires_review,
           kind = excluded.kind,
           kind_explicit = excluded.kind_explicit,
           enabled = excluded.enabled,
@@ -725,6 +730,8 @@ export class SchedulePolicyRepository {
       )
       .run({
         ...policy,
+        scope: policy.scope ?? 'default',
+        requiresReview: booleanToInteger(policy.requiresReview ?? false),
         enabled: booleanToInteger(policy.enabled),
         kindExplicit: booleanToInteger(policy.kindExplicit ?? false),
         config: stringifyJson(policy.config),
@@ -1078,6 +1085,8 @@ interface SettingRow {
 interface SchedulePolicyRow {
   id: string;
   provider_id: string;
+  scope: SchedulePolicyScope;
+  requires_review: number;
   kind: SchedulePolicyKind;
   kind_explicit: number;
   enabled: number;
@@ -1270,6 +1279,8 @@ function schedulePolicyFromRow(row: SchedulePolicyRow): SchedulePolicyRecord {
   return {
     id: row.id,
     providerId: row.provider_id,
+    scope: row.scope,
+    requiresReview: row.requires_review === 1,
     kind: row.kind,
     kindExplicit: row.kind_explicit === 1,
     enabled: row.enabled === 1,
