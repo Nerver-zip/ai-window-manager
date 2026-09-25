@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Script } from 'node:vm';
 import {
   renderAuthOnboarding,
   type AuthOnboardingStatus,
@@ -18,6 +19,170 @@ const status = (overrides: Partial<AuthOnboardingStatus> = {}): AuthOnboardingSt
   reasonCode: null,
   ...overrides,
 });
+
+class AuthUiNode {
+  hidden = false;
+  textContent = '';
+  href = '';
+  value = '';
+  classList = { toggle: () => undefined };
+  private readonly listeners = new Map<string, () => unknown>();
+
+  addEventListener(event: string, listener: () => unknown): void {
+    this.listeners.set(event, listener);
+  }
+
+  click(): unknown {
+    return this.listeners.get('click')?.();
+  }
+}
+
+interface AuthUiHarnessOptions {
+  initialCode: string;
+  refreshedCode: string;
+  clipboard?: { writeText: (value: string) => Promise<void> } | undefined;
+  legacyCopyWorks?: boolean;
+  authorizationUrl?: string;
+  selectionAvailable?: boolean;
+}
+
+function createAuthUiHarness(options: AuthUiHarnessOptions) {
+  const selectors = [
+    '[data-auth-status-detail]',
+    '[data-auth-error]',
+    '[data-auth-expiry]',
+    '[data-auth-start]',
+    '[data-auth-cancel]',
+    '[data-auth-awaiting]',
+    '[data-auth-authorization]',
+    '[data-auth-device-code]',
+    '[data-auth-code-section]',
+    '[data-auth-user-code]',
+    '[data-auth-copy-fallback]',
+    '[data-auth-copy-status]',
+    '[data-auth-copy-code]',
+    '[data-auth-copy-url]',
+    '[data-auth-code-input]',
+  ];
+  const nodes = new Map(selectors.map((selector) => [selector, new AuthUiNode()]));
+  const code = nodes.get('[data-auth-user-code]');
+  const authorization = nodes.get('[data-auth-authorization]');
+  if (code) code.textContent = options.initialCode;
+  if (authorization)
+    authorization.href = options.authorizationUrl ?? 'https://auth.openai.com/device';
+
+  const panel = {
+    dataset: {
+      authState: 'AWAITING_USER_ACTION',
+      authProviderId: 'codex',
+      authRole: 'connect',
+      authStatusUrl: '/api/v1/providers/codex/auth/status',
+      authStartUrl: '/api/v1/providers/codex/auth/start',
+      authSubmitUrl: '/api/v1/providers/codex/auth/submit',
+      authCancelUrl: '/api/v1/providers/codex/auth/cancel',
+    },
+    querySelector: (selector: string) => nodes.get(selector) ?? null,
+    closest: () => null,
+  };
+
+  let selectedNode: AuthUiNode | null = null;
+  const selection = {
+    removeAllRanges: () => {
+      selectedNode = null;
+    },
+    addRange: (range: { node: AuthUiNode | null }) => {
+      selectedNode = range.node;
+    },
+    toString: () => selectedNode?.textContent ?? '',
+  };
+  const fetchRequests: Array<{ url: string; method: string; body: string | undefined }> = [];
+  const clipboardWrites: string[] = [];
+  const legacyCopies: string[] = [];
+  let legacyTextarea: { value: string } | null = null;
+  const refreshedStatus = status({
+    state: 'AWAITING_USER_ACTION',
+    authorizationUrl: options.authorizationUrl ?? 'https://auth.openai.com/device',
+    userCode: options.refreshedCode,
+  });
+
+  const document = {
+    cookie: '',
+    querySelectorAll: (selector: string) => (selector === '[data-auth-onboarding]' ? [panel] : []),
+    createRange: () => {
+      const range: { node: AuthUiNode | null; selectNodeContents: (node: AuthUiNode) => void } = {
+        node: null,
+        selectNodeContents(node) {
+          this.node = node;
+        },
+      };
+      return range;
+    },
+    createElement: () => ({
+      value: '',
+      style: {} as Record<string, string>,
+      setAttribute: () => undefined,
+      select: () => undefined,
+      setSelectionRange: () => undefined,
+    }),
+    body: {
+      appendChild: (node: { value: string }) => {
+        legacyTextarea = node;
+      },
+      removeChild: () => {
+        legacyTextarea = null;
+      },
+    },
+    execCommand: (command: string) => {
+      if (command !== 'copy' || !options.legacyCopyWorks || !legacyTextarea) return false;
+      legacyCopies.push(legacyTextarea.value);
+      return true;
+    },
+  };
+  const window = {
+    location: { origin: 'http://awm.test' },
+    getSelection: () => (options.selectionAvailable === false ? null : selection),
+    clearTimeout: () => undefined,
+    setTimeout: () => 1,
+  };
+  const clipboard = options.clipboard
+    ? {
+        writeText: async (value: string) => {
+          clipboardWrites.push(value);
+          await options.clipboard?.writeText(value);
+        },
+      }
+    : undefined;
+  const navigator = clipboard ? { clipboard } : {};
+
+  new Script(AUTH_ONBOARDING_JS).runInNewContext({
+    document,
+    window,
+    navigator,
+    URL,
+    fetch: (url: string, request: { method: string; body?: string }) => {
+      fetchRequests.push({ url, method: request.method, body: request.body });
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(refreshedStatus),
+      });
+    },
+  });
+
+  return {
+    nodes,
+    clipboardWrites,
+    legacyCopies,
+    fetchRequests,
+    selection,
+    get selectedText() {
+      return selection.toString();
+    },
+  };
+}
+
+async function waitForAuthRefresh(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
 
 describe('auth onboarding UI', () => {
   it('renders a loading state without exposing implementation details', () => {
@@ -77,11 +242,13 @@ describe('auth onboarding UI', () => {
     expect(html).toContain('href="https://auth.example.test/device?flow=awm"');
     expect(html).toContain('data-auth-device-code');
     expect(html).toContain('Enter this code on the sign-in page.');
-    expect(html).toContain('ABCD-EFGH');
+    expect(html).toMatch(/<output\b[^>]*data-auth-user-code[^>]*>ABCD-EFGH<\/output>/);
+    expect(html).toContain('data-auth-copy-fallback');
     expect(html).toContain('data-auth-copy-code');
     expect(html).toContain('Copy sign-in code');
     expect(html).toContain('data-auth-copy-url');
     expect(html).toContain('Copy sign-in link');
+    expect(html).toContain('data-auth-copy-status role="status" aria-live="polite"');
     expect(html).toMatch(/data-auth-code-section hidden/);
     expect(html).toContain('This sign-in expires at');
   });
@@ -199,14 +366,150 @@ describe('auth onboarding UI', () => {
     );
     expect(AUTH_ONBOARDING_JS).toContain("input.value = ''");
     expect(AUTH_ONBOARDING_JS).toContain('setTimeout(poll, 2000)');
-    expect(AUTH_ONBOARDING_JS).toContain('navigator.clipboard.writeText(value)');
+    expect(AUTH_ONBOARDING_JS).toContain("typeof clipboard.writeText === 'function'");
+    expect(AUTH_ONBOARDING_JS).toContain('await clipboard.writeText(value)');
+    expect(AUTH_ONBOARDING_JS).toContain("document.execCommand('copy') === true");
+    expect(AUTH_ONBOARDING_JS).toContain("element(panel, '[data-auth-user-code]')");
+    expect(AUTH_ONBOARDING_JS).toContain('code?.textContent ??');
+    expect(AUTH_ONBOARDING_JS).not.toContain('textContent.trim()');
     expect(AUTH_ONBOARDING_JS).toContain("'[data-auth-copy-code]'");
     expect(AUTH_ONBOARDING_JS).toContain("'[data-auth-copy-url]'");
     expect(AUTH_ONBOARDING_JS).toContain("'[data-provider-connection-status]'");
     expect(AUTH_ONBOARDING_JS).not.toContain('localStorage');
     expect(AUTH_ONBOARDING_JS).not.toContain('sessionStorage');
+    expect(AUTH_ONBOARDING_JS).not.toContain('indexedDB');
     expect(AUTH_ONBOARDING_JS).not.toContain('innerHTML');
     expect(AUTH_ONBOARDING_JS).not.toContain('console.log');
+  });
+
+  it('copies the exact current code from the refreshed DOM and reports success', async () => {
+    const harness = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'aB12-Cd34',
+      clipboard: { writeText: () => Promise.resolve() },
+    });
+    await waitForAuthRefresh();
+
+    const code = harness.nodes.get('[data-auth-user-code]');
+    expect(code?.textContent).toBe('aB12-Cd34');
+    await harness.nodes.get('[data-auth-copy-code]')?.click();
+
+    expect(harness.clipboardWrites).toEqual(['aB12-Cd34']);
+    expect(harness.nodes.get('[data-auth-copy-status]')?.textContent).toBe('Code copied.');
+    expect(harness.fetchRequests).toEqual([
+      {
+        url: '/api/v1/providers/codex/auth/status',
+        method: 'GET',
+        body: undefined,
+      },
+    ]);
+  });
+
+  it('selects the exact displayed code when Clipboard API is unavailable', async () => {
+    const harness = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'x76P-7WYT',
+    });
+    await waitForAuthRefresh();
+
+    await harness.nodes.get('[data-auth-copy-code]')?.click();
+
+    expect(harness.selectedText).toBe('x76P-7WYT');
+    expect(harness.nodes.get('[data-auth-copy-status]')?.textContent).toBe(
+      'Copy is unavailable here. The code is selected — press Ctrl+C / Cmd+C.',
+    );
+  });
+
+  it('uses the user-initiated legacy copy fallback when Clipboard API is unavailable', async () => {
+    const harness = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'x76P-7WYT',
+      legacyCopyWorks: true,
+    });
+    await waitForAuthRefresh();
+
+    await harness.nodes.get('[data-auth-copy-code]')?.click();
+
+    expect(harness.legacyCopies).toEqual(['x76P-7WYT']);
+    expect(harness.nodes.get('[data-auth-copy-status]')?.textContent).toBe('Code copied.');
+  });
+
+  it('selects the exact displayed code after a Clipboard API rejection', async () => {
+    const harness = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'pQ45-rS67',
+      clipboard: {
+        writeText: () => Promise.reject(new Error('clipboard_denied')),
+      },
+    });
+    await waitForAuthRefresh();
+
+    await harness.nodes.get('[data-auth-copy-code]')?.click();
+
+    expect(harness.clipboardWrites).toEqual(['pQ45-rS67']);
+    expect(harness.selectedText).toBe('pQ45-rS67');
+    expect(harness.nodes.get('[data-auth-copy-status]')?.textContent).toBe(
+      'Copy is unavailable here. The code is selected — press Ctrl+C / Cmd+C.',
+    );
+  });
+
+  it('does not claim the code was copied when selection is also unavailable', async () => {
+    const harness = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'new-Code',
+      selectionAvailable: false,
+    });
+    await waitForAuthRefresh();
+
+    await harness.nodes.get('[data-auth-copy-code]')?.click();
+
+    expect(harness.nodes.get('[data-auth-copy-status]')?.textContent).toBe(
+      'Could not copy. Select the code manually.',
+    );
+  });
+
+  it('reports link-copy success and selects the actual link if clipboard access fails', async () => {
+    const successful = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'NEW-CODE',
+      clipboard: { writeText: () => Promise.resolve() },
+    });
+    await waitForAuthRefresh();
+    await successful.nodes.get('[data-auth-copy-url]')?.click();
+    expect(successful.clipboardWrites).toEqual(['https://auth.openai.com/device']);
+    expect(successful.nodes.get('[data-auth-copy-status]')?.textContent).toBe('Link copied.');
+
+    const unavailable = createAuthUiHarness({
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'NEW-CODE',
+    });
+    await waitForAuthRefresh();
+    await unavailable.nodes.get('[data-auth-copy-url]')?.click();
+    expect(unavailable.selectedText).toBe('https://auth.openai.com/device');
+    expect(unavailable.nodes.get('[data-auth-copy-fallback]')?.textContent).toBe(
+      'https://auth.openai.com/device',
+    );
+    expect(unavailable.nodes.get('[data-auth-copy-status]')?.textContent).toBe(
+      'Copy is unavailable here. The link is selected — press Ctrl+C / Cmd+C.',
+    );
+  });
+
+  it('renders the provider code unchanged in a selectable semantic output', () => {
+    const exactCode = 'aB12-Cd34';
+    const html = renderAuthOnboarding({
+      providerId: 'codex',
+      status: status({
+        state: 'AWAITING_USER_ACTION',
+        userCode: exactCode,
+      }),
+    });
+
+    expect(html).toMatch(
+      new RegExp(`<output\\b[^>]*data-auth-user-code[^>]*>${exactCode}<\\/output>`),
+    );
+    expect(AUTH_ONBOARDING_CSS).toContain('user-select: all');
+    expect(AUTH_ONBOARDING_CSS).toContain('white-space: pre-wrap');
+    expect(AUTH_ONBOARDING_CSS).not.toContain('text-transform');
   });
 
   it('keeps styles scoped, responsive, and motion-conscious', () => {

@@ -33,7 +33,9 @@ export const AUTH_ONBOARDING_CSS = `
 .auth-onboarding__code-row { display: flex; align-items: stretch; gap: 8px; }
 .auth-onboarding__code-row input { min-width: 0; flex: 1 1 auto; }
 .auth-onboarding__user-code {
+  display: block;
   width: fit-content;
+  max-width: 100%;
   margin: 0;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -42,7 +44,27 @@ export const AUTH_ONBOARDING_CSS = `
   color: var(--accent-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 16px;
-  letter-spacing: .12em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+  -webkit-user-select: all;
+}
+.provider-settings--connect-target {
+  scroll-margin-block-start: 20px;
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.provider-settings--connect-target:focus { outline-color: var(--focus); }
+.auth-onboarding__copy-fallback {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  user-select: all;
+  -webkit-user-select: all;
 }
 .auth-copy-button {
   display: inline-flex;

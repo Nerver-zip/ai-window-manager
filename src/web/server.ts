@@ -145,6 +145,11 @@ interface ProviderRead {
   triggerModels?: { gemini: string; claudeGpt: string };
 }
 
+interface OverviewAuthConnection {
+  connected: boolean;
+  inProgress: boolean;
+}
+
 export function buildServer(input: BuildServerInput) {
   const app = Fastify({
     logger: { level: input.config.AWM_LOG_LEVEL },
@@ -564,10 +569,20 @@ export function buildServer(input: BuildServerInput) {
     reply.type('text/html; charset=utf-8');
     const notice = queryMessage(request.query);
     const timezone = readTimezoneSetting(settingsInput);
+    const providers = settingsProviderViews(input);
+    const authProviders = configuredAuthProviders(input);
+    const requestedConnectId = stringValue(asRecord(request.query).connect);
+    const connectProviderId =
+      requestedConnectId &&
+      providers.some((provider) => provider.id === requestedConnectId) &&
+      authProviders.some((provider) => provider.providerId === requestedConnectId)
+        ? requestedConnectId
+        : undefined;
     return renderSettingsUiPage({
       csrfToken: csrf.token,
-      providers: settingsProviderViews(input),
-      authProviders: configuredAuthProviders(input),
+      providers,
+      authProviders,
+      ...(connectProviderId ? { connectProviderId } : {}),
       referenceInstant: input.clock.now(),
       ...(timezone ? { timezone } : {}),
       ...(notice ? { notice } : {}),
@@ -747,6 +762,19 @@ export function buildServer(input: BuildServerInput) {
     const selectedProviderId = providers.some((provider) => provider.id === requestedProviderId)
       ? requestedProviderId
       : providers[0]?.id;
+    const authConnections = new Map(
+      configuredAuthProviders(input).map(
+        ({ providerId, status }) =>
+          [
+            providerId,
+            {
+              connected:
+                status.state === 'SUCCEEDED' || status.reasonCode === 'ALREADY_AUTHENTICATED',
+              inProgress: ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(status.state),
+            },
+          ] as const,
+      ),
+    );
     return renderOverview(
       providers,
       input.clock.now(),
@@ -754,6 +782,7 @@ export function buildServer(input: BuildServerInput) {
       selectedProviderId,
       csrf.token,
       queryMessage(request.query),
+      authConnections,
     );
   });
 
@@ -1447,6 +1476,7 @@ function renderOverview(
   selectedProviderId: string | undefined,
   csrfToken: string,
   notice: string | null,
+  authConnections: ReadonlyMap<string, OverviewAuthConnection>,
 ): string {
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const selector =
@@ -1466,7 +1496,13 @@ function renderOverview(
         )}<noscript><button type="submit">Show provider</button></noscript></form>`
       : '';
   const card = selectedProvider
-    ? renderProviderCard(selectedProvider, now, timezone, csrfToken)
+    ? renderProviderCard(
+        selectedProvider,
+        now,
+        timezone,
+        csrfToken,
+        authConnections.get(selectedProvider.id),
+      )
     : '';
   return renderAppShell({
     page: 'overview',
@@ -1505,6 +1541,7 @@ function renderProviderCard(
   now: Date,
   timezone: string,
   csrfToken: string,
+  authConnection?: OverviewAuthConnection,
 ): string {
   const staleClass = provider.freshness.stale ? ' stale' : '';
   const freshnessLabel =
@@ -1545,9 +1582,9 @@ function renderProviderCard(
     provider.freshness.stale && provider.freshness.observedAt
       ? '<p class="stale-notice">This information may be out of date. Automatic starts wait for a fresh update.</p>'
       : '';
-  const signInMessage =
-    provider.health === 'AUTH_REQUIRED'
-      ? '<p class="notice">Sign in with the official provider app, then return here to check again.</p>'
+  const onboardingAction =
+    authConnection && !authConnection.connected
+      ? `<a class="button button-primary provider-onboarding-cta" href="/settings?connect=${encodeURIComponent(provider.id)}#provider-${encodeURIComponent(provider.id)}">${authConnection.inProgress ? 'Continue sign-in' : `Connect ${escapeHtml(displayName)}`}</a>`
       : '';
   const onlineIndicator = isConnected
     ? '<span class="online-indicator" aria-hidden="true"></span>'
@@ -1555,7 +1592,7 @@ function renderProviderCard(
   const connectionBadgeClass = isConnected ? 'badge-success' : 'badge-warning';
   const selectedPolicy = renderSelectedPolicy(provider);
   const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
-  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${signInMessage}${selectedPolicy}${windows}${details}</article>`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${onboardingAction}${selectedPolicy}${windows}${details}</article>`;
 }
 
 function renderProviderWindows(

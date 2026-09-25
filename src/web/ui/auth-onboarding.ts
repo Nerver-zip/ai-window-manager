@@ -220,11 +220,12 @@ function renderPanel(input: RenderPanelInput): string {
         <span class="field-label">Next step</span>
         <p>Open the sign-in page and finish the request there.</p>
         <div class="auth-onboarding__link-actions"><a class="button button-secondary" data-auth-authorization${link ? '' : ' hidden'}${link ? ` href="${escapeHtml(link)}"` : ''} target="_blank" rel="noopener noreferrer">Open sign-in</a><button class="auth-copy-button" type="button" data-auth-copy-url${link ? '' : ' hidden'} aria-label="Copy sign-in link"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="11" rx="2"/><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>Copy link</span></button></div>
+        <output class="auth-onboarding__copy-fallback" data-auth-copy-fallback aria-label="Sign-in link" hidden></output>
       </div>
       <div class="auth-onboarding__device-code" data-auth-device-code${code ? '' : ' hidden'} aria-live="polite">
         <span class="field-label">Sign-in code</span>
         <p class="auth-onboarding__code-hint">Enter this code on the sign-in page.</p>
-        <div class="auth-onboarding__code-copy-row"><p class="auth-onboarding__user-code" data-auth-user-code${code ? '' : ' hidden'}>${code ? escapeHtml(code) : ''}</p><button class="auth-copy-button" type="button" data-auth-copy-code${code ? '' : ' hidden'} aria-label="Copy sign-in code"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="11" rx="2"/><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>Copy code</span></button></div>
+        <div class="auth-onboarding__code-copy-row"><output class="auth-onboarding__user-code" data-auth-user-code aria-label="Sign-in code" tabindex="0"${code ? '' : ' hidden'}>${code ? escapeHtml(code) : ''}</output><button class="auth-copy-button" type="button" data-auth-copy-code${code ? '' : ' hidden'} aria-label="Copy sign-in code"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="11" rx="2"/><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>Copy code</span></button></div>
       </div>
       <div class="auth-onboarding__code" data-auth-code-section${input.requiresCodeSubmission ? '' : ' hidden'}>
         <label class="field-label" for="${panelId}-code">Sign-in code</label>

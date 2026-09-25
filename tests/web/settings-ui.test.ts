@@ -150,7 +150,10 @@ describe('settings UI helpers', () => {
         authProvider('antigravity', 'SUCCEEDED'),
       ],
     });
-    const cards = html.match(/<article class="card provider-settings"[\s\S]*?<\/article>/g) ?? [];
+    const cards =
+      html.match(
+        /<article id="provider-[^"]+" class="card provider-settings[^"]*"[\s\S]*?<\/article>/g,
+      ) ?? [];
 
     expect(cards).toHaveLength(2);
     expect(cards[0]).toContain('Sign-in required');

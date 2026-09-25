@@ -107,7 +107,7 @@ async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
 
-function createAuthApp(providerId: AuthProviderId = 'codex') {
+function createAuthApp(providerId: AuthProviderId = 'codex', disconnected = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-auth-web-'));
   const dbPath = path.join(dir, 'awm.db');
   const db = openDatabase(dbPath);
@@ -126,7 +126,7 @@ function createAuthApp(providerId: AuthProviderId = 'codex') {
   });
   repositories.providerState.upsert({
     providerId,
-    health: providerId === 'antigravity' ? 'AUTH_REQUIRED' : 'UP',
+    health: providerId === 'antigravity' || disconnected ? 'AUTH_REQUIRED' : 'UP',
     observedAtMs: Date.parse(NOW),
     staleAfterMs: 300_000,
     observation: null,
@@ -206,11 +206,14 @@ describe('provider auth routes', () => {
   it('renders connected state from persisted health and serves the reduced-motion onboarding styles without provider I/O', async () => {
     const { app } = createAuthApp();
 
+    const overview = await app.inject('/');
     const settings = await app.inject('/settings');
     const status = await app.inject('/api/v1/providers/codex/auth/status');
     const styles = await app.inject('/assets/app.css');
 
     expect(settings.statusCode).toBe(200);
+    expect(overview.body).not.toContain('Connect Codex');
+    expect(overview.body).not.toContain('Sign in with the official provider app');
     expect(settings.body).toContain('Reconnect Codex');
     expect(settings.body).toContain('data-auth-state="SUCCEEDED"');
     expect(settings.body).toContain('Connected');
@@ -218,6 +221,36 @@ describe('provider auth routes', () => {
     expect(styles.body).toContain('animation: online-pulse 1.8s ease-out infinite');
     expect(styles.body).toContain('prefers-reduced-motion');
   });
+
+  it.each([
+    { providerId: 'codex' as const, action: 'Connect Codex' },
+    { providerId: 'antigravity' as const, action: 'Connect Antigravity' },
+  ])(
+    'links a disconnected $providerId from Overview to its own Settings connection card',
+    async ({ providerId, action }) => {
+      const { app, driver } = createAuthApp(providerId, true);
+
+      const overview = await app.inject('/');
+      const settings = await app.inject(`/settings?connect=${providerId}`);
+
+      expect(overview.statusCode).toBe(200);
+      expect(overview.body).toContain(
+        `href="/settings?connect=${providerId}#provider-${providerId}"`,
+      );
+      expect(overview.body).toContain(`>${action}</a>`);
+      expect(overview.body).not.toContain('Sign in with the official provider app');
+      expect(settings.statusCode).toBe(200);
+      expect(settings.body).toContain(
+        `<article id="provider-${providerId}" class="card provider-settings provider-settings--connect-target"`,
+      );
+      expect(settings.body).toContain('tabindex="-1" data-connect-target="true"');
+      expect(settings.body).toContain(`data-auth-provider-id="${providerId}"`);
+      expect(settings.body).toContain(
+        `data-auth-start-url="/api/v1/providers/${providerId}/auth/start"`,
+      );
+      expect(driver.launchCount).toBe(0);
+    },
+  );
 
   it('protects auth session mutations with same-origin and CSRF checks', async () => {
     const { app, driver } = createAuthApp();

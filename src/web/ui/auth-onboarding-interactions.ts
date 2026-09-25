@@ -88,9 +88,13 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     const deviceCode = element(panel, '[data-auth-device-code]');
     const codeSection = element(panel, '[data-auth-code-section]');
     const userCode = element(panel, '[data-auth-user-code]');
+    const copyFallback = element(panel, '[data-auth-copy-fallback]');
+    const copyStatus = element(panel, '[data-auth-copy-status]');
     const copyCode = element(panel, '[data-auth-copy-code]');
     const copyUrl = element(panel, '[data-auth-copy-url]');
     const codeInput = element(panel, '[data-auth-code-input]');
+    const previousCode = userCode?.textContent || '';
+    const previousUrl = authorization?.href || '';
 
     if (detail) {
       const message = status
@@ -116,11 +120,19 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       expiry.textContent = 'This sign-in expires at ' + status.expiresAt + '.';
     }
     const link = awaiting ? safeUrl(status?.authorizationUrl, panel.dataset.authProviderId) : null;
+    const nextCode = awaiting && status?.userCode ? status.userCode : '';
+    if (previousCode !== nextCode || previousUrl !== (link || '')) {
+      if (copyStatus) copyStatus.textContent = '';
+      if (copyFallback) {
+        copyFallback.textContent = '';
+        setHidden(copyFallback, true);
+      }
+    }
     setHidden(authorization, !link);
     setHidden(copyUrl, !link);
     if (authorization && link) authorization.href = link;
     setHidden(userCode, !(awaiting && status?.userCode));
-    if (userCode) userCode.textContent = awaiting && status?.userCode ? status.userCode : '';
+    if (userCode) userCode.textContent = nextCode;
     if (error) {
       const message = state === 'FAILED' || state === 'TIMED_OUT' || state === 'CANCELED'
         ? reasonDetails[status?.reasonCode] || (state === 'FAILED' ? 'We couldn’t complete sign-in. Try again.' : state === 'TIMED_OUT' ? 'Sign-in timed out. Try again.' : 'Sign-in canceled. Try again.')
@@ -238,17 +250,71 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       if (status) status.textContent = message;
     };
 
-    const copy = async (value) => {
-      if (!value || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
-        reportCopyResult('Copy is unavailable. Select and copy the text instead.');
+    const selectVisibleText = (node) => {
+      if (!node || node.hidden) return false;
+      try {
+        const selection = window.getSelection();
+        if (!selection) return false;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const tryLegacyCopy = (value) => {
+      let textarea = null;
+      let attached = false;
+      try {
+        textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.setAttribute('readonly', '');
+        textarea.setAttribute('aria-hidden', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        textarea.style.pointerEvents = 'none';
+        document.body.appendChild(textarea);
+        attached = true;
+        textarea.select();
+        if (typeof textarea.setSelectionRange === 'function') {
+          textarea.setSelectionRange(0, value.length);
+        }
+        return document.execCommand('copy') === true;
+      } catch {
+        return false;
+      } finally {
+        if (attached) document.body.removeChild(textarea);
+      }
+    };
+
+    const copyText = async (value, options) => {
+      if (typeof value !== 'string' || value.length === 0) {
+        reportCopyResult(options.failureMessage);
         return;
       }
       try {
-        await navigator.clipboard.writeText(value);
-        reportCopyResult('Copied.');
+        const clipboard = navigator.clipboard;
+        if (clipboard && typeof clipboard.writeText === 'function') {
+          await clipboard.writeText(value);
+          reportCopyResult(options.successMessage);
+          return;
+        }
       } catch {
-        reportCopyResult('Couldn’t copy. Select and copy the text instead.');
+        // Try the user-initiated legacy copy path before selecting the exact visible text.
       }
+      if (tryLegacyCopy(value)) {
+        reportCopyResult(options.successMessage);
+        return;
+      }
+      const selectionTarget = options.prepareFallback
+        ? options.prepareFallback(value)
+        : options.selectionTarget;
+      reportCopyResult(
+        selectVisibleText(selectionTarget) ? options.unavailableMessage : options.failureMessage,
+      );
     };
 
     element(panel, '[data-auth-start]')?.addEventListener('click', () => {
@@ -272,14 +338,35 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       if (input) input.value = '';
       mutate(panel.dataset.authSubmitUrl, { code });
     });
-    element(panel, '[data-auth-copy-code]')?.addEventListener('click', () => {
-      const code = element(panel, '[data-auth-user-code]')?.textContent.trim();
-      copy(code);
+    element(panel, '[data-auth-copy-code]')?.addEventListener('click', async () => {
+      const code = element(panel, '[data-auth-user-code]');
+      await copyText(code?.textContent ?? '', {
+        successMessage: 'Code copied.',
+        unavailableMessage: 'Copy is unavailable here. The code is selected — press Ctrl+C / Cmd+C.',
+        failureMessage: 'Could not copy. Select the code manually.',
+        selectionTarget: code,
+      });
     });
-    element(panel, '[data-auth-copy-url]')?.addEventListener('click', () => {
-      const url = element(panel, '[data-auth-authorization]')?.href;
-      const safe = safeUrl(url, panel.dataset.authProviderId);
-      copy(safe);
+    element(panel, '[data-auth-copy-url]')?.addEventListener('click', async () => {
+      const authorization = element(panel, '[data-auth-authorization]');
+      const fallback = element(panel, '[data-auth-copy-fallback]');
+      const safe = safeUrl(authorization?.href || null, panel.dataset.authProviderId);
+      if (fallback) {
+        fallback.textContent = '';
+        setHidden(fallback, true);
+      }
+      await copyText(safe, {
+        successMessage: 'Link copied.',
+        unavailableMessage: 'Copy is unavailable here. The link is selected — press Ctrl+C / Cmd+C.',
+        failureMessage: 'Could not copy. Open the sign-in link directly.',
+        selectionTarget: fallback,
+        prepareFallback: (value) => {
+          if (!fallback) return null;
+          fallback.textContent = value;
+          setHidden(fallback, false);
+          return fallback;
+        },
+      });
     });
 
     if (ACTIVE_STATES.has(panel.dataset.authState || '')) poll();

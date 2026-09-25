@@ -112,6 +112,7 @@ export interface SettingsPageInput {
   csrfToken: string;
   providers: readonly SettingsProviderView[];
   authProviders?: readonly AuthOnboardingInput[];
+  connectProviderId?: string;
   timezone?: TimezoneSetting;
   referenceInstant?: Date;
   notice?: string;
@@ -780,9 +781,22 @@ export function renderSettingsPage(input: SettingsPageInput): string {
   const authProviders = new Map<string, AuthOnboardingInput>(
     (input.authProviders ?? []).map((provider) => [provider.providerId, provider] as const),
   );
+  const connectProviderId =
+    input.connectProviderId &&
+    input.providers.some((provider) => provider.id === input.connectProviderId) &&
+    authProviders.has(input.connectProviderId)
+      ? input.connectProviderId
+      : undefined;
   const providerSections = input.providers.length
     ? input.providers
-        .map((provider) => renderProviderCard(provider, csrfToken, authProviders.get(provider.id)))
+        .map((provider) =>
+          renderProviderCard(
+            provider,
+            csrfToken,
+            authProviders.get(provider.id),
+            provider.id === connectProviderId,
+          ),
+        )
         .join('\n')
     : renderEmptyState(
         'No providers configured',
@@ -897,6 +911,7 @@ function renderProviderCard(
   provider: SettingsProviderView,
   csrfToken: string,
   authProvider?: AuthOnboardingInput,
+  connectTarget = false,
 ): string {
   const id = safeId(provider.id);
   const connection = providerConnectionState(provider, authProvider);
@@ -918,16 +933,21 @@ function renderProviderCard(
   const authPanel = authProvider
     ? renderAuthOnboarding({ ...authProvider, reconnect: connected })
     : '';
+  const authAreaElement = connected
+    ? `details class="provider-reconnect" data-provider-auth-area${connectTarget ? ' open' : ''}`
+    : 'div class="provider-auth-area" data-provider-auth-area';
   const authArea = authPanel
-    ? `<${connected ? 'details class="provider-reconnect"' : 'div class="provider-auth-area"'} data-provider-auth-area>${connected ? '<summary>Reconnect account</summary>' : ''}${authPanel}${connected ? '</details>' : '</div>'}`
+    ? `<${authAreaElement}>${connected ? '<summary>Reconnect account</summary>' : ''}${authPanel}${connected ? '</details>' : '</div>'}`
     : '';
+  const connectTargetAttributes = connectTarget ? ' tabindex="-1" data-connect-target="true"' : '';
+  const connectTargetClass = connectTarget ? ' provider-settings--connect-target' : '';
   const controlsLocked = authProvider !== undefined && !connected;
   const pollPreset = [60, 300, 900].includes(provider.pollIntervalSeconds)
     ? String(provider.pollIntervalSeconds)
     : 'custom';
   const customIntervalDisabled = pollPreset !== 'custom' ? ' disabled' : '';
 
-  return `<article class="card provider-settings" aria-labelledby="provider-${id}-title" data-provider-connected="${connected ? 'true' : 'false'}">
+  return `<article id="provider-${id}" class="card provider-settings${connectTargetClass}" aria-labelledby="provider-${id}-title" data-provider-connected="${connected ? 'true' : 'false'}"${connectTargetAttributes}>
     <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><span class="badge provider-connection-badge" data-provider-connection-status data-connection-state="${connection.state}" aria-label="${escapeHtml(displayName)} account status"><span class="online-indicator" aria-hidden="true"></span><span data-provider-connection-label>${escapeHtml(connection.label)}</span></span></header>
     ${authArea}
     <p class="provider-monitoring-note" data-provider-monitoring-note${controlsLocked ? '' : ' hidden'}>Connect your account to customize monitoring settings.</p>

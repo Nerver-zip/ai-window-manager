@@ -4,6 +4,8 @@
 
 - Simplified the active start-policy summary on Overview; paused and
   unavailable states remain visible without repeating the fresh-check notice.
+- Sign-in code copying now reads the current displayed code, tries both clipboard
+  paths, and leaves it selected with honest feedback when the browser blocks copy.
 - Trigger-enabled providers now default to automation with a “Whenever
   possible” policy on fresh databases; migration upgrades only old implicit
   defaults and preserves explicit Off/Manual choices. Exact window selection is
