@@ -233,6 +233,44 @@ describe('storage repositories', () => {
     db.close();
   });
 
+  it('keeps legacy nullable fact metadata unknown and falls back to the sample observation time', () => {
+    const { db, repositories } = openTestDatabase();
+    repositories.providers.upsert(provider());
+    const sampleId = repositories.windowSamples.insert(sample());
+    db.prepare(
+      `UPDATE window_samples SET
+        phase_source = NULL, phase_confidence = NULL, phase_observed_at_ms = NULL,
+        started_source = NULL, started_confidence = NULL, started_observed_at_ms = NULL,
+        reset_source = NULL, reset_confidence = NULL, reset_observed_at_ms = NULL,
+        duration_source = NULL, duration_confidence = NULL, duration_observed_at_ms = NULL,
+        usage_source = NULL, usage_confidence = NULL, usage_observed_at_ms = NULL,
+        remaining_source = NULL, remaining_confidence = NULL, remaining_observed_at_ms = NULL
+       WHERE id = ?`,
+    ).run(sampleId);
+
+    const persisted = repositories.windowSamples.get(sampleId);
+    expect(persisted).toMatchObject({
+      observedAt,
+      phase: { value: 'ACTIVE', source: 'unknown', confidence: 'unknown', observedAt },
+      startedAt: {
+        value: '2026-09-19T11:00:00.000Z',
+        source: 'unknown',
+        confidence: 'unknown',
+        observedAt,
+      },
+      resetAt: {
+        value: '2026-09-19T16:00:00.000Z',
+        source: 'unknown',
+        confidence: 'unknown',
+        observedAt,
+      },
+      durationSeconds: { value: 18_000, source: 'unknown', confidence: 'unknown', observedAt },
+      usageRatio: { value: 0.25, source: 'unknown', confidence: 'unknown', observedAt },
+      remainingRatio: { value: 0.75, source: 'unknown', confidence: 'unknown', observedAt },
+    });
+    db.close();
+  });
+
   it('round-trips events, settings and schedule policies', () => {
     const { db, repositories } = openTestDatabase();
     repositories.providers.upsert(provider());

@@ -1,4 +1,10 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { loadConfig } from './config.js';
+import {
+  createOfficialReleaseSource,
+  type ProviderArchitecture,
+} from '../scripts/provider-clients-core.js';
 import type { ProviderAdapter } from './providers/provider.js';
 import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
@@ -20,18 +26,41 @@ import { SystemClock } from './scheduler/clock.js';
 import { resolveLocalOccurrence } from './scheduler/time.js';
 import { Reconciler } from './scheduler/reconciler.js';
 import { ActionExecutor } from './scheduler/action-executor.js';
+import { ProviderCleanupWorker } from './scheduler/provider-cleanup.js';
 import { openDatabase } from './storage/database.js';
 import { createRepositories, type SchedulePolicyRecord } from './storage/repositories.js';
 import { runRetentionMaintenance } from './storage/retention.js';
 import { processUsageAggregationBatch } from './usage/service.js';
 import { buildServer } from './web/server.js';
 import { seedBootstrapProviderDefaults } from './bootstrap/provider-defaults.js';
+import { ProviderClientRuntimeStore } from './provider-clients/runtime-store.js';
+import { createOfficialArchiveDownloader } from './provider-clients/archive-downloader.js';
+import {
+  packagedProviderClients,
+  providerArchitectureFromNode,
+} from './provider-clients/packaged-clients.js';
+import { ProviderClientUpdateService } from './provider-clients/update-service.js';
+import { ProviderClientUpdateTasks } from './provider-clients/update-tasks.js';
+import { isAutomaticProviderUpdateDue } from './provider-clients/automatic-update.js';
+import { PROVIDER_CLIENT_IDS, type ProviderClientId } from './provider-clients/runtime-store.js';
+import type { ProviderClientUpdateWebControls } from './provider-clients/web-controls.js';
 
 const config = loadConfig();
+const providerRuntimeStore = await initializeProviderRuntime();
+const providerExecutables = {
+  codex: providerRuntimeStore
+    ? await providerRuntimeStore.resolveExecutable('codex')
+    : config.AWM_CODEX_EXECUTABLE,
+  antigravity: providerRuntimeStore
+    ? await providerRuntimeStore.resolveExecutable('antigravity')
+    : config.AWM_ANTIGRAVITY_EXECUTABLE,
+};
 const db = openDatabase(config.AWM_DB_PATH);
 const repositories = createRepositories(db);
 const clock = new SystemClock();
 const adapters = new Map<string, ProviderAdapter>();
+const cleanupAdapters = new Map<string, ProviderAdapter>();
+let reconcileRequested = false;
 
 registerFakeProvider();
 registerCodexProvider();
@@ -44,28 +73,28 @@ const reconciler = new Reconciler({
   repositories,
   adapters,
   resolveTargetResetAt,
+  isProviderRuntimeChanging: (providerId) =>
+    (providerId === 'codex' || providerId === 'antigravity') &&
+    (providerClientUpdateTasks?.isRuntimeChanging(providerId) ?? false),
   onObservation: recordObservation,
   onInspectionFailure: recordProviderHealth,
   onInspection: recordInspection,
   onSchedulerDecision: recordSchedulerDecision,
 });
-const executor = new ActionExecutor({
+const providerCleanupWorker = new ProviderCleanupWorker({
   clock,
-  db,
   repositories,
-  adapters,
-  onTrigger: recordTrigger,
+  adapters: cleanupAdapters,
 });
 
-let reconcileRequested = false;
 const authSessions = new AuthSessionManager({
   clock,
   drivers: createProviderAuthDrivers({
     adapters,
     codexHome: config.AWM_CODEX_HOME,
-    codexExecutable: config.AWM_CODEX_EXECUTABLE,
+    codexExecutable: providerExecutables.codex,
     antigravityHome: config.AWM_ANTIGRAVITY_HOME,
-    antigravityExecutable: config.AWM_ANTIGRAVITY_EXECUTABLE,
+    antigravityExecutable: providerExecutables.antigravity,
   }),
   sessionTimeoutMs: config.AWM_AUTH_SESSION_TIMEOUT_SECONDS * 1000,
   onEvent: (event) => {
@@ -86,6 +115,59 @@ const authSessions = new AuthSessionManager({
     reconcileRequested = true;
   },
 });
+const providerClientUpdateService = providerRuntimeStore
+  ? new ProviderClientUpdateService({
+      runtimeStore: providerRuntimeStore,
+      resolveOfficialRelease: createOfficialReleaseSource(),
+      architecture: providerArchitectureFromNode(process.arch),
+      clock,
+      isProviderBusy: (providerId) => providerIsBusy(providerId),
+    })
+  : undefined;
+const providerClientUpdateTasks = providerClientUpdateService
+  ? new ProviderClientUpdateTasks({
+      service: providerClientUpdateService,
+      clock,
+      onRuntimeChanged: () => {
+        reconcileRequested = true;
+      },
+      onAutomaticUpdateFinished: (providerId, successful) => {
+        if (!successful) return;
+        const nowMs = clock.now().getTime();
+        if (!Number.isSafeInteger(nowMs) || nowMs < 0) return;
+        repositories.settings.set(providerClientLastSuccessfulCheckKey(providerId), nowMs, nowMs);
+      },
+    })
+  : undefined;
+const executor = new ActionExecutor({
+  clock,
+  db,
+  repositories,
+  adapters,
+  isProviderRuntimeChanging: (providerId) => {
+    const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
+    return clientId ? (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false) : false;
+  },
+  onTrigger: recordTrigger,
+});
+const providerClientUpdateControls: ProviderClientUpdateWebControls | undefined =
+  providerClientUpdateService && providerClientUpdateTasks
+    ? {
+        getStatus: (providerId) => providerClientUpdateService.getCachedStatus(providerId),
+        isRuntimeChanging: (providerId) =>
+          providerClientUpdateTasks?.isRuntimeChanging(providerId) ?? false,
+        autoUpdateEnabled: providerClientAutoUpdateEnabled,
+        setAutoUpdateEnabled: setProviderClientAutoUpdateEnabled,
+        startCheck: (providerId) => providerClientUpdateTasks.startCheck(providerId),
+        startUpdate: (providerId) => providerClientUpdateTasks.startUpdate(providerId),
+        startRollback: (providerId) => providerClientUpdateTasks.startRollback(providerId),
+      }
+    : undefined;
+if (providerClientUpdateService) {
+  await Promise.all(
+    PROVIDER_CLIENT_IDS.map((providerId) => providerClientUpdateService.getStatus(providerId)),
+  );
+}
 const operatorAuth = new OperatorAuthService({
   username: config.AWM_AUTH_USERNAME,
   passwordHash: config.AWM_AUTH_PASSWORD_HASH,
@@ -103,15 +185,16 @@ const app = buildServer({
   requestReconcile: () => {
     reconcileRequested = true;
   },
+  ...(providerClientUpdateControls ? { providerClientUpdates: providerClientUpdateControls } : {}),
 });
 let reconcileTimer: NodeJS.Timeout | undefined;
 let executorTimer: NodeJS.Timeout | undefined;
 let retentionTimer: NodeJS.Timeout | undefined;
+let providerClientUpdateTimer: NodeJS.Timeout | undefined;
 const usageAggregationTimer: { current?: NodeJS.Timeout } = {};
 let reconcileInFlight: Promise<unknown> | undefined;
 let executorInFlight: Promise<unknown> | undefined;
 let stopping = false;
-
 function startReconcileLoop(): void {
   reconcileTimer = setInterval(() => {
     if (stopping || reconcileInFlight) return;
@@ -134,7 +217,7 @@ function startReconcileLoop(): void {
 function startExecutorLoop(): void {
   executorTimer = setInterval(() => {
     if (stopping || executorInFlight) return;
-    const current = executor.executeDue();
+    const current = executeActionsAndCleanup();
     executorInFlight = current;
     void current
       .catch((error: unknown) => {
@@ -145,6 +228,28 @@ function startExecutorLoop(): void {
         refreshRuntimeMetrics();
       });
   }, config.AWM_EXECUTOR_INTERVAL_SECONDS * 1000);
+}
+
+async function executeActionsAndCleanup(): Promise<void> {
+  await runProviderCleanup();
+  try {
+    await executor.executeDue();
+  } finally {
+    // A Codex trigger registers its thread before turn/start. Cleanup is separate
+    // from the action result, so it must not prevent that result being persisted.
+    await runProviderCleanup();
+  }
+}
+
+async function runProviderCleanup(): Promise<void> {
+  try {
+    const report = await providerCleanupWorker.runDue();
+    if (report.retryable > 0) {
+      app.log.debug({ retryable: report.retryable }, 'provider artifact cleanup deferred');
+    }
+  } catch (error) {
+    app.log.error({ error }, 'provider artifact cleanup failed');
+  }
 }
 
 function startRetentionLoop(): void {
@@ -176,9 +281,11 @@ async function shutdown(signal: string): Promise<void> {
   if (reconcileTimer) clearInterval(reconcileTimer);
   if (executorTimer) clearInterval(executorTimer);
   if (retentionTimer) clearInterval(retentionTimer);
+  if (providerClientUpdateTimer) clearInterval(providerClientUpdateTimer);
   if (usageAggregationTimer.current) clearInterval(usageAggregationTimer.current);
   if (reconcileInFlight) await reconcileInFlight;
   if (executorInFlight) await executorInFlight;
+  if (providerClientUpdateTasks) await providerClientUpdateTasks.close();
   await authSessions.shutdown();
   operatorAuth.clearSessions();
   await app.close();
@@ -208,13 +315,16 @@ function registerFakeProvider(): void {
 }
 
 function registerCodexProvider(): void {
-  if (!config.AWM_CODEX_ENABLED) return;
   const provider = new CodexProvider({
     codexHome: config.AWM_CODEX_HOME,
-    executable: config.AWM_CODEX_EXECUTABLE,
+    executable: providerExecutables.codex,
     actionTimeoutMs: config.AWM_CODEX_ACTION_TIMEOUT_SECONDS * 1000,
     triggerEnabled: config.AWM_CODEX_TRIGGER_ENABLED,
   });
+  // Keep the official deletion surface available to discharge already-persisted
+  // cleanup obligations even if Codex monitoring is hidden/disabled at runtime.
+  cleanupAdapters.set(provider.id, provider);
+  if (!config.AWM_CODEX_ENABLED) return;
   adapters.set(provider.id, provider);
   seedProvider(
     {
@@ -230,10 +340,10 @@ function registerCodexProvider(): void {
 }
 
 function registerAntigravityProvider(): void {
-  if (!config.AWM_ANTIGRAVITY_ENABLED) return;
   const provider = new AntigravityProvider({
-    executable: config.AWM_ANTIGRAVITY_EXECUTABLE,
+    executable: providerExecutables.antigravity,
     cwd: config.AWM_ANTIGRAVITY_HOME,
+    antigravityHome: config.AWM_ANTIGRAVITY_HOME,
     triggerEnabled: config.AWM_ANTIGRAVITY_TRIGGER_ENABLED,
     actionTimeoutSeconds: config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
     triggerModels: {
@@ -241,6 +351,9 @@ function registerAntigravityProvider(): void {
       claudeGpt: config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
     },
   });
+  // Per-ID cleanup obligations remain actionable even while monitoring is hidden.
+  cleanupAdapters.set(provider.id, provider);
+  if (!config.AWM_ANTIGRAVITY_ENABLED) return;
   adapters.set(provider.id, provider);
   seedProvider(
     {
@@ -250,6 +363,99 @@ function registerAntigravityProvider(): void {
     },
     config.AWM_ANTIGRAVITY_TRIGGER_ENABLED,
   );
+}
+
+function providerIsBusy(providerId: ProviderClientId): boolean {
+  const authentication = authSessions.status(providerId).state;
+  const activeAuthentication =
+    authentication === 'STARTING' ||
+    authentication === 'AWAITING_USER_ACTION' ||
+    authentication === 'VERIFYING';
+  return (
+    activeAuthentication ||
+    reconciler.isRunning() ||
+    repositories.actionIntents.listOpen(providerId).length > 0 ||
+    repositories.providerCleanupJobs.hasOpenForProvider(providerId)
+  );
+}
+
+function providerClientAutoUpdateKey(providerId: ProviderClientId): string {
+  return `provider-client-auto-update:${providerId}`;
+}
+
+function providerClientAutoUpdateEnabled(providerId: ProviderClientId): boolean {
+  return (
+    repositories.settings.get<unknown>(providerClientAutoUpdateKey(providerId))?.value === true
+  );
+}
+
+function setProviderClientAutoUpdateEnabled(providerId: ProviderClientId, enabled: boolean): void {
+  repositories.settings.set(
+    providerClientAutoUpdateKey(providerId),
+    enabled,
+    clock.now().getTime(),
+  );
+}
+
+function providerClientLastAttemptKey(providerId: ProviderClientId): string {
+  return `provider-client-auto-update-last-attempt:${providerId}`;
+}
+
+function providerClientLastSuccessfulCheckKey(providerId: ProviderClientId): string {
+  return `provider-client-auto-update-last-success:${providerId}`;
+}
+
+function runAutomaticProviderClientUpdates(): void {
+  if (stopping || !providerClientUpdateTasks) return;
+  const nowMs = clock.now().getTime();
+  if (!Number.isFinite(nowMs)) return;
+
+  for (const providerId of PROVIDER_CLIENT_IDS) {
+    if (
+      !providerClientAutoUpdateEnabled(providerId) ||
+      providerClientUpdateTasks.isRunning(providerId) ||
+      providerIsBusy(providerId)
+    ) {
+      continue;
+    }
+    const lastAttempt = repositories.settings.get<unknown>(
+      providerClientLastAttemptKey(providerId),
+    )?.value;
+    const lastSuccess = repositories.settings.get<unknown>(
+      providerClientLastSuccessfulCheckKey(providerId),
+    )?.value;
+    if (
+      !isAutomaticProviderUpdateDue({
+        enabled: true,
+        running: providerClientUpdateTasks.isRunning(providerId),
+        busy: providerIsBusy(providerId),
+        nowMs,
+        lastAttemptAtMs: lastAttempt,
+        lastSuccessfulCheckAtMs: lastSuccess,
+      })
+    ) {
+      continue;
+    }
+    if (providerClientUpdateTasks.startAutomaticUpdate(providerId)) {
+      repositories.settings.set(providerClientLastAttemptKey(providerId), nowMs, nowMs);
+    }
+  }
+}
+
+function startAutomaticProviderClientUpdates(): void {
+  if (!providerClientUpdateTasks) return;
+  try {
+    runAutomaticProviderClientUpdates();
+  } catch (error) {
+    app.log.warn({ error }, 'automatic provider app update check failed');
+  }
+  providerClientUpdateTimer = setInterval(() => {
+    try {
+      runAutomaticProviderClientUpdates();
+    } catch (error) {
+      app.log.warn({ error }, 'automatic provider app update check failed');
+    }
+  }, 60_000);
 }
 
 function seedProvider(
@@ -327,6 +533,56 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+async function initializeProviderRuntime(): Promise<ProviderClientRuntimeStore | undefined> {
+  if (!config.AWM_PROVIDER_CLIENT_RUNTIME_ROOT) return undefined;
+  const manifestPath = path.resolve(process.cwd(), 'provider-clients.lock.json');
+  const manifestValue: unknown = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const architecture: ProviderArchitecture = providerArchitectureFromNode(process.arch);
+  const store = new ProviderClientRuntimeStore({
+    runtimeRoot: config.AWM_PROVIDER_CLIENT_RUNTIME_ROOT,
+    packagedClients: packagedProviderClients(manifestValue, {
+      codex: '/opt/codex/bin/codex',
+      antigravity: '/opt/antigravity/bin/agy',
+    }),
+    downloadArchive: createOfficialArchiveDownloader({ architecture }),
+    compatibilityProbe: async (request, signal) => {
+      if (
+        request.purpose !== 'read-only-compatibility-probe' ||
+        request.quotaConsumptionAllowed !== false
+      ) {
+        throw new Error('provider app update probe must be read-only');
+      }
+      const adapter =
+        request.providerId === 'codex'
+          ? new CodexProvider({
+              codexHome: config.AWM_CODEX_HOME,
+              executable: request.executablePath,
+              requestTimeoutMs: 20_000,
+              triggerEnabled: false,
+            })
+          : new AntigravityProvider({
+              executable: request.executablePath,
+              cwd: config.AWM_ANTIGRAVITY_HOME,
+              timeoutMs: 45_000,
+              triggerEnabled: false,
+            });
+      const observation = await adapter.inspect({ signal });
+      const expectedAuthSummary =
+        request.providerId === 'codex' ? 'CODEX_AUTH_REQUIRED' : 'AGY_AUTH_REQUIRED';
+      if (
+        observation.health === 'UP' ||
+        observation.health === 'DEGRADED' ||
+        (observation.health === 'AUTH_REQUIRED' && observation.summary === expectedAuthSummary)
+      ) {
+        return;
+      }
+      throw new Error('provider app update compatibility probe failed');
+    },
+  });
+  await store.initialize();
+  return store;
+}
+
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     void shutdown(signal)
@@ -336,7 +592,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 }
 
 await reconciler.reconcile();
-await executor.executeDue();
+await executeActionsAndCleanup();
 refreshRuntimeMetrics();
 processUsageAggregation();
 runRetentionMaintenance(db, { clock });
@@ -345,3 +601,4 @@ startExecutorLoop();
 startRetentionLoop();
 usageAggregationTimer.current = setInterval(processUsageAggregation, 1_000);
 await app.listen({ host: config.AWM_BIND, port: config.AWM_PORT });
+startAutomaticProviderClientUpdates();

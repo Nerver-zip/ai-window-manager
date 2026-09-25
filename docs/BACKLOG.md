@@ -91,6 +91,47 @@ product state is served. This does not introduce multi-user account management.
 No account recovery, signup, roles, multi-user support, OAuth/OIDC, trusted
 identity headers or credential storage in SQLite is in scope.
 
+## Product completion & provider lifecycle milestone — implemented
+
+The reviewed sprint closes the onboarding, lifecycle, cleanup, provider-client
+update, Usage presentation, and independent Antigravity-policy slices. UI/auth
+flows and ordinary provider tests are offline and do not consume quota.
+
+- **WEB-ONBOARD-001 — Discoverable provider setup**: Overview's disconnected
+  provider action opens the matching Settings connection card; the official
+  provider flow remains owned by its CLI.
+- **AUTH-CODE-001 — Reliable sign-in-code display/copy**: rendered code is the
+  single source for copy/selection; HTTP clipboard fallback selects the exact
+  displayed value; code remains only in the bounded in-memory auth session.
+- **STORAGE-LIFECYCLE-001 — Bounded provider history**: 90-day raw samples and
+  ordinary events, 400-day derived Usage intervals, 365-day lifecycle/action
+  history; unresolved intents and cleanup jobs survive retention. Paused,
+  disconnected and hidden provider records still age normally.
+- **ACTION-CLEANUP-001 — Disposable trigger artifacts**: Codex thread IDs are
+  persisted before `turn/start` and removed through official `thread/delete`;
+  Antigravity stream `init` conversation UUIDs are persisted before prompt
+  input. Cleanup retries independently and never retries a trigger. Antigravity
+  uses only explicitly authorized per-ID local file deletion under the isolated
+  AWM home, not a supported delete API; its storage layout is a remaining risk.
+- **RUNTIME-CLIENT-001 — Provider client lifecycle**: one manifest pins Codex
+  `0.157.0` and Antigravity `1.2.11` (official stable release check on
+  2026-09-25) with architecture digests; manual update/rollback, optional
+  off-by-default daily automatic updates, bounded staging and read-only
+  compatibility checks are implemented. A scheduled workflow proposes
+  validated pin changes by review-only PR.
+- **USAGE-UI-001 — Usage clarity/accessibility**: all Antigravity charts name
+  family and cadence, chart ranges stay independent, only weekly windows feed
+  the daily heatmap, and the redundant global selector/footer/day-list are
+  absent while keyboard-accessible calendar navigation remains.
+- **AGY-POLICY-001 — Independent family policies**: Gemini and Claude/GPT
+  configuration remains separate; SQLite claim rules and the executor serialize
+  open quota-consuming actions provider-wide until confirmation/safe resolution.
+
+No live provider inspection, sign-in, trigger, or production container was used
+to validate these implementation changes. Existing operator-provided account
+evidence remains documented separately in `docs/research/spikes/SPIKE-004*`
+and `SPIKE-005*`.
+
 ## CORE-001 — Finalize evidence/window domain types
 
 **Scope**: implement validated domain types and invariants for facts, provider health, window phase, observations and capabilities.  
@@ -139,7 +180,7 @@ identity headers or credential storage in SQLite is in scope.
 
 ## SCHED-003 — Implement action-intent execution/recovery
 
-**Status: complete (2026-09-19) for the generic safe executor boundary; Antigravity's official-CLI action is tracked separately under AGY-TRIGGER-001.**
+**Status: complete for generic execution/recovery; provider-wide atomic claim protection additionally serializes quota triggers across policy scopes. Antigravity's official-CLI action remains tracked under AGY-TRIGGER-001.**
 
 **Scope**: claim, dispatch, confirm, uncertain recovery, retry classes, missed-action skip.  
 **Acceptance**: DB unique dedupe protects duplicate trigger; crash-at-each-stage integration tests.  
@@ -168,11 +209,14 @@ requires review of both new policies before any migrated automatic action.
 
 **Status: implemented with offline tests; integrated live action acceptance is pending.**
 
-Use only the pinned official `agy` CLI with one fixed `Hi!`, the model mapped
-to the exact selected quota family, a durable intent, fresh target-window
-preflight/confirmation, and no blind retry after any ambiguous post-spawn
-result. `AWM_ANTIGRAVITY_TRIGGER_ENABLED` defaults to true; set it to false to
-opt out. CI uses synthetic processes and never spends quota.
+Use the pinned official `agy` CLI stream-JSON protocol with one fixed `Hi!`,
+the model mapped to the exact selected quota family, a durable intent and a
+durable exact-ID conversation cleanup job before prompt dispatch. Retain fresh
+target-window preflight/confirmation and no blind retry after an ambiguous
+post-dispatch result. Cleanup retries deletion only. `AWM_ANTIGRAVITY_TRIGGER_ENABLED`
+defaults to true; set it to false to opt out. CI uses synthetic processes and
+never spends quota. AWM currently deletes only the authorized exact-ID local
+conversation artifacts; there is no official machine delete API in use.
 
 ## WEB-005 — Add safe manual start controls to Overview
 
@@ -333,9 +377,10 @@ work).
 
 **Scope**: package a pinned official Codex release with architecture checksums,
 an isolated persistent state volume and an unauthenticated app-server startup
-probe. Keep Codex disabled by default and do not add trigger capability.  
-**Acceptance**: runtime reports `codex-cli 0.155.1`, initializes as UID 10001,
-and does not copy workstation credentials.  
+probe. The canonical version and digest are maintained in
+`provider-clients.lock.json`.
+**Acceptance**: runtime reports the manifest's Codex version, initializes as
+UID 10001, and does not copy workstation credentials.
 **Dependencies**: SPIKE-001, Docker hardening.
 
 ## SPIKE-004 — Validate Codex window lifecycle semantics

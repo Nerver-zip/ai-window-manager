@@ -103,7 +103,13 @@ export interface UpcomingScheduleItem {
 }
 
 const ACTIONABLE_CONFIDENCE = new Set(['exact', 'high']);
-const OPEN_INTENT_STATES = new Set(['planned', 'executing', 'failed_retryable']);
+const OPEN_INTENT_STATES = new Set([
+  'planned',
+  'executing',
+  'succeeded',
+  'uncertain',
+  'failed_retryable',
+]);
 
 export function planWindowAction(input: PlannerInput): PlannerDecision {
   const base = {
@@ -362,7 +368,7 @@ function start(
   const dedupeKey = [input.providerId, 'start_window', input.policy.id, anchor.toISOString()].join(
     ':',
   );
-  if (hasPendingEquivalent(input.pendingIntents, dedupeKey)) {
+  if (hasPendingProviderAction(input.pendingIntents)) {
     return wait(
       {
         ...base,
@@ -588,13 +594,10 @@ function observationAgeSeconds(
   };
 }
 
-function hasPendingEquivalent(
-  intents: readonly PlannerIntentLike[] | undefined,
-  dedupeKey: string,
-): boolean {
+function hasPendingProviderAction(intents: readonly PlannerIntentLike[] | undefined): boolean {
   return Boolean(
     intents?.some(
-      (intent) => intent.dedupeKey === dedupeKey && OPEN_INTENT_STATES.has(intent.state),
+      (intent) => intent.actionType === 'trigger_window' && OPEN_INTENT_STATES.has(intent.state),
     ),
   );
 }

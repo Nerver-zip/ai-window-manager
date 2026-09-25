@@ -1,7 +1,7 @@
 # AI Window Manager — implementation plan
 
-Prepared: **2026-09-19**
-Scope: safe observation-to-action-intent vertical slice; quota-consuming provider actions default on for configured providers and remain explicitly disableable.
+Prepared: **2026-09-25**
+Scope: self-hosted Codex + Antigravity usage-window monitoring, bounded history, explicit scheduling, safe minimal triggers, provider lifecycle/update management and a private operator UI. Quota-consuming provider actions default on for configured providers and remain explicitly disableable.
 
 ## A. Executive summary
 
@@ -13,51 +13,43 @@ The primary implementation strategy is to reach a vertical slice early with `Fak
 
 ## Current milestone status
 
-Completed: `SCHED-001`, `TIME-001`, `SCHED-002`, `CODEX-001`, `WEB-001`,
-`WEB-003`, `SCHED-003`, `SEC-001`, `API-001`, `API-002`, `METRICS-001`,
-`STORAGE-002`, `OPS-001`, `OPS-002`, `CI-001`, and `DOC-001`.
-The executor is quota-safe by default, confirms outcomes with fresh observation,
-and recovers persisted in-flight work as uncertain. `WEB-002` now provides the
-non-secret provider settings and target-reset schedule forms. Usage reads a
-persisted reset-safe weekly-usage projection; Logs remains a bounded event
-timeline. Neither read page inspects providers. Daily aggregate visualization
-is delivered; work-window recommendations and broader statistics remain out of
-scope.
-`CODEX-002` is implemented behind an explicit trigger gate and has passed one
-operator-authorized live `Hi!` heartbeat acceptance; production enablement
-remains explicit and the action path now has a separate bounded timeout with
-uncertain-outcome confirmation. Provider onboarding now supervises official
-Codex and Antigravity sign-in processes in memory; Antigravity read-only
-observation and an isolated optional keyring runtime are implemented. On
-2026-09-24, existing Codex and Antigravity sessions in the local `awm`
-deployment survived forced recreation and `docker compose restart`; both
-providers resumed fresh read-only observations. This is instance-specific and
-does not replace fresh sign-in acceptance in another deployment.
-`WINDOW-001` and `WEB-005` now provide exact target scoping
-and safe per-window manual controls. `WINDOW-001` restricts each provider to one exact selected
-window for policy planning. `ANT-002` has account-specific operator evidence
-recorded in `SPIKE-005`; `AGY-TRIGGER-001` implements an official-CLI
-action with synthetic process coverage, but live AWM action acceptance remains
-pending. The Antigravity effect is experimental and not a provider-wide
-guarantee. Work-window recommendations and broader statistics remain out of
-scope.
+The observation, normalized-state, durable scheduling, operator-authentication,
+provider onboarding, Usage analytics, and authenticated Docker-smoke slices are
+implemented. Overview routes a disconnected operator directly to the matching
+provider Settings sign-in card. Displayed sign-in codes have one source of truth
+for selection/copy and remain only in the in-memory auth session.
 
-Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one environment-gated ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. In the gate-enabled local profile, automatic starts are the default unless the operator explicitly disables them. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
+Data lifecycle is bounded: detailed samples and ordinary events age out after
+90 days, aggregate Usage intervals after 400 days, and lifecycle/action history
+after 365 days. Open or uncertain intents and pending provider cleanup jobs are
+not pruned. Codex trigger threads are registered before `turn/start` and deleted
+through official `thread/delete`. Antigravity trigger streams register the exact
+conversation UUID before `Hi!`; cleanup removes only that UUID's local database,
+sidecars and brain directory under AWM's isolated CLI home. This is exact-ID
+filesystem cleanup, not an official Antigravity delete API, and remains coupled
+to the observed storage layout.
 
-Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless
-`agy -p`, and official keyring auth. SPIKE-002 validated a structured official
-headless usage path; SPIKE-003 recorded the original container-auth blocker.
-The project later accepted a self-hosted single-operator integration through
-the official CLI, with a dedicated D-Bus/Secret-Service/keyring runtime and
-optional mounted unlock file. No token extraction or backend impersonation is
-allowed. SPIKE-005 records operator-provided evidence that one `Hi!` anchored
-the selected family's five-hour window on one account/CLI/model path. This is
-not a universal guarantee. The official-CLI action is implemented behind an
-independent gate that defaults on for configured providers and can be disabled
-through environment or persisted settings. Live AWM action
-acceptance remains pending.
-Authenticated state reuse after recreation/restart was verified for the local
-operator deployment on 2026-09-24; this does not generalize to a fresh install.
+Provider clients are pinned in `provider-clients.lock.json` with per-architecture
+SHA-256 digests (Codex `0.157.0`, Antigravity `1.2.11` at the 2026-09-25 release
+check). The image retains immutable fallback executables; a separate volume
+supports bounded staging, read-only compatibility checks, atomic activation and
+one-version rollback. Manual check/update/rollback are available in Settings;
+optional daily automatic updates default off. A scheduled workflow validates
+new source pins and opens a review-only PR, never auto-merging.
+
+The Usage view identifies all Antigravity family/cadence charts, keeps periods
+independent, selects only weekly sources for the heatmap, and omits the redundant
+global selector and alternate day list. Antigravity schedules persist
+independently for Gemini and Claude/GPT; provider-wide trigger serialization
+still blocks a second open action through confirmation. Codex retains one policy.
+
+Codex's one ordinary `Hi!` action has operator-authorized live heartbeat
+evidence. Antigravity's window-start effect has account/CLI/model-specific
+operator evidence in `SPIKE-005`, not a universal guarantee. No provider login,
+inspection, quota-consuming trigger, or production container was exercised in
+this implementation run. Fresh Web-assisted login and live cleanup remain
+operator acceptance activities. Work-window recommendations and richer
+analytics remain deferred.
 
 The stack is Node 24 + TypeScript + Fastify + SQLite (`better-sqlite3`) + server-rendered HTML/tiny JS + `prom-client` + Vitest + pnpm. One service/container; no Redis/Postgres/broker/React/Kubernetes. Environment owns process/bootstrap config; SQLite owns mutable runtime config; secrets live in dedicated provider-owned/mounted storage.
 
@@ -546,7 +538,8 @@ effect is not a universal start-window guarantee.
 
 ### Phase 7 — Settings/logs/usage polish
 
-**Status: Usage heatmap and independent charts complete; richer recommendations
+**Status: complete for onboarding discoverability, bounded history, Usage chart
+identity/accessibility and retention presentation; richer recommendations
 deferred.**
 
 **Goal**: complete small UI/API, readable event history, and reset-safe daily
@@ -555,9 +548,11 @@ usage visualization.
 allowance consumption by local day, and independent per-window trends without
 provider I/O.
 
-### Phase 8 — Hardening/acceptance
+### Phase 8 — Hardening, provider lifecycle and acceptance
 
-**Status: baseline complete; final release evidence is maintained in the audit report.**
+**Status: complete for bounded lifecycle, disposable trigger-artifact cleanup,
+provider-client update/rollback and review-only source-pin workflow. Live
+provider behavior acceptance remains operator-run.**
 
 **Goal**: CI, Docker security, retention, docs/skills, clean install/upgrade.  
 **Acceptance**: global DoD below.

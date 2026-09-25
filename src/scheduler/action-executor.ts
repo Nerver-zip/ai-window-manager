@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { parseProviderObservation } from '../domain/schemas.js';
+import type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
 import { activationPolicyId, policyScopeForWindowKind } from './policy-scope.js';
 import type {
@@ -46,6 +48,8 @@ export interface ActionExecutorInput {
   db: SqliteDatabase;
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
+  /** Defers provider reads/actions while its executable is being replaced or rolled back. */
+  isProviderRuntimeChanging?: (providerId: string) => boolean;
   retryDelayMs?: number;
   onPhase?: (phase: ActionExecutorPhase, intent: ActionIntentRecord) => void | Promise<void>;
   onTrigger?: (providerId: string, result: ProviderActionStatus) => void;
@@ -71,6 +75,7 @@ const definitelyPreDispatchErrors = new Set([
   'PROCESS_START_FAILED',
   'PROVIDER_NOT_AVAILABLE',
   'PROVIDER_UNAVAILABLE',
+  'CLEANUP_REGISTRATION_FAILED',
 ]);
 
 export class ActionExecutor {
@@ -94,18 +99,31 @@ export class ActionExecutor {
     const nowMs = this.input.clock.now().getTime();
     const report = emptyReport(false);
     this.recoverExecuting(nowMs, report);
+    const handledProviderIds = new Set<string>();
 
     for (const intent of this.input.repositories.actionIntents.listOpen()) {
       const current = this.input.repositories.actionIntents.get(intent.id);
       if (!current) continue;
+      if (handledProviderIds.has(current.providerId)) continue;
 
       if (current.state === 'uncertain' || current.state === 'succeeded') {
+        // Existing outcomes must be resolved before a sibling family may run.
+        // Even if confirmation succeeds now, the sibling is reconsidered next tick.
+        handledProviderIds.add(current.providerId);
         await this.confirmExisting(current, report);
         continue;
       }
 
       if (current.state !== 'planned' && current.state !== 'failed_retryable') continue;
+      const previousAttemptCount = current.attemptCount;
       await this.executeCandidate(current, report);
+      const updated = this.input.repositories.actionIntents.get(current.id);
+      // Skipped/expired intents did not cross the action boundary and should
+      // not starve a later valid intent. Once claimed, however, serialize this
+      // provider for the rest of the tick regardless of the immediate outcome.
+      if (updated && updated.attemptCount > previousAttemptCount) {
+        handledProviderIds.add(current.providerId);
+      }
     }
 
     return report;
@@ -131,6 +149,7 @@ export class ActionExecutor {
     intent: ActionIntentRecord,
     report: ActionExecutorReport,
   ): Promise<void> {
+    if (this.input.isProviderRuntimeChanging?.(intent.providerId)) return;
     const nowMs = this.input.clock.now().getTime();
     if (intent.expiresAtMs !== null && intentExpired(intent, nowMs)) {
       if (
@@ -202,7 +221,27 @@ export class ActionExecutor {
     let result: ProviderActionResult;
     try {
       result = await adapter.triggerWindow(
-        {},
+        {
+          registerCleanupArtifact: (artifact: ProviderCleanupArtifact) =>
+            Promise.resolve().then(() => {
+              const registeredAtMs = this.input.clock.now().getTime();
+              if (!Number.isSafeInteger(registeredAtMs)) {
+                throw new Error('cleanup registration clock is invalid');
+              }
+              this.input.repositories.providerCleanupJobs.createIfAbsent({
+                id: randomUUID(),
+                providerId: claimed.providerId,
+                artifactKind: artifact.kind,
+                externalId: artifact.externalId,
+                state: 'pending',
+                attemptCount: 0,
+                notBeforeMs: registeredAtMs,
+                lastErrorCode: null,
+                createdAtMs: registeredAtMs,
+                updatedAtMs: registeredAtMs,
+              });
+            }),
+        },
         {
           intentId: claimed.id,
           dedupeKey: claimed.dedupeKey,

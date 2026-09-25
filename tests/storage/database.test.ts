@@ -27,6 +27,7 @@ describe('openDatabase', () => {
       { version: 4, applied_at_ms: appliedAtMs },
       { version: 5, applied_at_ms: appliedAtMs },
       { version: 6, applied_at_ms: appliedAtMs },
+      { version: 7, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -45,7 +46,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(6);
+    ).toBe(7);
     reopened.close();
   });
 
@@ -110,6 +111,7 @@ describe('openDatabase', () => {
       { version: 4 },
       { version: 5 },
       { version: 6 },
+      { version: 7 },
     ]);
     expect(
       upgraded
@@ -120,6 +122,52 @@ describe('openDatabase', () => {
     ).toEqual({ name: 'phase_confidence' });
     expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     upgraded.close();
+  });
+
+  it('applies provider cleanup migration 007 to a version-six database exactly once', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-provider-cleanup-upgrade-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'awm.db');
+    const versionSixMigrations = path.join(dir, 'version-six-migrations');
+    fs.mkdirSync(versionSixMigrations);
+    for (let version = 1; version <= 6; version += 1) {
+      const migration = fs
+        .readdirSync(path.resolve('migrations'))
+        .find((name) => name.startsWith(`${String(version).padStart(3, '0')}_`));
+      if (!migration) throw new Error(`missing migration ${version}`);
+      fs.copyFileSync(
+        path.resolve('migrations', migration),
+        path.join(versionSixMigrations, migration),
+      );
+    }
+
+    const previous = openDatabase(file, { migrationsDir: versionSixMigrations });
+    expect(previous.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
+      {
+        version: 6,
+      },
+    );
+    previous.close();
+
+    const upgraded = openDatabase(file);
+    expect(
+      upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
+    ).toHaveLength(7);
+    expect(
+      upgraded
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'provider_cleanup_jobs'",
+        )
+        .get(),
+    ).toEqual({ name: 'provider_cleanup_jobs' });
+    expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    upgraded.close();
+
+    const reopened = openDatabase(file);
+    expect(
+      reopened.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 7').get(),
+    ).toEqual({ count: 1 });
+    reopened.close();
   });
 
   it('recovers explicit automation preferences from the settings audit during upgrade', () => {

@@ -29,3 +29,4 @@ export {
   type AntigravityUsageCommandOptions,
   type AntigravityTriggerCommandOptions,
 } from './transport.js';
+export { AntigravityCleanupError, deleteAntigravityConversation } from './cleanup.js';

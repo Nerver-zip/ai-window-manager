@@ -109,6 +109,28 @@ export interface SettingsProviderView {
   configured?: boolean | undefined;
   connectionLabel?: string | undefined;
   triggerModels?: { gemini: string; claudeGpt: string } | undefined;
+  providerClientUpdate?: {
+    packagedVersion: string | null;
+    activeVersion: string | null;
+    previousVersion: string | null;
+    availableVersion: string | null;
+    updateAvailable: boolean;
+    status:
+      | 'idle'
+      | 'checking'
+      | 'current'
+      | 'update_available'
+      | 'updating'
+      | 'updated'
+      | 'rolling_back'
+      | 'rolled_back'
+      | 'blocked'
+      | 'error';
+    lastCheckedAt: string | null;
+    lastUpdatedAt: string | null;
+    lastErrorCode: string | null;
+    autoUpdate: boolean;
+  };
 }
 
 export interface SettingsPageInput {
@@ -992,8 +1014,109 @@ function renderProviderCard(
       </div></fieldset>
       <div class="form-actions"><button type="submit">Save settings</button></div>
     </form>
+    ${renderProviderClientUpdates(provider, csrfToken)}
     <details class="capability-details"><summary>What this provider can do</summary>${renderCapabilitySummary(provider.capabilities)}</details>
   </article>`;
+}
+
+function renderProviderClientUpdates(provider: SettingsProviderView, csrfToken: string): string {
+  const update = provider.providerClientUpdate;
+  if (!update) return '';
+
+  const actionBase = `/settings/provider-clients/${encodeURIComponent(provider.id)}`;
+  const updateStatus = providerClientUpdateStatus(update.status, update.lastErrorCode);
+  const latestVersion = update.availableVersion ?? 'Not checked';
+  const lastChecked = renderProviderClientTimestamp('Last checked', update.lastCheckedAt);
+  const lastUpdated = renderProviderClientTimestamp('Last changed', update.lastUpdatedAt);
+
+  return `<section class="provider-client-updates" aria-labelledby="provider-${safeId(provider.id)}-updates-title">
+    <h4 id="provider-${safeId(provider.id)}-updates-title">Provider app updates</h4>
+    <p class="field-help">The service can use a newer official provider app without rebuilding the image. The image version remains available as a fallback.</p>
+    <dl class="provider-client-versions">
+      <div><dt>Active version</dt><dd>${escapeHtml(update.activeVersion ?? 'Unknown')}</dd></div>
+      <div><dt>Image version</dt><dd>${escapeHtml(update.packagedVersion ?? 'Unknown')}</dd></div>
+      <div><dt>Latest stable</dt><dd>${escapeHtml(latestVersion)}</dd></div>
+    </dl>
+    <p class="provider-client-update-status" role="status"><strong>Status:</strong> ${escapeHtml(updateStatus.label)}${updateStatus.detail ? ` <span class="field-help">${escapeHtml(updateStatus.detail)}</span>` : ''}</p>
+    ${lastChecked}${lastUpdated}
+    <div class="provider-client-update-actions" aria-label="Provider app update actions">
+      ${renderProviderClientAction(`${actionBase}/check`, csrfToken, 'Check for updates')}
+      ${renderProviderClientAction(`${actionBase}/update`, csrfToken, 'Install update', !update.updateAvailable)}
+      ${renderProviderClientAction(`${actionBase}/rollback`, csrfToken, 'Restore previous version', !update.previousVersion)}
+    </div>
+    <form method="post" action="${escapeAttribute(`${actionBase}/auto-update`)}" class="provider-client-auto-update">
+      ${csrfInput(csrfToken)}
+      <label><input type="checkbox" name="autoUpdate" value="true"${update.autoUpdate ? ' checked' : ''}> Automatically install stable updates</label>
+      <p class="field-help">When enabled, the service checks for and installs stable releases while this provider is idle.</p>
+      <div class="form-actions"><button type="submit">Save update preference</button></div>
+    </form>
+  </section>`;
+}
+
+function renderProviderClientAction(
+  action: string,
+  csrfToken: string,
+  label: string,
+  disabled = false,
+): string {
+  return `<form method="post" action="${escapeAttribute(action)}">${csrfInput(csrfToken)}<button type="submit"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button></form>`;
+}
+
+function providerClientUpdateStatus(
+  status: NonNullable<SettingsProviderView['providerClientUpdate']>['status'],
+  errorCode: string | null,
+): { label: string; detail?: string } {
+  switch (status) {
+    case 'idle':
+      return { label: 'Not checked yet' };
+    case 'checking':
+      return { label: 'Checking for updates…' };
+    case 'current':
+      return { label: 'Up to date' };
+    case 'update_available':
+      return { label: 'Update available' };
+    case 'updating':
+      return { label: 'Installing update…' };
+    case 'updated':
+      return { label: 'Updated successfully' };
+    case 'rolling_back':
+      return { label: 'Restoring previous version…' };
+    case 'rolled_back':
+      return { label: 'Previous version restored' };
+    case 'blocked':
+      return {
+        label: 'Update paused',
+        detail:
+          errorCode === 'UPDATE_BLOCKED_PROVIDER_BUSY'
+            ? 'Wait until this provider is idle, then try again.'
+            : 'The provider app cannot be changed right now.',
+      };
+    case 'error':
+      return {
+        label: 'Update could not be completed',
+        detail:
+          errorCode === 'RELEASE_RESOLUTION_FAILED'
+            ? 'The official stable release could not be checked. Try again later.'
+            : errorCode === 'UPDATE_VALIDATION_FAILED'
+              ? 'The downloaded version did not pass validation. The current version remains active.'
+              : errorCode === 'UPDATE_INSTALL_FAILED'
+                ? 'The new version could not be installed. The current version remains available.'
+                : errorCode === 'ROLLBACK_FAILED'
+                  ? 'The previous version could not be restored.'
+                  : errorCode === 'RUNTIME_STATE_UNAVAILABLE'
+                    ? 'Provider app storage is unavailable. Check the service storage volume.'
+                    : 'Check the service logs, then try again.',
+      };
+  }
+}
+
+function renderProviderClientTimestamp(label: string, value: string | null): string {
+  if (!value) return '';
+  const timestamp = Date.parse(value);
+  const formatted = Number.isFinite(timestamp)
+    ? `${new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(timestamp)} UTC`
+    : value;
+  return `<p class="field-help"><strong>${escapeHtml(label)}:</strong> <time${Number.isFinite(timestamp) ? ` datetime="${escapeAttribute(value)}"` : ''}>${escapeHtml(formatted)}</time></p>`;
 }
 
 function providerConnectionState(

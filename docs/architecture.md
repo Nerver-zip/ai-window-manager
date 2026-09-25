@@ -90,14 +90,32 @@ planned intent
 ```
 
 For Codex the action is one `turn/start` through the official app-server. For
-Antigravity the experimental action is one fixed `Hi!` invocation through
-the official headless `agy -p` CLI. The application enables automatic starts
-by default for configured providers; operators can opt out in settings or
-through the corresponding environment gate. The scheduler and generic executor
-contain no provider endpoint, token format, CLI model semantics, or credential
-parsing. Each intent stores one exact normalized window target. Antigravity has
-independent policy IDs for the Gemini and Claude/GPT families, each constrained
-to its own allowlisted window keys.
+Antigravity the experimental action uses the official `agy` stream-JSON
+headless protocol, registers its returned conversation ID durably, then sends
+one fixed `Hi!` message. Both triggers create disposable provider-side chats;
+their deletion runs in a separate durable cleanup worker and never changes the
+ActionIntent result or retries the prompt. Codex uses official `thread/delete`.
+Antigravity cleanup removes only the exact conversation-ID files/directories
+under AWM's dedicated CLI home; no other conversation, shared index, auth or
+keyring path is touched. This is local filesystem cleanup, not an official
+Antigravity deletion API.
+
+The application enables automatic starts by default for configured providers;
+operators can opt out in settings or through the corresponding environment
+gate. The scheduler and generic executor contain no provider endpoint, token
+format, CLI model semantics, or credential parsing. Each intent stores one
+exact normalized window target. Antigravity has independent policy IDs for the
+Gemini and Claude/GPT families, each constrained to its own allowlisted window
+keys. Policies are independent; trigger dispatch remains provider-wide
+serialized across families until confirmation or safe terminal resolution.
+
+Provider clients have immutable image-packaged fallbacks and a separate
+writable `/provider-clients` volume for staged runtime versions. Updates resolve
+only from the two official stable-release sources, require published SHA-256
+digests, run bounded version and read-only compatibility probes, and activate
+atomically with one rollback version. No credentials or quota-consuming
+actions are used for update validation; automatic stable updates are an
+off-by-default SQLite preference.
 
 HTTP handlers do not inspect providers or dispatch actions. Settings and
 activation-policy forms validate non-secret values and persist them in SQLite; all
@@ -117,6 +135,12 @@ action synchronously.
 ## Reconciler over durable timers
 
 The daemon wakes every configurable interval (default 30 seconds), loads runtime config/current state/open intents, inspects due providers, computes decisions, and advances intents. Scheduling correctness comes from persisted state + current time, not from a `setTimeout` expected to survive restarts.
+
+After a provider trigger's artifact ID is known, the adapter persists a
+`provider_cleanup_jobs` obligation before sending the prompt. A bounded worker
+retries only idempotent deletion with backoff. Cleanup is independent from
+action confirmation, and unresolved cleanup jobs block executable updates for
+that provider.
 
 ## Last-known-good behavior
 

@@ -20,6 +20,7 @@ export function renderRetentionSummary(): string {
       <div><dt>Important activity</dt><dd>${retentionDays(policy.lifecycleEventsMs)} <span>Provider and schedule changes, start attempts, and security events.</span></dd></div>
       <div><dt>Completed or closed starts</dt><dd>${retentionDays(policy.terminalActionIntentsMs)}</dd></div>
       <div><dt>Starts still under review</dt><dd>Kept until the system can safely confirm or stop them.</dd></div>
+      <div><dt>Temporary start chats</dt><dd>Cleaned up separately after a start; retrying cleanup never repeats the start.</dd></div>
     </dl>
   </section>`;
 }

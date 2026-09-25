@@ -8,6 +8,7 @@ describe('loadConfig', () => {
 
     expect(config.AWM_BIND).toBe('0.0.0.0');
     expect(config.AWM_PORT).toBe(8787);
+    expect(config.AWM_PROVIDER_CLIENT_RUNTIME_ROOT).toBe('');
     expect(config.AWM_TIMEZONE).toBe('America/Sao_Paulo');
     expect(config.AWM_FAKE_PROVIDER_ENABLED).toBe(false);
     expect(config.AWM_CODEX_ENABLED).toBe(false);
@@ -44,6 +45,16 @@ describe('loadConfig', () => {
 
   it('rejects an invalid timezone before startup', () => {
     expect(() => loadTestConfig({ AWM_TIMEZONE: 'Not/AZone' })).toThrow(/valid IANA timezone/);
+  });
+
+  it('accepts only absolute provider-client runtime roots when runtime updates are enabled', () => {
+    expect(
+      loadTestConfig({ AWM_PROVIDER_CLIENT_RUNTIME_ROOT: '/provider-clients' })
+        .AWM_PROVIDER_CLIENT_RUNTIME_ROOT,
+    ).toBe('/provider-clients');
+    expect(() => loadTestConfig({ AWM_PROVIDER_CLIENT_RUNTIME_ROOT: 'relative/runtime' })).toThrow(
+      /AWM_PROVIDER_CLIENT_RUNTIME_ROOT must be an absolute path/,
+    );
   });
 
   it('requires a valid single-operator username and approved Argon2id hash', () => {

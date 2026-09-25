@@ -18,6 +18,8 @@ function providerFor(response: unknown, now = '2026-09-19T12:00:00.000Z'): Codex
   });
 }
 
+const cleanupContext = { registerCleanupArtifact: () => Promise.resolve() };
+
 describe('CodexProvider', () => {
   it('is exported from the provider boundary', () => {
     expect(ExportedCodexProvider).toBe(CodexProvider);
@@ -70,6 +72,7 @@ describe('CodexProvider', () => {
 
   it('sends the fixed minimal message through the official app-server turn flow', async () => {
     const methods: string[] = [];
+    const lifecycle: string[] = [];
     const provider = new CodexProvider({
       codexHome: '/tmp/awm-codex-test-home',
       triggerEnabled: true,
@@ -84,6 +87,7 @@ describe('CodexProvider', () => {
           process.send({ id: request.id, result: { thread: { id: 'thread-1' } } });
         }
         if (request.method === 'turn/start' && request.id !== undefined) {
+          lifecycle.push('turn:start');
           expect(request.params).toMatchObject({
             threadId: 'thread-1',
             input: [{ type: 'text', text: 'Hi!' }],
@@ -106,17 +110,198 @@ describe('CodexProvider', () => {
       }),
     });
 
+    const result = await provider.triggerWindow(
+      {
+        registerCleanupArtifact: (artifact) =>
+          Promise.resolve().then(() => {
+            expect(artifact).toEqual({ kind: 'codex_thread', externalId: 'thread-1' });
+            lifecycle.push('registered');
+          }),
+      },
+      { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
+    );
+    expect(result).toMatchObject({
+      status: 'succeeded',
+      confirmationHint: 'CODEX_TURN_COMPLETED',
+      occurredAt: '2026-09-19T12:00:00.000Z',
+    });
+    expect(JSON.stringify(result)).not.toMatch(/thread-1|turn-1|Hi!/);
+    expect(lifecycle).toEqual(['registered', 'turn:start']);
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'turn/start']);
+  });
+
+  it('refuses to create a trigger thread without a durable cleanup registrar', async () => {
+    const methods: string[] = [];
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      triggerEnabled: true,
+      now: () => new Date('2026-09-19T12:00:00.000Z'),
+      spawnProcess: fakeProcessFactory((request) => {
+        if (request.method) methods.push(request.method);
+      }),
+    });
+
     await expect(
       provider.triggerWindow(
         {},
         { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
       ),
     ).resolves.toMatchObject({
-      status: 'succeeded',
-      confirmationHint: 'CODEX_TURN_COMPLETED',
-      occurredAt: '2026-09-19T12:00:00.000Z',
+      status: 'rejected',
+      errorCode: 'CODEX_CLEANUP_REGISTRATION_REQUIRED',
     });
-    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'turn/start']);
+    expect(methods).toEqual([]);
+  });
+
+  it('maps failed durable registration to a sanitized rejection after best-effort deletion', async () => {
+    const methods: string[] = [];
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      triggerEnabled: true,
+      now: () => new Date('2026-09-19T12:00:00.000Z'),
+      spawnProcess: fakeProcessFactory((request, process) => {
+        if (request.method) methods.push(request.method);
+        if (request.method === 'initialize' && request.id !== undefined)
+          process.send({ id: request.id, result: {} });
+        if (request.method === 'thread/start' && request.id !== undefined)
+          process.send({ id: request.id, result: { thread: { id: 'private-thread-id' } } });
+        if (request.method === 'thread/delete' && request.id !== undefined)
+          process.send({ id: request.id, result: {} });
+      }),
+    });
+
+    const result = await provider.triggerWindow(
+      {
+        registerCleanupArtifact: () =>
+          Promise.reject(new Error('storage failure with private-thread-id')),
+      },
+      { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
+    );
+
+    expect(result).toMatchObject({
+      status: 'rejected',
+      errorCode: 'CODEX_CLEANUP_REGISTRATION_FAILED',
+    });
+    expect(JSON.stringify(result)).not.toContain('private-thread-id');
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'thread/delete']);
+  });
+
+  it('deletes a registered trigger thread through the official app-server method', async () => {
+    const methods: string[] = [];
+    let deleteParams: unknown;
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      triggerEnabled: true,
+      spawnProcess: fakeProcessFactory((request, process) => {
+        if (request.method) methods.push(request.method);
+        if (request.method === 'initialize' && request.id !== undefined)
+          process.send({ id: request.id, result: {} });
+        if (request.method === 'thread/delete' && request.id !== undefined) {
+          deleteParams = request.params;
+          process.send({ id: request.id, result: {} });
+        }
+      }),
+    });
+
+    await expect(
+      provider.cleanupArtifact({}, { kind: 'codex_thread', externalId: 'private-thread-id' }),
+    ).resolves.toBeUndefined();
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/delete']);
+    expect(deleteParams).toEqual({ threadId: 'private-thread-id' });
+  });
+
+  it('rejects cleanup artifacts owned by a different provider without spawning Codex', async () => {
+    let spawned = false;
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      spawnProcess: fakeProcessFactory(() => {
+        spawned = true;
+      }),
+    });
+
+    await expect(
+      provider.cleanupArtifact(
+        {},
+        {
+          kind: 'antigravity_conversation',
+          externalId: 'private-conversation-id',
+        },
+      ),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', stage: 'thread_delete' });
+    expect(spawned).toBe(false);
+  });
+
+  it.each(['', 'x'.repeat(257)])(
+    'rejects malformed persisted Codex thread IDs during cleanup',
+    async (externalId) => {
+      const methods: string[] = [];
+      const provider = new CodexProvider({
+        codexHome: '/tmp/awm-codex-test-home',
+        spawnProcess: fakeProcessFactory((request, process) => {
+          if (request.method) methods.push(request.method);
+          if (request.method === 'initialize' && request.id !== undefined)
+            process.send({ id: request.id, result: {} });
+        }),
+      });
+
+      await expect(
+        provider.cleanupArtifact({}, { kind: 'codex_thread', externalId }),
+      ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', stage: 'thread_delete' });
+      expect(methods).toEqual(['initialize', 'initialized']);
+    },
+  );
+
+  it('treats only a genuine missing-thread delete response as successful cleanup', async () => {
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      spawnProcess: fakeProcessFactory((request, process) => {
+        if (request.method === 'initialize' && request.id !== undefined)
+          process.send({ id: request.id, result: {} });
+        if (request.method === 'thread/delete' && request.id !== undefined)
+          process.send({
+            id: request.id,
+            error: { code: -32600, message: 'thread not found: private-thread-id' },
+          });
+      }),
+    });
+
+    await expect(
+      provider.cleanupArtifact({}, { kind: 'codex_thread', externalId: 'private-thread-id' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('keeps other cleanup failures retryable and sanitizes their diagnostics', async () => {
+    const provider = new CodexProvider({
+      codexHome: '/tmp/awm-codex-test-home',
+      spawnProcess: fakeProcessFactory((request, process) => {
+        if (request.method === 'initialize' && request.id !== undefined)
+          process.send({ id: request.id, result: {} });
+        if (request.method === 'thread/delete' && request.id !== undefined)
+          process.send({
+            id: request.id,
+            error: { code: -32600, message: 'permission denied for private-thread-id' },
+          });
+      }),
+    });
+
+    let failure: unknown;
+    try {
+      await provider.cleanupArtifact(
+        {},
+        {
+          kind: 'codex_thread',
+          externalId: 'private-thread-id',
+        },
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: 'PROTOCOL_ERROR',
+      stage: 'thread_delete',
+      message: 'Codex app-server protocol error',
+    });
+    expect(JSON.stringify(failure)).not.toContain('private-thread-id');
   });
 
   it('does not retry or hide an uncertain turn outcome', async () => {
@@ -140,10 +325,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
   });
 
@@ -151,10 +337,11 @@ describe('CodexProvider', () => {
     const provider = providerFor(fixture('rate-limits.partial.json'));
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode: 'CODEX_TRIGGER_DISABLED' });
   });
 
@@ -188,10 +375,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status, errorCode });
   });
 
@@ -215,10 +403,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'CODEX_TURN_START_REJECTED',
@@ -253,10 +442,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_FAILED' });
   });
 
@@ -549,10 +739,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'CODEX_INVALID_TIME',
@@ -574,10 +765,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status: 'failed', errorCode: 'PROCESS_START_FAILED' });
   });
 
@@ -597,10 +789,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
   });
 
@@ -613,10 +806,11 @@ describe('CodexProvider', () => {
       spawnProcess: fakeProcessFactory(() => undefined),
     });
 
-    const result = await provider.triggerWindow(
-      {},
-      { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-    );
+    const result = await provider.triggerWindow(cleanupContext, {
+      intentId: 'intent-1',
+      dedupeKey: 'dedupe-1',
+      reasonCode: 'test',
+    });
     expect(result).toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
     expect(JSON.stringify(result)).not.toContain('/dev/null');
   });
@@ -631,10 +825,11 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-1',
+        dedupeKey: 'dedupe-1',
+        reasonCode: 'test',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
   });
 

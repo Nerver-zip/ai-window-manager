@@ -5,9 +5,14 @@ import type {
   ProviderObservation,
   TriggerWindowRequest,
 } from '../domain/types.js';
+import type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
+
+export type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
 
 export interface ProviderContext {
   signal?: AbortSignal;
+  /** Persist a provider-side artifact ID before a quota-affecting turn is dispatched. */
+  registerCleanupArtifact?: (artifact: ProviderCleanupArtifact) => Promise<void>;
 }
 
 export interface ProviderAdapter {
@@ -19,4 +24,6 @@ export interface ProviderAdapter {
     ctx: ProviderContext,
     request: TriggerWindowRequest,
   ): Promise<ProviderActionResult>;
+  /** Delete a disposable artifact created only for an AWM trigger. */
+  cleanupArtifact?(ctx: ProviderContext, artifact: ProviderCleanupArtifact): Promise<void>;
 }

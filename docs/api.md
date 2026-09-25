@@ -31,6 +31,7 @@ GET  /api/v1/history?provider=&type=&from=&to=&limit=
 GET  /api/v1/usage?provider=&window=&day=&chartRange=
 GET  /api/v1/settings
 GET  /api/v1/scheduling
+GET  /api/v1/provider-clients
 GET  /api/v1/providers/:id/auth/status
 POST /api/v1/providers/:id/auth/start
 POST /api/v1/providers/:id/auth/submit
@@ -39,6 +40,9 @@ POST /api/v1/providers/:id/trigger
 POST /api/v1/providers/:id/inspect
 POST /api/v1/settings/timezone
 POST /api/v1/scheduling
+POST /api/v1/provider-clients/:id/check
+POST /api/v1/provider-clients/:id/update
+POST /api/v1/provider-clients/:id/rollback
 ```
 
 The current implementation also serves `POST /settings/providers/:id` and
@@ -55,6 +59,15 @@ flag. The older top-level fields remain a Gemini-family-compatible view for
 existing clients. Trigger requests create a durable intent and return `202`,
 while inspect requests append a reconcile hint and return `202`.
 
+Provider-client status is a bounded allowlisted view with packaged, active,
+previous and last-checked versions plus update state; it contains no executable
+path or release payload. The three provider-client command endpoints accept
+only a fixed provider ID and operation, require operator auth plus Origin/CSRF,
+and return `202 Accepted` while the asynchronous check/update/rollback runs (or
+`409` when another operation is already running). Poll the status with
+`GET /api/v1/provider-clients`. No endpoint accepts a download URL, version,
+repository, asset, shell command or digest from the client.
+
 `/usage` and `/api/v1/usage` read the persisted weekly-usage projection. The
 JSON response is bounded to 365 local calendar days and selected chart windows;
 it includes the saved timezone, aggregation-pending state, selected
@@ -67,7 +80,9 @@ Notes:
 - `POST trigger` creates/advances a durable action intent; it does not directly hide a provider side effect inside the HTTP handler.
 - `inspect` queues/requests an immediate reconcile hint; the response may be `202 Accepted` rather than block on a provider CLI.
 - runtime settings endpoint never accepts or returns secret values.
-- There is no JSON settings mutation endpoint in the current MVP contract. The settings UI uses the protected HTML form routes documented below; a future JSON mutation surface must be added as a separate reviewed contract.
+- JSON mutations are limited to validated non-secret timezone and
+  activation-policy values, plus the fixed provider-client operations above.
+  Other settings use the protected HTML form routes below.
 - JSON is versioned under `/api/v1` even though the HTML routes are not.
 - pagination is simple bounded `limit` + cursor/id if history grows; no GraphQL.
 
@@ -77,6 +92,7 @@ Current HTML mutation routes are:
 POST /login
 POST /logout
 POST /settings/providers/:id
+POST /settings/provider-clients/:id/check|update|rollback|auto-update
 POST /schedule
 POST /providers/:id/trigger
 ```

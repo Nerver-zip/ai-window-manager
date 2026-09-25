@@ -7,7 +7,11 @@ import { ActionExecutor } from '../../src/scheduler/action-executor.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { openDatabase } from '../../src/storage/database.js';
 import { createRepositories } from '../../src/storage/repositories.js';
-import { scriptedProcessFactory } from '../providers/antigravity/support.js';
+import {
+  scriptedProcessFactory,
+  streamingActionProcessFactory,
+  SYNTHETIC_ANTIGRAVITY_CONVERSATION_ID,
+} from '../providers/antigravity/support.js';
 
 const groups = [
   {
@@ -42,7 +46,7 @@ afterEach(() => {
   }
 });
 
-function usageOutput(targetWindowKind: string, targetActive: boolean): string {
+function usageOutput(activeWindowKinds: ReadonlySet<string>): string {
   return JSON.stringify({
     status: 'SUCCESS',
     command: {
@@ -53,7 +57,7 @@ function usageOutput(targetWindowKind: string, targetActive: boolean): string {
           buckets: group.windows.map(([windowKind, window]) => ({
             id: windowKind,
             window,
-            remaining_fraction: windowKind === targetWindowKind ? (targetActive ? 0.99 : 1) : 0.5,
+            remaining_fraction: activeWindowKinds.has(windowKind) ? 0.99 : 1,
           })),
         })),
       },
@@ -67,11 +71,36 @@ function setup(targetWindowKind: string, triggerOutput: string) {
   const repositories = createRepositories(db);
   const clock = new FakeClock('2026-09-24T12:00:00.000Z');
   const nowMs = clock.now().getTime();
-  let targetActive = false;
+  const activeWindowKinds = new Set<string>();
   let dispatchCount = 0;
   let dispatchedArgs: string[] = [];
+  let dispatchedPrompt: string | undefined;
   const activationOnDispatch =
     (JSON.parse(triggerOutput) as { status?: unknown }).status === 'SUCCESS';
+  const usageProcessFactory = scriptedProcessFactory((process) => {
+    process.complete(usageOutput(activeWindowKinds));
+  });
+  const actionProcessFactory = streamingActionProcessFactory(
+    triggerOutput,
+    (input) => {
+      const userEvent = input
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { event?: string; message?: { content?: string } })
+        .find((event) => event.event === 'user');
+      dispatchedPrompt = userEvent?.message?.content;
+      if (dispatchedPrompt === 'Hi!') {
+        dispatchCount += 1;
+        if (activationOnDispatch) {
+          const windowKinds = dispatchedArgs.includes('claude-sonnet-4-6')
+            ? ['antigravity_claude_gpt_five_hour', 'antigravity_claude_gpt_weekly']
+            : ['antigravity_gemini_five_hour', 'antigravity_gemini_weekly'];
+          for (const windowKind of windowKinds) activeWindowKinds.add(windowKind);
+        }
+      }
+    },
+    SYNTHETIC_ANTIGRAVITY_CONVERSATION_ID,
+  );
   const adapter = new AntigravityProvider({
     id: 'antigravity',
     executable: '/opt/antigravity/bin/agy',
@@ -82,16 +111,13 @@ function setup(targetWindowKind: string, triggerOutput: string) {
       claudeGpt: 'claude-sonnet-4-6',
     },
     now: () => clock.now(),
-    spawnProcess: scriptedProcessFactory((process, args) => {
+    spawnProcess: (executable, args, options) => {
       if (args[1] === '/usage') {
-        process.complete(usageOutput(targetWindowKind, targetActive));
-      } else {
-        dispatchCount += 1;
-        dispatchedArgs = args;
-        process.complete(triggerOutput);
-        if (activationOnDispatch) targetActive = true;
+        return usageProcessFactory(executable, args, options);
       }
-    }),
+      dispatchedArgs = args;
+      return actionProcessFactory(executable, args, options);
+    },
   });
   repositories.providers.upsert({
     id: 'antigravity',
@@ -104,43 +130,41 @@ function setup(targetWindowKind: string, triggerOutput: string) {
     createdAtMs: nowMs,
     updatedAtMs: nowMs,
   });
-  repositories.schedulePolicies.upsert({
-    id: targetWindowKind.startsWith('antigravity_claude_gpt_')
-      ? 'activation-antigravity-claude-gpt'
-      : 'activation-antigravity-gemini',
-    providerId: 'antigravity',
-    scope: targetWindowKind.startsWith('antigravity_claude_gpt_') ? 'claude_gpt' : 'gemini',
-    kind: 'auto',
-    enabled: true,
-    timezone: 'UTC',
-    config: { windowKind: targetWindowKind },
-    createdAtMs: nowMs,
-    updatedAtMs: nowMs,
-  });
-  repositories.actionIntents.createIfAbsent({
-    id: 'agy-intent',
-    providerId: 'antigravity',
-    policyId: targetWindowKind.startsWith('antigravity_claude_gpt_')
-      ? 'activation-antigravity-claude-gpt'
-      : 'activation-antigravity-gemini',
-    actionType: 'trigger_window',
-    dedupeKey: `antigravity:trigger_window:${targetWindowKind.startsWith('antigravity_claude_gpt_') ? 'activation-antigravity-claude-gpt' : 'activation-antigravity-gemini'}:${targetWindowKind}:cycle-1`,
-    state: 'planned',
-    scheduledForMs: nowMs,
-    notBeforeMs: null,
-    expiresAtMs: nowMs + 60_000,
-    attemptCount: 0,
-    reasonCode: 'TARGET_RESET_WINDOW_MATCH',
-    explanation: {
-      windowKind: targetWindowKind,
-      policyUpdatedAtMs: nowMs,
-    },
-    lastErrorCode: null,
-    createdAtMs: nowMs,
-    startedAtMs: null,
-    finishedAtMs: null,
-    updatedAtMs: nowMs,
-  });
+  const addIntent = (id: string, windowKind: string): void => {
+    const scope = windowKind.startsWith('antigravity_claude_gpt_') ? 'claude_gpt' : 'gemini';
+    const policyId = `activation-antigravity-${scope === 'claude_gpt' ? 'claude-gpt' : 'gemini'}`;
+    repositories.schedulePolicies.upsert({
+      id: policyId,
+      providerId: 'antigravity',
+      scope,
+      kind: 'auto',
+      enabled: true,
+      timezone: 'UTC',
+      config: { windowKind },
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+    repositories.actionIntents.createIfAbsent({
+      id,
+      providerId: 'antigravity',
+      policyId,
+      actionType: 'trigger_window',
+      dedupeKey: `antigravity:trigger_window:${policyId}:${windowKind}:cycle-1`,
+      state: 'planned',
+      scheduledForMs: nowMs,
+      notBeforeMs: null,
+      expiresAtMs: nowMs + 60_000,
+      attemptCount: 0,
+      reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+      explanation: { windowKind, policyUpdatedAtMs: nowMs },
+      lastErrorCode: null,
+      createdAtMs: nowMs,
+      startedAtMs: null,
+      finishedAtMs: null,
+      updatedAtMs: nowMs,
+    });
+  };
+  addIntent('agy-intent', targetWindowKind);
   resources.push({ db, dir });
   const executor = new ActionExecutor({
     clock,
@@ -153,14 +177,19 @@ function setup(targetWindowKind: string, triggerOutput: string) {
     db,
     repositories,
     executor,
+    addIntent,
     setTargetActive(value: boolean) {
-      targetActive = value;
+      if (value) activeWindowKinds.add(targetWindowKind);
+      else activeWindowKinds.delete(targetWindowKind);
     },
     get dispatchCount() {
       return dispatchCount;
     },
     get dispatchedArgs() {
       return dispatchedArgs;
+    },
+    get dispatchedPrompt() {
+      return dispatchedPrompt;
     },
   };
 }
@@ -179,16 +208,17 @@ describe('Antigravity trigger through the durable executor', () => {
       expect(report.confirmedIntentIds).toEqual(['agy-intent']);
       expect(context.dispatchCount).toBe(1);
       expect(context.dispatchedArgs).toEqual([
-        '-p',
-        'Hi!',
+        '--input-format',
+        'stream-json',
+        '--output-format',
+        'stream-json',
         '--model',
         expectedModel,
-        '--output-format',
-        'json',
         '--print-timeout',
         '30s',
         '--sandbox',
       ]);
+      expect(context.dispatchedPrompt).toBe('Hi!');
       expect(context.repositories.actionIntents.get('agy-intent')).toMatchObject({
         state: 'confirmed',
         attemptCount: 1,
@@ -238,5 +268,27 @@ describe('Antigravity trigger through the durable executor', () => {
       state: 'skipped',
       lastErrorCode: 'ACTION_POLICY_CHANGED',
     });
+  });
+
+  it('serializes Gemini and Claude/GPT actions across ticks', async () => {
+    const context = setup(
+      'antigravity_gemini_five_hour',
+      JSON.stringify({ status: 'SUCCESS', response: 'Hello.', num_turns: 1 }),
+    );
+    context.addIntent('agy-z-claude-intent', 'antigravity_claude_gpt_five_hour');
+
+    const first = await context.executor.executeDue();
+    expect(first.confirmedIntentIds).toEqual(['agy-intent']);
+    expect(context.repositories.actionIntents.get('agy-z-claude-intent')?.state).toBe('planned');
+    expect(context.dispatchCount).toBe(1);
+
+    const next = await context.executor.executeDue();
+    expect(next.confirmedIntentIds).toEqual(['agy-z-claude-intent']);
+    expect(context.repositories.actionIntents.get('agy-z-claude-intent')).toMatchObject({
+      state: 'confirmed',
+      attemptCount: 1,
+    });
+    expect(context.dispatchCount).toBe(2);
+    expect(context.dispatchedArgs).toContain('claude-sonnet-4-6');
   });
 });

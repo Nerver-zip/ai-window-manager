@@ -39,6 +39,7 @@ export interface ReconcilerInput {
   db: SqliteDatabase;
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
+  isProviderRuntimeChanging?: (providerId: string) => boolean;
   resolveTargetResetAt?: TargetResetResolver;
   idFactory?: () => string;
   onObservation?: (observation: ProviderObservation) => void;
@@ -76,6 +77,10 @@ export class Reconciler {
 
   constructor(private readonly input: ReconcilerInput) {}
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   async reconcile(): Promise<ReconcileReport> {
     const startedAtMs = this.input.clock.now().getTime();
     if (this.running) {
@@ -106,6 +111,7 @@ export class Reconciler {
 
     for (const provider of this.input.repositories.providers.list()) {
       if (!provider.enabled) continue;
+      if (this.isProviderRuntimeChanging(provider.id)) continue;
 
       const adapter = this.input.adapters.get(provider.id);
       const previousState = this.input.repositories.providerState.get(provider.id);
@@ -315,6 +321,15 @@ export class Reconciler {
       decisions,
       createdIntentIds,
     };
+  }
+
+  private isProviderRuntimeChanging(providerId: string): boolean {
+    try {
+      return this.input.isProviderRuntimeChanging?.(providerId) ?? false;
+    } catch {
+      // Fail closed if the runtime coordination signal is unavailable.
+      return true;
+    }
   }
 
   private isDue(

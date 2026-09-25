@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import type { ProviderCleanupArtifact } from '../provider.js';
 
 const MAX_STDOUT_LINE_BYTES = 256 * 1024;
 const MAX_STDERR_BYTES = 4 * 1024;
@@ -12,10 +13,17 @@ export type CodexTransportErrorCode =
   | 'EOF'
   | 'PROCESS_ERROR'
   | 'ABORTED'
-  | 'TURN_FAILED';
+  | 'TURN_FAILED'
+  | 'THREAD_NOT_FOUND'
+  | 'CLEANUP_REGISTRATION_FAILED';
 
 export type CodexTransportStage =
-  'initialize' | 'rate_limits_read' | 'thread_start' | 'turn_start' | 'turn_completion';
+  | 'initialize'
+  | 'rate_limits_read'
+  | 'thread_start'
+  | 'turn_start'
+  | 'turn_completion'
+  | 'thread_delete';
 
 export class CodexTransportError extends Error {
   constructor(
@@ -40,11 +48,6 @@ export interface CodexAppServerClientOptions {
   /** Timeout for each app-server stage of a quota-consuming turn. */
   actionTimeoutMs?: number;
   spawnProcess?: CodexProcessFactory;
-}
-
-export interface CodexTurnResult {
-  threadId: string;
-  turnId: string;
 }
 
 interface PendingRequest {
@@ -89,6 +92,14 @@ function classifyProtocolError(error: unknown, stage?: CodexTransportStage): Cod
 
   const code = error.code;
   const message = error.message;
+  if (
+    stage === 'thread_delete' &&
+    code === -32600 &&
+    typeof message === 'string' &&
+    /^thread not found(?:: .+)?$/i.test(message.trim())
+  ) {
+    return new CodexTransportError('THREAD_NOT_FOUND', stage);
+  }
   const description = `${typeof code === 'string' || typeof code === 'number' ? code : ''} ${typeof message === 'string' ? message : ''}`;
   if (/auth|unauthori[sz]ed|login|sign.?in|credential/i.test(description)) {
     return new CodexTransportError('AUTH_REQUIRED', stage);
@@ -125,19 +136,7 @@ export class CodexAppServerClient {
   async readRateLimits(signal?: AbortSignal): Promise<unknown> {
     this.start();
     try {
-      await this.request(
-        'initialize',
-        {
-          clientInfo: {
-            name: 'ai-window-manager',
-            title: 'AI Window Manager',
-            version: '0.1.0',
-          },
-        },
-        signal,
-        'initialize',
-      );
-      this.sendNotification('initialized', 'initialize');
+      await this.initialize(signal);
       return await this.request('account/rateLimits/read', undefined, signal, 'rate_limits_read');
     } finally {
       await this.close();
@@ -147,25 +146,13 @@ export class CodexAppServerClient {
   async sendMessage(
     message: string,
     workspace: string,
+    registerCleanupArtifact: (artifact: ProviderCleanupArtifact) => Promise<void>,
     signal?: AbortSignal,
-  ): Promise<CodexTurnResult> {
+  ): Promise<void> {
     this.start();
     const actionTimeoutMs = this.options.actionTimeoutMs ?? this.options.requestTimeoutMs;
     try {
-      await this.request(
-        'initialize',
-        {
-          clientInfo: {
-            name: 'ai-window-manager',
-            title: 'AI Window Manager',
-            version: '0.1.0',
-          },
-        },
-        signal,
-        'initialize',
-        actionTimeoutMs,
-      );
-      this.sendNotification('initialized', 'initialize');
+      await this.initialize(signal, actionTimeoutMs);
 
       const threadResponse = await this.request(
         'thread/start',
@@ -182,6 +169,28 @@ export class CodexAppServerClient {
       );
       const threadId = nestedString(threadResponse, 'thread', 'id');
       if (!threadId) throw new CodexTransportError('PROTOCOL_ERROR', 'thread_start');
+
+      try {
+        const artifact: ProviderCleanupArtifact = {
+          kind: 'codex_thread',
+          externalId: threadId,
+        };
+        try {
+          await registerCleanupArtifact(artifact);
+        } catch {
+          // Idempotent create-if-absent handles a transient SQLite failure or a
+          // commit whose acknowledgement was lost without creating a duplicate.
+          await registerCleanupArtifact(artifact);
+        }
+      } catch {
+        try {
+          await this.deleteThreadOnCurrentSession(threadId, actionTimeoutMs);
+        } catch {
+          // The durable cleanup registration failed. Best-effort compensation must not
+          // dispatch the turn or replace that safe, sanitized outcome.
+        }
+        throw new CodexTransportError('CLEANUP_REGISTRATION_FAILED', 'thread_start');
+      }
 
       const turnResponse = await this.request(
         'turn/start',
@@ -213,7 +222,16 @@ export class CodexAppServerClient {
       const completed = await completion;
       const status = nestedString(completed, 'turn', 'status');
       if (status !== 'completed') throw new CodexTransportError('TURN_FAILED', 'turn_completion');
-      return { threadId, turnId };
+    } finally {
+      await this.close();
+    }
+  }
+
+  async deleteThread(threadId: string, signal?: AbortSignal): Promise<void> {
+    this.start();
+    try {
+      await this.initialize(signal);
+      await this.deleteThreadOnCurrentSession(threadId, this.options.actionTimeoutMs, signal);
     } finally {
       await this.close();
     }
@@ -277,6 +295,42 @@ export class CodexAppServerClient {
     child.once('close', () => {
       if (this.pending.size > 0) this.failAll(new CodexTransportError('EOF'));
     });
+  }
+
+  private async initialize(
+    signal?: AbortSignal,
+    timeoutMs = this.options.requestTimeoutMs,
+  ): Promise<void> {
+    await this.request(
+      'initialize',
+      {
+        clientInfo: {
+          name: 'ai-window-manager',
+          title: 'AI Window Manager',
+          version: '0.1.0',
+        },
+      },
+      signal,
+      'initialize',
+      timeoutMs,
+    );
+    this.sendNotification('initialized', 'initialize');
+  }
+
+  private async deleteThreadOnCurrentSession(
+    threadId: string,
+    timeoutMs = this.options.requestTimeoutMs,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (typeof threadId !== 'string' || threadId.trim().length === 0 || threadId.length > 256) {
+      throw new CodexTransportError('PROTOCOL_ERROR', 'thread_delete');
+    }
+    try {
+      await this.request('thread/delete', { threadId }, signal, 'thread_delete', timeoutMs);
+    } catch (error) {
+      if (error instanceof CodexTransportError && error.code === 'THREAD_NOT_FOUND') return;
+      throw error;
+    }
   }
 
   private request(

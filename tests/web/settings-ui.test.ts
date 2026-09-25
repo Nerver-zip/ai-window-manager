@@ -104,6 +104,137 @@ describe('settings UI helpers', () => {
     expect(html).toContain('/assets/images/providers/codex.png');
   });
 
+  it('renders provider-client versions, update actions, rollback, and auto-update preference accessibly', () => {
+    const html = renderSettingsPage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          providerClientUpdate: {
+            packagedVersion: '0.155.0',
+            activeVersion: '0.156.0',
+            previousVersion: '0.155.0',
+            availableVersion: '0.157.0',
+            updateAvailable: true,
+            status: 'update_available',
+            lastCheckedAt: '2026-09-25T12:00:00.000Z',
+            lastUpdatedAt: '2026-09-24T12:00:00.000Z',
+            lastErrorCode: null,
+            autoUpdate: true,
+          },
+        },
+      ],
+    });
+    const section = html.match(/<section class="provider-client-updates"[\s\S]*?<\/section>/)?.[0];
+
+    expect(section).toContain('<h4 id="provider-codex-updates-title">Provider app updates</h4>');
+    expect(section).toContain('<dt>Active version</dt><dd>0.156.0</dd>');
+    expect(section).toContain('<dt>Image version</dt><dd>0.155.0</dd>');
+    expect(section).toContain('<dt>Latest stable</dt><dd>0.157.0</dd>');
+    expect(section).toContain('Status:</strong> Update available');
+    expect(section).toContain('action="/settings/provider-clients/codex/check"');
+    expect(section).toContain('action="/settings/provider-clients/codex/update"');
+    expect(section).toContain('action="/settings/provider-clients/codex/rollback"');
+    expect(section).toContain('action="/settings/provider-clients/codex/auto-update"');
+    expect(section).toContain('name="csrfToken" value="csrf-token-for-test"');
+    expect(section).toContain('name="autoUpdate" value="true" checked');
+    expect(section).toContain('Check for updates');
+    expect(section).toContain('Install update</button>');
+    expect(section).toContain('Restore previous version</button>');
+    expect(section).toContain('Automatically install stable updates');
+    expect(section).toContain('Last checked:');
+    expect(section).toContain('Last changed:');
+    expect(section).not.toContain('UPDATE_INSTALL_FAILED');
+  });
+
+  it('escapes provider-client values and disables unavailable update and rollback actions', () => {
+    const html = renderSettingsPage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: "co'dex<&",
+          providerClientUpdate: {
+            packagedVersion: null,
+            activeVersion: '<script>alert(1)</script>',
+            previousVersion: null,
+            availableVersion: null,
+            updateAvailable: false,
+            status: 'error',
+            lastCheckedAt: '<script>bad</script>',
+            lastUpdatedAt: null,
+            lastErrorCode: '<script>bad</script>',
+            autoUpdate: false,
+          },
+        },
+      ],
+    });
+    const section = html.match(/<section class="provider-client-updates"[\s\S]*?<\/section>/)?.[0];
+
+    expect(section).toContain('action="/settings/provider-clients/co&#39;dex%3C%26/check"');
+    expect(section).toContain('Unknown</dd>');
+    expect(section).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(section).toContain('Not checked</dd>');
+    expect(section).toContain('Update could not be completed');
+    expect(section).toContain('Check the service logs, then try again.');
+    expect(section).toMatch(/<button type="submit" disabled>Install update<\/button>/);
+    expect(section).toMatch(/<button type="submit" disabled>Restore previous version<\/button>/);
+    expect(section).toContain('name="autoUpdate" value="true">');
+    expect(section).not.toContain('name="autoUpdate" value="true" checked');
+    expect(section).not.toContain('<script>');
+    expect(section).not.toContain('UPDATE_BLOCKED_PROVIDER_BUSY');
+  });
+
+  it.each([
+    ['idle', null, 'Not checked yet'],
+    ['checking', null, 'Checking for updates…'],
+    ['current', null, 'Up to date'],
+    ['update_available', null, 'Update available'],
+    ['updating', null, 'Installing update…'],
+    ['updated', null, 'Updated successfully'],
+    ['rolling_back', null, 'Restoring previous version…'],
+    ['rolled_back', null, 'Previous version restored'],
+    [
+      'blocked',
+      'UPDATE_BLOCKED_PROVIDER_BUSY',
+      'Wait until this provider is idle, then try again.',
+    ],
+    ['blocked', null, 'The provider app cannot be changed right now.'],
+    ['error', 'RELEASE_RESOLUTION_FAILED', 'The official stable release could not be checked.'],
+    ['error', 'UPDATE_INSTALL_FAILED', 'The new version could not be installed.'],
+    ['error', 'ROLLBACK_FAILED', 'The previous version could not be restored.'],
+    ['error', 'RUNTIME_STATE_UNAVAILABLE', 'Provider app storage is unavailable.'],
+    ['error', 'UNRECOGNIZED_INTERNAL_CODE', 'Check the service logs, then try again.'],
+  ] as const)(
+    'explains provider-client update state %s in plain language',
+    (status, errorCode, message) => {
+      const html = renderSettingsPage({
+        csrfToken,
+        providers: [
+          {
+            ...provider,
+            providerClientUpdate: {
+              packagedVersion: null,
+              activeVersion: null,
+              previousVersion: null,
+              availableVersion: null,
+              updateAvailable: false,
+              status,
+              lastCheckedAt: null,
+              lastUpdatedAt: null,
+              lastErrorCode: errorCode,
+              autoUpdate: false,
+            },
+          },
+        ],
+      });
+
+      expect(html).toContain(message);
+    },
+  );
+
   it('shows concise provider capabilities and distinguishes allowed starts from active starts', () => {
     const html = renderSettingsPage({
       csrfToken,

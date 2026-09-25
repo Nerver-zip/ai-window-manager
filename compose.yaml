@@ -8,13 +8,14 @@ services:
       AWM_BIND: 0.0.0.0
       AWM_PORT: 8787
       AWM_DB_PATH: /data/window-manager.db
+      AWM_PROVIDER_CLIENT_RUNTIME_ROOT: /provider-clients
       AWM_LOG_LEVEL: ${AWM_LOG_LEVEL:-info}
       AWM_TIMEZONE: ${AWM_TIMEZONE:-America/Sao_Paulo}
       AWM_FAKE_PROVIDER_ENABLED: ${AWM_FAKE_PROVIDER_ENABLED:-false}
       AWM_CODEX_ENABLED: ${AWM_CODEX_ENABLED:-false}
       AWM_CODEX_TRIGGER_ENABLED: ${AWM_CODEX_TRIGGER_ENABLED:-true}
       AWM_CODEX_HOME: ${AWM_CODEX_HOME:-/codex-state}
-      AWM_CODEX_EXECUTABLE: ${AWM_CODEX_EXECUTABLE:-/opt/codex/bin/codex}
+      AWM_CODEX_EXECUTABLE: ${AWM_CODEX_EXECUTABLE:-/provider-clients/codex/current}
       AWM_CODEX_ACTION_TIMEOUT_SECONDS: ${AWM_CODEX_ACTION_TIMEOUT_SECONDS:-30}
       AWM_AUTH_SESSION_TIMEOUT_SECONDS: ${AWM_AUTH_SESSION_TIMEOUT_SECONDS:-900}
       AWM_AUTH_USERNAME: ${AWM_AUTH_USERNAME:?Set AWM_AUTH_USERNAME in .env}
@@ -27,7 +28,7 @@ services:
       AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: ${AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL:-gemini-3.8-flash-low}
       AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL: ${AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL:-claude-sonnet-4-6}
       AWM_ANTIGRAVITY_HOME: ${AWM_ANTIGRAVITY_HOME:-/antigravity-state}
-      AWM_ANTIGRAVITY_EXECUTABLE: ${AWM_ANTIGRAVITY_EXECUTABLE:-/opt/antigravity/bin/agy}
+      AWM_ANTIGRAVITY_EXECUTABLE: ${AWM_ANTIGRAVITY_EXECUTABLE:-/provider-clients/antigravity/current}
       # Path only; the secret contents must be supplied through a separate mounted
       # file under /run/secrets when keyring unlock is explicitly required.
       AWM_ANTIGRAVITY_KEYRING_SECRET_FILE: ${AWM_ANTIGRAVITY_KEYRING_SECRET_FILE:-}
@@ -41,6 +42,7 @@ services:
       - awm-codex-state:/codex-state
       - awm-antigravity-state:/antigravity-state
       - awm-antigravity-keyring:/antigravity-keyring
+      - awm-provider-clients:/provider-clients
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
@@ -68,3 +70,4 @@ volumes:
   awm-codex-state:
   awm-antigravity-state:
   awm-antigravity-keyring:
+  awm-provider-clients:

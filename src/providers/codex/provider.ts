@@ -17,7 +17,7 @@ import type {
   WindowSnapshot,
   ProviderActionResult,
 } from '../../domain/types.js';
-import type { ProviderAdapter, ProviderContext } from '../provider.js';
+import type { ProviderAdapter, ProviderCleanupArtifact, ProviderContext } from '../provider.js';
 import {
   CodexAppServerClient,
   CodexTransportError,
@@ -334,6 +334,9 @@ export class CodexProvider implements ProviderAdapter {
     if (!this.triggerEnabled) {
       return actionResult('rejected', 'CODEX_TRIGGER_DISABLED', undefined, occurredAt);
     }
+    if (!ctx.registerCleanupArtifact) {
+      return actionResult('rejected', 'CODEX_CLEANUP_REGISTRATION_REQUIRED', undefined, occurredAt);
+    }
 
     try {
       mkdirSync(this.triggerWorkspace, { recursive: true, mode: 0o700 });
@@ -346,11 +349,32 @@ export class CodexProvider implements ProviderAdapter {
         ...(this.spawnProcess ? { spawnProcess: this.spawnProcess } : {}),
       };
       const client = new CodexAppServerClient(clientOptions);
-      await client.sendMessage(CODEX_TRIGGER_MESSAGE, this.triggerWorkspace, ctx.signal);
+      await client.sendMessage(
+        CODEX_TRIGGER_MESSAGE,
+        this.triggerWorkspace,
+        ctx.registerCleanupArtifact,
+        ctx.signal,
+      );
       return actionResult('succeeded', undefined, 'CODEX_TURN_COMPLETED', occurredAt);
     } catch (error) {
       return triggerFailureResult(error, occurredAt);
     }
+  }
+
+  async cleanupArtifact(ctx: ProviderContext, artifact: ProviderCleanupArtifact): Promise<void> {
+    if (artifact.kind !== 'codex_thread') {
+      throw new CodexTransportError('PROTOCOL_ERROR', 'thread_delete');
+    }
+
+    const clientOptions: CodexAppServerClientOptions = {
+      executable: this.executable,
+      codexHome: this.codexHome,
+      requestTimeoutMs: this.requestTimeoutMs,
+      actionTimeoutMs: this.actionTimeoutMs,
+      ...(this.spawnProcess ? { spawnProcess: this.spawnProcess } : {}),
+    };
+    const client = new CodexAppServerClient(clientOptions);
+    await client.deleteThread(artifact.externalId, ctx.signal);
   }
 }
 
@@ -372,6 +396,10 @@ function actionResult(
 function triggerFailureResult(error: unknown, occurredAt: Date): ProviderActionResult {
   if (!(error instanceof CodexTransportError)) {
     return actionResult('uncertain', 'CODEX_TURN_OUTCOME_UNKNOWN', undefined, occurredAt);
+  }
+
+  if (error.code === 'CLEANUP_REGISTRATION_FAILED') {
+    return actionResult('rejected', 'CODEX_CLEANUP_REGISTRATION_FAILED', undefined, occurredAt);
   }
 
   if (error.code === 'AUTH_REQUIRED') {

@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { ActionExecutor, type ActionExecutorPhase } from '../../src/scheduler/action-executor.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
+import { ProviderCleanupWorker } from '../../src/scheduler/provider-cleanup.js';
 import { openDatabase } from '../../src/storage/database.js';
 import {
   createRepositories,
@@ -27,13 +28,16 @@ function setup(
   options: {
     triggerResult?: 'succeeded' | 'failed' | 'uncertain' | 'rejected';
     targetWindowKind?: string | null;
+    providerId?: string;
   } = {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-executor-'));
   const db = openDatabase(path.join(dir, 'awm.db'));
   const repositories = createRepositories(db);
   const clock = new FakeClock('2026-09-14T08:00:00.000Z');
+  const providerId = options.providerId ?? 'fake';
   const fake = new FakeProvider(clock, {
+    id: providerId,
     windowDurationSeconds: 18_000,
     ...(options.triggerResult ? { triggerResult: options.triggerResult } : {}),
   });
@@ -50,8 +54,8 @@ function setup(
   };
   const nowMs = clock.now().getTime();
   const provider: ProviderRecord = {
-    id: 'fake',
-    kind: 'fake',
+    id: providerId,
+    kind: providerId === 'codex' ? 'codex' : 'fake',
     enabled: true,
     mode: 'automation',
     pollIntervalSeconds: 30,
@@ -63,7 +67,7 @@ function setup(
   repositories.providers.upsert(provider);
   const policy: SchedulePolicyRecord = {
     id: 'policy-1',
-    providerId: 'fake',
+    providerId,
     kind: 'target_reset',
     enabled: true,
     timezone: 'UTC',
@@ -74,10 +78,10 @@ function setup(
   repositories.schedulePolicies.upsert(policy);
   const intent: ActionIntentRecord = {
     id: 'intent-1',
-    providerId: 'fake',
+    providerId,
     policyId: 'policy-1',
     actionType: 'trigger_window',
-    dedupeKey: 'fake:trigger_window:policy-1:2026-09-14T08:00:00.000Z',
+    dedupeKey: `${providerId}:trigger_window:policy-1:2026-09-14T08:00:00.000Z`,
     state: 'planned',
     scheduledForMs: nowMs,
     notBeforeMs: null,
@@ -107,6 +111,7 @@ function setup(
     adapter,
     repositories,
     intent,
+    providerId,
     get triggerCount() {
       return triggerCount;
     },
@@ -115,7 +120,7 @@ function setup(
         clock,
         db,
         repositories,
-        adapters: new Map([['fake', adapter]]),
+        adapters: new Map([[providerId, adapter]]),
         ...extra,
       });
     },
@@ -123,6 +128,22 @@ function setup(
 }
 
 describe('ActionExecutor', () => {
+  it('defers a planned trigger while its provider executable is changing', async () => {
+    const context = setup();
+    const inspect = vi.spyOn(context.adapter, 'inspect');
+    const report = await context
+      .executor({
+        isProviderRuntimeChanging: (providerId) => providerId === context.providerId,
+      })
+      .executeDue();
+
+    expect(report.processedIntentIds).toEqual([]);
+    expect(report.confirmedIntentIds).toEqual([]);
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('planned');
+    expect(inspect).not.toHaveBeenCalled();
+    expect(context.triggerCount).toBe(0);
+  });
+
   it('coalesces overlapping ticks on the same executor instance', async () => {
     const context = setup();
     let release!: () => void;
@@ -192,6 +213,113 @@ describe('ActionExecutor', () => {
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
   });
 
+  it('persists a Codex cleanup obligation before trigger dispatch and keeps it after uncertainty', async () => {
+    const context = setup({ providerId: 'codex' });
+    let obligationVisibleAtDispatch = false;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: async (ctx) => {
+        await ctx.registerCleanupArtifact?.({
+          kind: 'codex_thread',
+          externalId: 'synthetic-thread-id',
+        });
+        obligationVisibleAtDispatch =
+          context.repositories.providerCleanupJobs.listDue(context.clock.now().getTime()).length ===
+          1;
+        return {
+          status: 'uncertain',
+          occurredAt: context.clock.now().toISOString(),
+          errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN',
+        };
+      },
+    };
+
+    await context.executor({ adapters: new Map([[context.providerId, adapter]]) }).executeDue();
+
+    expect(obligationVisibleAtDispatch).toBe(true);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+    });
+    expect(context.repositories.providerCleanupJobs.listDue(context.clock.now().getTime())).toEqual(
+      [
+        expect.objectContaining({
+          artifactKind: 'codex_thread',
+          state: 'pending',
+          attemptCount: 0,
+          lastErrorCode: null,
+        }),
+      ],
+    );
+    expect(JSON.stringify(context.repositories.events.list(context.providerId))).not.toContain(
+      'synthetic-thread-id',
+    );
+  });
+
+  it('retries cleanup after restart without repeating an uncertain Codex turn', async () => {
+    const context = setup({ providerId: 'codex' });
+    let triggerAttempts = 0;
+    let cleanupAttempts = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: async (ctx) => {
+        triggerAttempts += 1;
+        await ctx.registerCleanupArtifact?.({
+          kind: 'codex_thread',
+          externalId: 'synthetic-restart-thread-id',
+        });
+        return {
+          status: 'uncertain',
+          occurredAt: context.clock.now().toISOString(),
+          errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN',
+        };
+      },
+      cleanupArtifact: () => {
+        cleanupAttempts += 1;
+        if (cleanupAttempts === 1) throw Object.assign(new Error('private'), { code: 'TIMEOUT' });
+        return Promise.resolve();
+      },
+    };
+
+    await context.executor({ adapters: new Map([[context.providerId, adapter]]) }).executeDue();
+    expect(triggerAttempts).toBe(1);
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('uncertain');
+    expect(
+      context.repositories.providerCleanupJobs.listDue(context.clock.now().getTime()),
+    ).toHaveLength(1);
+
+    context.db.close();
+    const reopenedDb = openDatabase(path.join(context.dir, 'awm.db'));
+    const reopenedRepositories = createRepositories(reopenedDb);
+    resources.push({ db: reopenedDb, dir: context.dir });
+
+    const worker = new ProviderCleanupWorker({
+      clock: context.clock,
+      repositories: reopenedRepositories,
+      adapters: new Map([[context.providerId, adapter]]),
+      retryBaseMs: 1_000,
+      retryMaxMs: 4_000,
+    });
+    expect(await worker.runDue()).toMatchObject({ attempted: 1, deleted: 0, retryable: 1 });
+    expect(reopenedRepositories.actionIntents.get(context.intent.id)?.state).toBe('uncertain');
+    context.clock.advanceMs(1_000);
+    expect(await worker.runDue()).toMatchObject({ attempted: 1, deleted: 1, retryable: 0 });
+    expect(
+      reopenedDb
+        .prepare('SELECT 1 FROM provider_cleanup_jobs WHERE provider_id = ? AND artifact_kind = ?')
+        .get(context.providerId, 'codex_thread'),
+    ).toBeUndefined();
+
+    const reopenedExecutor = new ActionExecutor({
+      clock: context.clock,
+      db: reopenedDb,
+      repositories: reopenedRepositories,
+      adapters: new Map([[context.providerId, adapter]]),
+    });
+    await reopenedExecutor.executeDue();
+    expect(triggerAttempts).toBe(1);
+    expect(cleanupAttempts).toBe(2);
+  });
+
   it('allows an explicitly requested manual trigger when Codex phase is unknown', async () => {
     const context = setup();
     context.clock.advanceMs(31_000);
@@ -251,6 +379,35 @@ describe('ActionExecutor', () => {
 
     expect(context.triggerCount).toBe(1);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
+  it('atomically serializes trigger claims across policies for one provider', () => {
+    const context = setup();
+    const nowMs = context.clock.now().getTime();
+    const policy = context.repositories.schedulePolicies.get('policy-1');
+    if (!policy) throw new Error('test policy missing');
+    context.repositories.schedulePolicies.upsert({ ...policy, id: 'policy-2' });
+    context.repositories.actionIntents.createIfAbsent({
+      ...context.intent,
+      id: 'intent-2',
+      policyId: 'policy-2',
+      dedupeKey: 'fake:trigger_window:policy-2:2026-09-14T08:00:00.000Z',
+    });
+
+    expect(context.repositories.actionIntents.claimPlanned('intent-1', nowMs)?.state).toBe(
+      'executing',
+    );
+    expect(context.repositories.actionIntents.claimPlanned('intent-2', nowMs)).toBeUndefined();
+    expect(context.repositories.actionIntents.markSucceededIfExecuting('intent-1', nowMs)).toBe(
+      true,
+    );
+    expect(context.repositories.actionIntents.claimPlanned('intent-2', nowMs)).toBeUndefined();
+    expect(
+      context.repositories.actionIntents.markConfirmedIfSucceededOrUncertain('intent-1', nowMs),
+    ).toBe(true);
+    expect(context.repositories.actionIntents.claimPlanned('intent-2', nowMs)?.state).toBe(
+      'executing',
+    );
   });
 
   it('skips an intent with no exact target rather than defaulting to the first window', async () => {

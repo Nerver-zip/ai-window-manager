@@ -51,6 +51,8 @@ export class FakeAntigravityProcess extends EventEmitter {
   }
 }
 
+export const SYNTHETIC_ANTIGRAVITY_CONVERSATION_ID = '00000000-0000-4000-8000-000000000001';
+
 export function scriptedProcessFactory(
   script: (process: FakeAntigravityProcess, args: string[]) => void,
   onSpawn?: (process: FakeAntigravityProcess) => void,
@@ -68,4 +70,71 @@ export function outputProcessFactory(
   onSpawn?: (process: FakeAntigravityProcess) => void,
 ): AntigravityProcessFactory {
   return scriptedProcessFactory((process) => process.complete(output), onSpawn);
+}
+
+export function streamingActionProcessFactory(
+  resultPayload: string,
+  onPrompt?: (input: string) => void,
+  conversationId = SYNTHETIC_ANTIGRAVITY_CONVERSATION_ID,
+  exitCode = 0,
+  stderr = '',
+  onSpawn?: (process: FakeAntigravityProcess) => void,
+): AntigravityProcessFactory {
+  return scriptedProcessFactory((process) => {
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk: string | Buffer) => {
+      input += chunk.toString();
+    });
+    process.stdin.once('finish', () => {
+      onPrompt?.(input);
+      let resultLine = '';
+      if (resultPayload) {
+        try {
+          const parsed = JSON.parse(resultPayload) as Record<string, unknown>;
+          const result = { ...parsed, conversation_id: conversationId };
+          const responseValue = parsed['response'];
+          const response = typeof responseValue === 'string' ? responseValue : '';
+          resultLine =
+            [
+              JSON.stringify({
+                event: 'step_update',
+                step_update: { conversation_id: conversationId, text_delta: response },
+              }),
+              JSON.stringify({ event: 'result', result }),
+            ].join('\n') + '\n';
+        } catch {
+          resultLine = `${resultPayload}\n`;
+        }
+      }
+      process.complete(resultLine, exitCode, stderr);
+    });
+    process.start();
+    queueMicrotask(() => {
+      process.stdout.write(
+        `${JSON.stringify({ event: 'init', conversation_id: conversationId })}\n`,
+      );
+    });
+  }, onSpawn);
+}
+
+export function hangingStreamingActionProcessFactory(
+  onPrompt?: (input: string) => void,
+  conversationId = SYNTHETIC_ANTIGRAVITY_CONVERSATION_ID,
+  onSpawn?: (process: FakeAntigravityProcess) => void,
+): AntigravityProcessFactory {
+  return scriptedProcessFactory((process) => {
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk: string | Buffer) => {
+      input += chunk.toString();
+    });
+    process.stdin.once('finish', () => onPrompt?.(input));
+    process.start();
+    queueMicrotask(() => {
+      process.stdout.write(
+        `${JSON.stringify({ event: 'init', conversation_id: conversationId })}\n`,
+      );
+    });
+  }, onSpawn);
 }

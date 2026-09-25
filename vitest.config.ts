@@ -12,7 +12,9 @@ export default defineConfig({
         'src/index.ts',
         // These files contain only compile-time contracts and no executable behavior.
         'src/domain/types.ts',
+        'src/domain/provider-cleanup.ts',
         'src/providers/provider.ts',
+        'src/provider-clients/web-controls.ts',
         '**/*.d.ts',
       ],
       thresholds: {

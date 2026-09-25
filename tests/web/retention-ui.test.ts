@@ -31,6 +31,9 @@ describe('retention summary UI', () => {
     expect(html).toContain(
       '<dt>Starts still under review</dt><dd>Kept until the system can safely confirm or stop them.</dd>',
     );
+    expect(html).toContain(
+      '<dt>Temporary start chats</dt><dd>Cleaned up separately after a start; retrying cleanup never repeats the start.</dd>',
+    );
     expect(html).not.toContain('uncertain');
   });
 
@@ -42,17 +45,16 @@ describe('retention summary UI', () => {
     );
     expect(html).toContain('<h2 id="data-retention-title">Data retention</h2>');
     expect(html).toContain('<dl class="retention-list">');
-    expect(html.match(/<dt>/g)).toHaveLength(6);
-    expect(html.match(/<dd>/g)).toHaveLength(6);
+    expect(html.match(/<dt>/g)).toHaveLength(7);
+    expect(html.match(/<dd>/g)).toHaveLength(7);
   });
 
-  it('does not expose storage jargon or claim that trigger conversations are deleted', () => {
+  it('does not expose storage jargon or imply that cleanup retries provider starts', () => {
     const html = renderRetentionSummary();
 
-    expect(html).not.toMatch(
-      /window_samples|usage_intervals|action_intents|trigger chat|conversation deletion/i,
-    );
+    expect(html).not.toMatch(/window_samples|usage_intervals|action_intents/i);
     expect(html).toContain('removed automatically in small batches');
+    expect(html).toMatch(/retrying cleanup never repeats the start/);
   });
 });
 

@@ -28,6 +28,15 @@ AI Window Manager is a private, self-hosted usage-window daemon. Its responsibil
 
 A new feature that does not improve window observation, timing, safe action, history, configuration or operability belongs elsewhere.
 
+The CLI conversation created by an AWM trigger is a disposable transport
+artifact, not product conversation history. AWM never stores transcript or
+response text. It retains an opaque conversation/thread ID only as a bounded
+cleanup obligation until deletion succeeds. Codex cleanup uses official
+`thread/delete`. Antigravity cleanup is narrowly scoped to the exact
+conversation-ID files/directories inside AWM's dedicated CLI home; it is not an
+official deletion API and must never touch authentication, shared indexes, or
+unrelated IDs.
+
 The web console is for one self-hosted operator and always requires native AWM
 authentication. Network placement (trusted LAN, VPN/Tailscale or HTTPS proxy)
 is a deployment choice, not an authentication bypass. Multi-user accounts and

@@ -1,0 +1,181 @@
+name: Provider client source pins
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: provider-client-pins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-and-propose:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4.1.0
+        with:
+          version: 10.15.0
+          run_install: false
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Save current provider client pins
+        run: cp provider-clients.lock.json "${RUNNER_TEMP}/provider-clients-before.json"
+      - name: Install pinned Gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base_url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl --fail --silent --show-error --location \
+            "${base_url}/${archive}" \
+            --output "${RUNNER_TEMP}/${archive}"
+          curl --fail --silent --show-error --location \
+            "${base_url}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" \
+            --output "${RUNNER_TEMP}/gitleaks_checksums.txt"
+          grep -F "  ${archive}" "${RUNNER_TEMP}/gitleaks_checksums.txt" \
+            > "${RUNNER_TEMP}/gitleaks_checksum.txt"
+          (cd "${RUNNER_TEMP}" && sha256sum --check gitleaks_checksum.txt)
+          mkdir --parents "${RUNNER_TEMP}/gitleaks-bin"
+          tar --extract --gzip \
+            --file "${RUNNER_TEMP}/${archive}" \
+            --directory "${RUNNER_TEMP}/gitleaks-bin"
+          echo "${RUNNER_TEMP}/gitleaks-bin" >> "${GITHUB_PATH}"
+          "${RUNNER_TEMP}/gitleaks-bin/gitleaks" version
+      - name: Refresh manifest from official release metadata
+        run: pnpm provider-clients:bump
+      - name: Summarize provider client pin changes
+        id: summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="${RUNNER_TEMP}/provider-clients-before.json"
+          {
+            echo 'summary<<PROVIDER_CLIENT_SUMMARY'
+            for provider in codex antigravity; do
+              old_version="$(jq -r ".providers.${provider}.version" "${before}")"
+              new_version="$(jq -r ".providers.${provider}.version" provider-clients.lock.json)"
+              old_amd64="$(jq -r ".providers.${provider}.assets.amd64.sha256" "${before}")"
+              new_amd64="$(jq -r ".providers.${provider}.assets.amd64.sha256" provider-clients.lock.json)"
+              old_arm64="$(jq -r ".providers.${provider}.assets.arm64.sha256" "${before}")"
+              new_arm64="$(jq -r ".providers.${provider}.assets.arm64.sha256" provider-clients.lock.json)"
+              if [[ "${old_version}" != "${new_version}" ]]; then
+                printf -- '- %s: %s -> %s\n' "${provider}" "${old_version}" "${new_version}"
+                printf -- '  amd64 SHA-256: %s\n' "${new_amd64}"
+                printf -- '  arm64 SHA-256: %s\n' "${new_arm64}"
+              fi
+            done
+            echo 'PROVIDER_CLIENT_SUMMARY'
+          } >> "${GITHUB_OUTPUT}"
+      - name: Detect candidate pin changes
+        id: candidate
+        run: |
+          if git diff --quiet -- provider-clients.lock.json; then
+            echo 'changed=false' >> "${GITHUB_OUTPUT}"
+            echo 'No newer stable provider client release was found.'
+          else
+            echo 'changed=true' >> "${GITHUB_OUTPUT}"
+            echo 'A provider client source-pin candidate needs validation.'
+          fi
+      - name: Validate candidate source pins
+        if: steps.candidate.outputs.changed == 'true'
+        run: pnpm validate
+      - name: Build image with the currently packaged runtime clients
+        if: steps.candidate.outputs.changed == 'true'
+        run: docker build -t ai-window-manager:provider-client-pin-check .
+      - name: Probe currently packaged provider clients without authentication or quota use
+        if: steps.candidate.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          codex_version="$(jq -r '.providers.codex.version' provider-clients.lock.json)"
+          agy_version="$(jq -r '.providers.antigravity.version' provider-clients.lock.json)"
+          [[ "${codex_version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "${agy_version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          docker run --rm --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m,mode=1777 \
+            --user 10001:10001 \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/scripts/validate-ops-002-codex-runtime.mjs,dst=/tmp/validate-codex.mjs,readonly" \
+            --entrypoint node \
+            -e AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex \
+            -e "CODEX_VERSION=${codex_version}" \
+            -e CODEX_HOME=/tmp/awm-provider-pin-codex-home \
+            ai-window-manager:provider-client-pin-check /tmp/validate-codex.mjs
+          docker run --rm --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m,mode=1777 \
+            --user 10001:10001 \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/scripts/validate-antigravity-runtime.mjs,dst=/tmp/validate-antigravity.mjs,readonly" \
+            --entrypoint node \
+            -e AWM_ANTIGRAVITY_EXECUTABLE=/opt/antigravity/bin/agy \
+            -e "AGY_EXPECTED_VERSION=${agy_version}" \
+            ai-window-manager:provider-client-pin-check /tmp/validate-antigravity.mjs
+      - name: Open or update the source-pin review PR
+        if: steps.candidate.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVIDER_CLIENT_SUMMARY: ${{ steps.summary.outputs.summary }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly branch='automation/provider-client-pins'
+          readonly candidate_file="${RUNNER_TEMP}/provider-clients.lock.json"
+          readonly pr_body="$(printf '%s\n\n%s\n%s\n\n%s\n' \
+            'This PR updates the canonical provider-client manifest from published stable releases in the official `openai/codex` and `google-antigravity/antigravity-cli` repositories.' \
+            'Pinned versions and architecture-specific release digests:' \
+            "${PROVIDER_CLIENT_SUMMARY}" \
+            'The candidate passed `pnpm validate`, `docker build`, and unauthenticated read-only runtime probes. SHA-256 is verified during image build; no provider credentials or quota-consuming request is used. This PR is never auto-merged.')"
+          cp provider-clients.lock.json "${candidate_file}"
+          gh auth setup-git
+          git fetch origin main
+
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
+            git switch --create "${branch}" --track "origin/${branch}"
+            if ! cmp -s <(git show "origin/${branch}:provider-clients.lock.json") "${candidate_file}"; then
+              cp "${candidate_file}" provider-clients.lock.json
+              git add -- provider-clients.lock.json
+              git commit -m 'chore: refresh official provider client source pins'
+              git push origin "HEAD:refs/heads/${branch}"
+            fi
+          else
+            git switch --create "${branch}" origin/main
+            cp "${candidate_file}" provider-clients.lock.json
+            git add -- provider-clients.lock.json
+            git commit -m 'chore: refresh official provider client source pins'
+            git push origin "HEAD:refs/heads/${branch}"
+          fi
+
+          pr_number="$(gh pr list --head "${branch}" --base main --state all --json number --jq '.[0].number // empty')"
+          if [[ -n "${pr_number}" ]]; then
+            pr_state="$(gh pr view "${pr_number}" --json state --jq '.state')"
+            if [[ "${pr_state}" != 'MERGED' ]]; then
+              if [[ "${pr_state}" == 'CLOSED' ]]; then
+                gh pr reopen "${pr_number}"
+              fi
+              gh pr edit "${pr_number}" \
+                --title 'chore: bump official provider client pins' \
+                --body "${pr_body}"
+              exit 0
+            fi
+          fi
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title 'chore: bump official provider client pins' \
+            --body "${pr_body}"

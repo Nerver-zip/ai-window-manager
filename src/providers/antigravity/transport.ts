@@ -2,6 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
+import type { ProviderCleanupArtifact } from '../provider.js';
 
 const MAX_STDOUT_BYTES = 512 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -21,7 +23,11 @@ export type AntigravityTransportErrorCode =
   | 'EXECUTABLE_UNAVAILABLE';
 
 export type AntigravityActionFailureDisposition = 'failed' | 'uncertain';
-export type AntigravityActionTransportErrorCode = 'PROCESS_START_FAILED' | 'OUTCOME_UNKNOWN';
+export type AntigravityActionTransportErrorCode =
+  | 'PROCESS_START_FAILED'
+  | 'CLEANUP_REGISTRATION_FAILED'
+  | 'STREAM_PROTOCOL_ERROR'
+  | 'OUTCOME_UNKNOWN';
 
 export class AntigravityTransportError extends Error {
   constructor(readonly code: AntigravityTransportErrorCode) {
@@ -64,6 +70,8 @@ export interface AntigravityTriggerCommandOptions {
   executable: string;
   model: string;
   timeoutMs: number;
+  registerCleanupArtifact: (artifact: ProviderCleanupArtifact) => Promise<void>;
+  cleanupUnregisteredConversation: (conversationId: string) => Promise<void>;
   spawnProcess?: AntigravityProcessFactory;
   signal?: AbortSignal;
 }
@@ -147,16 +155,21 @@ function actionFailure(
   return new AntigravityActionTransportError(code, disposition);
 }
 
-function actionProcessFailure(spawned: boolean): AntigravityActionTransportError {
-  if (!spawned) return actionFailure('PROCESS_START_FAILED', 'failed');
-  return actionFailure('OUTCOME_UNKNOWN', 'uncertain');
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isConversationId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+  );
 }
 
 /**
- * Send the single fixed, quota-consuming prompt through the official CLI.
- * The caller must persist its intent before invoking this function. Any
- * failure after the child process starts is ambiguous because the CLI does not
- * expose a trusted signal that proves whether the prompt was dispatched.
+ * Create an official CLI stream, persist its conversation ID on the init event,
+ * and only then send the fixed quota-consuming prompt through stdin. Step text
+ * is discarded and the final response remains transient in process memory.
  */
 export async function runAntigravityTriggerCommand(
   options: AntigravityTriggerCommandOptions,
@@ -171,6 +184,12 @@ export async function runAntigravityTriggerCommand(
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,127}$/.test(options.model)) {
     throw actionFailure('PROCESS_START_FAILED', 'failed');
   }
+  if (typeof options.registerCleanupArtifact !== 'function') {
+    throw actionFailure('CLEANUP_REGISTRATION_FAILED', 'failed');
+  }
+  if (typeof options.cleanupUnregisteredConversation !== 'function') {
+    throw actionFailure('CLEANUP_REGISTRATION_FAILED', 'failed');
+  }
   if (options.signal?.aborted) throw actionFailure('PROCESS_START_FAILED', 'failed');
 
   let workspace: string;
@@ -182,12 +201,12 @@ export async function runAntigravityTriggerCommand(
 
   const spawnProcess = options.spawnProcess ?? defaultSpawn;
   const args = [
-    '-p',
-    ANTIGRAVITY_TRIGGER_MESSAGE,
+    '--input-format',
+    'stream-json',
+    '--output-format',
+    'stream-json',
     '--model',
     options.model,
-    '--output-format',
-    'json',
     '--print-timeout',
     `${Math.ceil(options.timeoutMs / 1000)}s`,
     '--sandbox',
@@ -210,12 +229,18 @@ export async function runAntigravityTriggerCommand(
 
       let settled = false;
       let spawned = false;
+      let promptSent = false;
       let stdoutBytes = 0;
       let stderrBytes = 0;
-      let stdout = '';
+      let lineBuffer = '';
+      let conversationId: string | undefined;
+      let resultJson: string | undefined;
+      let streamFailure: AntigravityActionTransportError | undefined;
+      let processing = Promise.resolve();
+      const decoder = new StringDecoder('utf8');
       const timeout = setTimeout(() => {
         terminate();
-        finish(actionProcessFailure(spawned));
+        finish(failureForDispatch(promptSent));
       }, options.timeoutMs);
       timeout.unref();
       let abortListener: (() => void) | undefined;
@@ -238,20 +263,113 @@ export async function runAntigravityTriggerCommand(
         killProcess(child);
       };
 
+      const failStream = (error: AntigravityActionTransportError): void => {
+        if (settled) return;
+        streamFailure = error;
+        terminate();
+        finish(error);
+      };
+
+      const processLine = async (line: string): Promise<void> => {
+        if (settled || line.trim().length === 0) return;
+        let event: unknown;
+        try {
+          event = JSON.parse(line) as unknown;
+        } catch {
+          failStream(failureForDispatch(promptSent, 'STREAM_PROTOCOL_ERROR'));
+          return;
+        }
+        if (!isRecord(event) || typeof event.event !== 'string') {
+          failStream(failureForDispatch(promptSent, 'STREAM_PROTOCOL_ERROR'));
+          return;
+        }
+
+        if (event.event === 'init') {
+          if (conversationId !== undefined || !isConversationId(event.conversation_id)) {
+            failStream(failureForDispatch(promptSent, 'STREAM_PROTOCOL_ERROR'));
+            return;
+          }
+          const artifact: ProviderCleanupArtifact = {
+            kind: 'antigravity_conversation',
+            externalId: event.conversation_id,
+          };
+          try {
+            try {
+              await options.registerCleanupArtifact(artifact);
+            } catch {
+              // createIfAbsent is idempotent, so retry one transient failure and
+              // a lost acknowledgement before giving up on the cleanup obligation.
+              await options.registerCleanupArtifact(artifact);
+            }
+          } catch {
+            try {
+              await options.cleanupUnregisteredConversation(event.conversation_id);
+            } catch {
+              // Never dispatch if both durable registration and exact-ID cleanup fail.
+            }
+            failStream(actionFailure('CLEANUP_REGISTRATION_FAILED', 'failed'));
+            return;
+          }
+          if (settled || options.signal?.aborted) return;
+          conversationId = event.conversation_id;
+          promptSent = true;
+          try {
+            child.stdin.write(
+              `${JSON.stringify({
+                event: 'user',
+                message: { content: ANTIGRAVITY_TRIGGER_MESSAGE },
+              })}\n`,
+            );
+            child.stdin.end();
+          } catch {
+            failStream(failureForDispatch(promptSent));
+          }
+          return;
+        }
+
+        if (event.event === 'result') {
+          if (
+            !conversationId ||
+            resultJson !== undefined ||
+            !isRecord(event.result) ||
+            event.result.conversation_id !== conversationId
+          ) {
+            failStream(failureForDispatch(promptSent, 'STREAM_PROTOCOL_ERROR'));
+            return;
+          }
+          resultJson = JSON.stringify(event.result);
+        }
+        // step_update text and future additive event types are deliberately discarded.
+      };
+
+      const enqueueLines = (text: string): void => {
+        lineBuffer += text;
+        if (Buffer.byteLength(lineBuffer, 'utf8') > MAX_ACTION_STDOUT_BYTES) {
+          failStream(failureForDispatch(promptSent, 'STREAM_PROTOCOL_ERROR'));
+          return;
+        }
+        let newline = lineBuffer.indexOf('\n');
+        while (newline >= 0) {
+          const line = lineBuffer.slice(0, newline).replace(/\r$/, '');
+          lineBuffer = lineBuffer.slice(newline + 1);
+          processing = processing.then(() => processLine(line));
+          newline = lineBuffer.indexOf('\n');
+        }
+      };
+
       child.once('spawn', () => {
         spawned = true;
       });
 
       child.stdout.on('data', (chunk: Buffer | string) => {
         if (settled) return;
-        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        const text = typeof chunk === 'string' ? chunk : decoder.write(chunk);
         stdoutBytes += Buffer.byteLength(text, 'utf8');
         if (stdoutBytes > MAX_ACTION_STDOUT_BYTES) {
-          terminate();
-          finish(actionFailure('OUTCOME_UNKNOWN', 'uncertain'));
+          failStream(failureForDispatch(promptSent, 'STREAM_PROTOCOL_ERROR'));
           return;
         }
-        stdout += text;
+        enqueueLines(text);
       });
 
       child.stderr.on('data', (chunk: Buffer | string) => {
@@ -259,52 +377,68 @@ export async function runAntigravityTriggerCommand(
         const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
         stderrBytes += Buffer.byteLength(text, 'utf8');
         if (stderrBytes > MAX_STDERR_BYTES) {
-          terminate();
-          finish(actionFailure('OUTCOME_UNKNOWN', 'uncertain'));
+          failStream(failureForDispatch(promptSent));
         }
       });
 
       child.once('error', () => {
         if (settled) return;
-        finish(
-          spawned
-            ? actionFailure('OUTCOME_UNKNOWN', 'uncertain')
-            : actionFailure('PROCESS_START_FAILED', 'failed'),
-        );
+        finish(failureForDispatch(promptSent));
       });
 
       child.stdin.once('error', () => {
         if (settled) return;
-        finish(actionProcessFailure(spawned));
+        finish(failureForDispatch(promptSent));
       });
 
       child.once('close', (exitCode: number | null) => {
         if (settled) return;
-        if (!spawned) {
-          finish(actionFailure('PROCESS_START_FAILED', 'failed'));
-          return;
-        }
-        if (exitCode !== 0) {
-          finish(actionProcessFailure(spawned));
-          return;
-        }
-        finish(undefined, stdout);
+        lineBuffer += decoder.end();
+        const trailing = lineBuffer.replace(/\r$/, '');
+        lineBuffer = '';
+        if (trailing.trim().length > 0) processing = processing.then(() => processLine(trailing));
+        void processing.then(() => {
+          if (settled) return;
+          if (streamFailure) {
+            finish(streamFailure);
+          } else if (!spawned || !promptSent) {
+            finish(actionFailure('PROCESS_START_FAILED', 'failed'));
+          } else if (exitCode !== 0 || !resultJson) {
+            finish(actionFailure('OUTCOME_UNKNOWN', 'uncertain'));
+          } else {
+            finish(undefined, resultJson);
+          }
+        });
       });
 
       if (options.signal) {
         abortListener = () => {
           terminate();
-          finish(actionProcessFailure(spawned));
+          finish(failureForDispatch(promptSent));
         };
         if (options.signal.aborted) abortListener();
         else options.signal.addEventListener('abort', abortListener, { once: true });
       }
-
-      child.stdin.end();
     });
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
+}
+
+function failureForDispatch(
+  promptSent: boolean,
+  preDispatchCode: 'PROCESS_START_FAILED' | 'STREAM_PROTOCOL_ERROR' = 'PROCESS_START_FAILED',
+): AntigravityActionTransportError {
+  if (promptSent) {
+    return actionFailure(
+      preDispatchCode === 'STREAM_PROTOCOL_ERROR' ? 'STREAM_PROTOCOL_ERROR' : 'OUTCOME_UNKNOWN',
+      'uncertain',
+    );
+  }
+  if (preDispatchCode === 'STREAM_PROTOCOL_ERROR') {
+    return actionFailure('STREAM_PROTOCOL_ERROR', 'failed');
+  }
+  return actionFailure('PROCESS_START_FAILED', 'failed');
 }
 
 export async function runAntigravityUsageCommand(

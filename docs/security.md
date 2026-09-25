@@ -16,7 +16,9 @@ Gitleaks uses its upstream default rules through `.gitleaks.toml`. The local `pn
 
 ### Codex
 
-The image packages the official Codex CLI `0.155.1` with release checksums.
+The image packages the official Codex CLI version recorded in
+`provider-clients.lock.json`; the build verifies its architecture-specific
+release SHA-256.
 `AWM_CODEX_ENABLED` is false when unset; the checked-in `.env.example`
 explicitly enables the local profile without containing credentials. A dedicated
 `/codex-state` volume is owned by the container user and may be authenticated
@@ -49,20 +51,52 @@ cannot be retried blindly.
 
 ### Antigravity
 
-The accepted integration invokes only the pinned official `agy` CLI.
+The accepted integration invokes only the official `agy` CLI version pinned in
+`provider-clients.lock.json`.
 Monitoring is disabled when `AWM_ANTIGRAVITY_ENABLED` is unset; the checked-in
 `.env.example` explicitly enables it for the local profile. Its experimental,
 quota-consuming trigger has a separate environment gate, also enabled by the
 local example, and still requires the persisted provider mode `automation` and
-an automatic policy. The adapter uses only official headless `agy -p`
-with one fixed `Hi!`, and only for one exact supported quota-window target and
-its configured model. This is a normal provider request, not a start-only API;
-the Overview start button is explicit and does not display an additional quota
+an automatic policy. The adapter uses the official stream-JSON headless
+protocol with one fixed `Hi!`, and only for one exact supported quota-window
+target and its configured model. It registers the conversation ID durably
+before sending the prompt, discards response text, and never stores a
+transcript. This is a normal provider request, not a start-only API; the
+Overview start button is explicit and does not display an additional quota
 warning.
 Operator-provided observations support the reset-anchoring effect for one
 account and pinned client, but this is not a universal provider guarantee.
 Timeout, EOF, malformed output or other ambiguity after spawn becomes
 `uncertain`; it is never blindly retried.
+
+Antigravity has no machine-usable conversation deletion command in this
+integration. With the operator's explicit exact-ID authorization, cleanup
+removes only the matching conversation database and SQLite sidecars plus the
+matching `brain/<uuid>` directory under the isolated AWM CLI home. The code
+does not read or modify database contents and rejects symlinks; shared indexes,
+auth/keyring material and unrelated IDs are out of scope. This depends on an
+observed local storage layout, not an official API contract. Cleanup is
+separately durable and retries deletion only; it never causes another `Hi!`.
+
+### Provider client updates
+
+Provider-client source and runtime updates are limited to two fixed official
+repositories. The canonical lock manifest records stable semantic versions
+and published SHA-256 digests for each supported architecture. The runtime
+updater rejects arbitrary URLs/versions, constrains redirects to known GitHub
+release hosts, bounds archive size and contents, verifies the digest, checks
+the candidate version, and runs read-only compatibility probes before atomic
+activation. Probes receive no provider credentials and have no action callback;
+a Codex turn or Antigravity prompt is never used to validate an update. The
+immutable image client remains a fallback and only one previous runtime
+version is retained for rollback. Automatic updates are off by default and
+stored per provider in SQLite.
+
+Update operations require the mandatory operator session, same-origin Origin,
+and CSRF defenses. The server accepts only a fixed provider ID and `check`,
+`update` or `rollback`; browser input cannot specify a URL, repository, asset,
+command, version or digest. Status omits executable paths, auth state, release
+payloads and credentials.
 
 Authentication remains owned by the official CLI and its Secret Service
 keyring. The container uses separate Antigravity CLI-state and keyring volumes

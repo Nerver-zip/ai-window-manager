@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CodexAppServerClient,
   CodexTransportError,
@@ -12,10 +12,12 @@ const clientOptions = {
   requestTimeoutMs: 100,
   actionTimeoutMs: 100,
 };
+const registerCleanupArtifact = (): Promise<void> => Promise.resolve();
 
 describe('Codex app-server JSONL transport', () => {
   it('starts an ephemeral thread, sends a turn, waits for completion, and cleans up', async () => {
     const methods: Array<string | undefined> = [];
+    const lifecycle: string[] = [];
     const turnParams: unknown[] = [];
     let child: FakeCodexProcess | undefined;
     const client = new CodexAppServerClient({
@@ -30,6 +32,7 @@ describe('Codex app-server JSONL transport', () => {
             process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
           }
           if (message.method === 'turn/start' && message.id !== undefined) {
+            lifecycle.push('turn:start');
             turnParams.push(message.params);
             process.send({
               id: message.id,
@@ -54,10 +57,15 @@ describe('Codex app-server JSONL transport', () => {
       ),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', (artifact) =>
+        Promise.resolve().then(() => {
+          expect(artifact).toEqual({ kind: 'codex_thread', externalId: 'thread-1' });
+          lifecycle.push('registered');
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(lifecycle).toEqual(['registered', 'turn:start']);
     expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'turn/start']);
     expect(turnParams).toEqual([
       {
@@ -69,6 +77,115 @@ describe('Codex app-server JSONL transport', () => {
       },
     ]);
     expect(child?.killSignals).toEqual(['SIGTERM']);
+  });
+
+  it('deletes a newly started thread and never dispatches when durable registration fails', async () => {
+    const methods: string[] = [];
+    let deletedParams: unknown;
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method) methods.push(message.method);
+        if (message.method === 'initialize' && message.id !== undefined)
+          process.send({ id: message.id, result: {} });
+        if (message.method === 'thread/start' && message.id !== undefined)
+          process.send({ id: message.id, result: { thread: { id: 'private-thread-id' } } });
+        if (message.method === 'thread/delete' && message.id !== undefined) {
+          deletedParams = message.params;
+          process.send({ id: message.id, result: {} });
+        }
+      }),
+    });
+
+    let failure: unknown;
+    const registerCleanupArtifact = vi.fn(() =>
+      Promise.reject(new Error('registration failed for private-thread-id')),
+    );
+    try {
+      await client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 'CLEANUP_REGISTRATION_FAILED',
+      stage: 'thread_start',
+      message: 'Codex app-server cleanup registration failed',
+    });
+    expect(JSON.stringify(failure)).not.toContain('private-thread-id');
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'thread/delete']);
+    expect(deletedParams).toEqual({ threadId: 'private-thread-id' });
+    expect(registerCleanupArtifact).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps registration failure sanitized when compensating deletion also fails', async () => {
+    const methods: string[] = [];
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method) methods.push(message.method);
+        if (message.method === 'initialize' && message.id !== undefined)
+          process.send({ id: message.id, result: {} });
+        if (message.method === 'thread/start' && message.id !== undefined)
+          process.send({ id: message.id, result: { thread: { id: 'private-thread-id' } } });
+        if (message.method === 'thread/delete' && message.id !== undefined)
+          process.send({
+            id: message.id,
+            error: { code: -32600, message: 'private cleanup diagnostic private-thread-id' },
+          });
+      }),
+    });
+
+    let failure: unknown;
+    try {
+      await client.sendMessage('Hi!', '/tmp/awm-codex-workspace', () =>
+        Promise.reject(new Error('registration failed')),
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: 'CLEANUP_REGISTRATION_FAILED',
+      stage: 'thread_start',
+    });
+    expect(JSON.stringify(failure)).not.toContain('private-thread-id');
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'thread/delete']);
+  });
+
+  it('retries an idempotent cleanup registration once before dispatching the turn', async () => {
+    const methods: string[] = [];
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method) methods.push(message.method);
+        if (message.method === 'initialize' && message.id !== undefined)
+          process.send({ id: message.id, result: {} });
+        if (message.method === 'thread/start' && message.id !== undefined)
+          process.send({ id: message.id, result: { thread: { id: 'thread-1' } } });
+        if (message.method === 'turn/start' && message.id !== undefined) {
+          process.send({ id: message.id, result: { turn: { id: 'turn-1' } } });
+          process.send({
+            method: 'turn/completed',
+            params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } },
+          });
+        }
+      }),
+    });
+    let registrationCalls = 0;
+    const registerCleanupArtifact = vi.fn(() => {
+      registrationCalls += 1;
+      return registrationCalls === 1
+        ? Promise.reject(new Error('synthetic transient storage error'))
+        : Promise.resolve();
+    });
+
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).resolves.toBeUndefined();
+
+    expect(registerCleanupArtifact).toHaveBeenCalledTimes(2);
+    expect(methods).toEqual(['initialize', 'initialized', 'thread/start', 'turn/start']);
   });
 
   it('uses the longer action timeout for a slow completion without relaxing read timeouts', async () => {
@@ -100,10 +217,9 @@ describe('Codex app-server JSONL transport', () => {
       }),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).resolves.toBeUndefined();
   });
 
   it('consumes a completion notification buffered before the turn response', async () => {
@@ -129,10 +245,9 @@ describe('Codex app-server JSONL transport', () => {
       }),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).resolves.toBeUndefined();
   });
 
   it('ignores unrelated completion notifications while matching the requested turn', async () => {
@@ -164,10 +279,9 @@ describe('Codex app-server JSONL transport', () => {
       }),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).resolves.toEqual({
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).resolves.toBeUndefined();
   });
 
   it('fails closed for a failed turn completion', async () => {
@@ -197,10 +311,9 @@ describe('Codex app-server JSONL transport', () => {
       }),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).rejects.toMatchObject({
-      code: 'TURN_FAILED',
-      stage: 'turn_completion',
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).rejects.toMatchObject({ code: 'TURN_FAILED', stage: 'turn_completion' });
   });
 
   it('does not wait indefinitely when completion is aborted', async () => {
@@ -222,7 +335,12 @@ describe('Codex app-server JSONL transport', () => {
     });
 
     await expect(
-      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', controller.signal),
+      client.sendMessage(
+        'Hi!',
+        '/tmp/awm-codex-workspace',
+        registerCleanupArtifact,
+        controller.signal,
+      ),
     ).rejects.toMatchObject({ code: 'ABORTED', stage: 'turn_completion' });
   });
 
@@ -248,10 +366,9 @@ describe('Codex app-server JSONL transport', () => {
       }),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-      stage,
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', stage });
   });
 
   it.each([
@@ -274,10 +391,9 @@ describe('Codex app-server JSONL transport', () => {
       }),
     });
 
-    await expect(client.sendMessage('Hi!', '/tmp/awm-codex-workspace')).rejects.toMatchObject({
-      code: 'PROTOCOL_ERROR',
-      stage,
-    });
+    await expect(
+      client.sendMessage('Hi!', '/tmp/awm-codex-workspace', registerCleanupArtifact),
+    ).rejects.toMatchObject({ code: 'PROTOCOL_ERROR', stage });
   });
 
   it('performs initialize, initialized, rate-limit read, and cleanup', async () => {

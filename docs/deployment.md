@@ -59,9 +59,10 @@ At startup the daemon seeds enabled bootstrap providers missing from SQLite and,
 with a trigger gate enabled, upgrades only legacy automation defaults that were
 never explicitly saved. It performs one reconcile, then uses one coalescing
 global reconcile interval. Runtime provider state and planned intents remain in SQLite;
-the overview/API only reads that persisted state. The image packages the
-official Codex CLI `0.155.1` at `/opt/codex/bin/codex`, verified by
-architecture-specific release checksums. The runtime image includes the
+the overview/API only reads that persisted state. The image packages the official
+Codex CLI version pinned in `provider-clients.lock.json` (currently `0.157.0` as
+of 2026-09-25) at `/opt/codex/bin/codex`, verified by architecture-specific
+release SHA-256 digests. The runtime image includes the
 system CA bundle required for official Codex HTTPS login and app-server
 connections. Codex monitoring uses the dedicated
 `AWM_CODEX_HOME=/codex-state` volume and is disabled when its variable is
@@ -73,7 +74,8 @@ were never explicitly saved to automatic mode. `AWM_CODEX_ACTION_TIMEOUT_SECONDS
 app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
 it does not turn an ambiguous outcome into a retryable failure.
 
-The image also packages the official Antigravity CLI `1.2.9` with
+The image also packages the official Antigravity CLI version pinned in
+`provider-clients.lock.json` (currently `1.2.11` as of 2026-09-25), with
 architecture-specific SHA-256 verification. `AWM_ANTIGRAVITY_ENABLED` defaults
 to false when unset. When enabled, the entrypoint starts a private D-Bus session and
 GNOME Secret Service as UID 10001, with `XDG_*` paths rooted in the dedicated
@@ -91,6 +93,22 @@ targets and uses the configured family model. One `Hi!` is a quota-consuming
 normal prompt, not a provider start-only operation. A request aimed at one
 family may also affect that family's other allowance window. A timeout or other
 ambiguous result after spawn must not be retried blindly.
+
+## Provider-client updates
+
+`provider-clients.lock.json` is the source pin for both official clients and
+contains the expected architecture-specific SHA-256 release digests. The image
+includes immutable packaged fallbacks. Compose mounts a separate
+`/provider-clients` volume for validated runtime versions; updates resolve only
+from official stable release metadata, verify the digest before use, run
+read-only compatibility probes without credentials or quota use, and activate
+through an atomic current-version pointer. The previous runtime remains
+available for rollback. `/settings` exposes current, packaged and latest
+checked versions, manual check/update/rollback controls, and an off-by-default
+automatic-update preference. Updates wait for provider authentication, actions
+and supported cleanup to be idle. A scheduled pin workflow proposes changes as
+review-only pull requests after quality gates, image build and unauthenticated
+read-only version probes; it never auto-merges.
 
 ## Web-assisted provider sign-in acceptance
 
@@ -215,8 +233,9 @@ docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
   ai-window-manager:dev /tmp/validate.mjs
 ```
 
-The command must report `codex-cli 0.155.1` and a successful app-server
-`initialize`. It deliberately does not log in or call `account/rateLimits/read`.
+The command must report the Codex version pinned in
+`provider-clients.lock.json` and a successful app-server `initialize`. It
+deliberately does not log in or call `account/rateLimits/read`.
 
 The Antigravity image check, without credentials or a provider request, is:
 

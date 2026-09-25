@@ -37,6 +37,14 @@ HTTP reads remain provider-I/O free. The FakeProvider vertical slice asserts
 that planned/confirmed tests perform zero quota-consuming trigger calls unless a
 test explicitly invokes the executor with a synthetic non-quota action.
 
+Additional offline coverage validates Codex thread cleanup registration and
+official deletion protocol, Antigravity stream-JSON conversation-ID capture and
+authorized exact-ID filesystem cleanup using temporary directories, cleanup
+retry/restart behavior, independent Antigravity family policies with
+provider-wide claim serialization, and provider-client archive digest/version/
+compatibility/rollback paths. No provider account or quota is used by these
+tests.
+
 ## Secret scanning
 
 Install Gitleaks and run `pnpm secret:scan` before review. CI checks out full

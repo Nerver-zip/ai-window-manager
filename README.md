@@ -134,6 +134,9 @@ Included now:
   detailed provider samples are retained for 90 days;
 - read-only command endpoints plus CSRF/Origin-protected settings and target-reset schedule forms;
 - bounded retention maintenance for samples, events and terminal intent history;
+- durable, separately retried cleanup of disposable Codex trigger threads and
+  exact Antigravity conversation IDs; conversation text is never imported into
+  AWM history;
 - official Codex app-server adapter with offline protocol fixtures and a fixed,
   quota-consuming `Hi!` turn; automatic starts default on for enabled providers
   and can be explicitly disabled in settings or through the environment;
@@ -146,6 +149,10 @@ Included now:
   experimental and separately gated;
 - Docker/Compose hardening with pinned Codex and Antigravity clients and
   isolated state/keyring volumes;
+- provider-client version checks, SHA-256-verified runtime updates, validation,
+  rollback, and a scheduled review-only source-pin PR workflow;
+- independent Antigravity activation policies for Gemini and Claude/GPT model
+  families, serialized to at most one open provider trigger at a time;
 - CI/validation scaffolding;
 - provider research and compliance classification;
 - ADRs, roadmap, backlog and agent skills.
@@ -162,9 +169,11 @@ Still requires separate runtime configuration or remains out of scope:
 - universal guarantees about Antigravity's window-start behavior; the
   operator-tested one-account/CLI experiment is documented in
   [`SPIKE-005`](docs/research/spikes/SPIKE-005-antigravity-window-trigger.md);
-- aggregate statistics and richer charting.
+- aggregate recommendations and richer analytics.
 
-Those are implementation-roadmap work, not omissions from the planning deliverable.
+These are external acceptance/risk items or explicitly deferred analytics work;
+the current code and validation status are summarized in the implementation
+plan and backlog.
 
 ## First commands for an implementation agent
 

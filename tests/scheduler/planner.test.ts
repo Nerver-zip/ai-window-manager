@@ -141,7 +141,7 @@ describe('planWindowAction', () => {
     expect(planWindowAction(value).reasonCode).toBe(reason);
   });
 
-  it('plans auto windows, waits while active and deduplicates pending work', () => {
+  it('plans auto windows and blocks provider actions while one action remains open', () => {
     expect(
       planWindowAction(input({ policy: policy({ kind: 'auto' }), currentWindow: inactive })),
     ).toMatchObject({ kind: 'START', reasonCode: PlannerReasonCode.AutoWindowAvailable });
@@ -154,7 +154,7 @@ describe('planWindowAction', () => {
       planWindowAction(
         input({
           pendingIntents: [
-            { dedupeKey: planned.dedupeKey ?? '', actionType: 'trigger_window', state: 'planned' },
+            { dedupeKey: 'another-policy-cycle', actionType: 'trigger_window', state: 'planned' },
           ],
         }),
       ),
@@ -164,10 +164,19 @@ describe('planWindowAction', () => {
         input({
           pendingIntents: [
             {
-              dedupeKey: planned.dedupeKey ?? '',
+              dedupeKey: 'another-policy-cycle',
               actionType: 'trigger_window',
               state: 'succeeded',
             },
+          ],
+        }),
+      ),
+    ).toMatchObject({ kind: 'WAIT', reasonCode: PlannerReasonCode.ActionAlreadyPending });
+    expect(
+      planWindowAction(
+        input({
+          pendingIntents: [
+            { dedupeKey: 'cleanup-job', actionType: 'provider_cleanup', state: 'planned' },
           ],
         }),
       ),

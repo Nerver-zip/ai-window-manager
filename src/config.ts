@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isIP } from 'node:net';
+import path from 'node:path';
 import { validateArgon2idPasswordHash } from './auth/operator-password.js';
 
 const trustedProxySchema = z
@@ -33,6 +34,12 @@ const envSchema = z.object({
   AWM_BIND: z.string().default('0.0.0.0'),
   AWM_PORT: z.coerce.number().int().min(1).max(65535).default(8787),
   AWM_DB_PATH: z.string().default('./data/window-manager.db'),
+  AWM_PROVIDER_CLIENT_RUNTIME_ROOT: z
+    .string()
+    .default('')
+    .refine((value) => value === '' || path.isAbsolute(value), {
+      message: 'AWM_PROVIDER_CLIENT_RUNTIME_ROOT must be an absolute path when configured',
+    }),
   AWM_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),

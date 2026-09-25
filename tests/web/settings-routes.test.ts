@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AuthSessionManager, type ProviderAuthDriver } from '../../src/auth/session-manager.js';
 import {
   attachDefaultTestSession,
   createTestOperatorAuth,
@@ -9,10 +10,14 @@ import {
 } from '../helpers/operator-auth.js';
 import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
+import type { ProviderAdapter } from '../../src/providers/provider.js';
+import { seedBootstrapProviderDefaults } from '../../src/bootstrap/provider-defaults.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { openDatabase } from '../../src/storage/database.js';
 import { createRepositories, type ProviderRecord } from '../../src/storage/repositories.js';
 import { buildServer } from '../../src/web/server.js';
+import type { ProviderClientUpdateWebControls } from '../../src/provider-clients/web-controls.js';
+import type { ProviderClientUpdateStatus } from '../../src/provider-clients/update-service.js';
 
 const resources: Array<{
   app: ReturnType<typeof buildServer>;
@@ -28,7 +33,16 @@ afterEach(async () => {
   }
 });
 
-function setup() {
+function setup(
+  options: {
+    providerClientUpdates?: (
+      repositories: ReturnType<typeof createRepositories>,
+    ) => ProviderClientUpdateWebControls;
+    extraProviders?: ProviderRecord[];
+    extraAdapterIds?: string[];
+    authSessions?: AuthSessionManager;
+  } = {},
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-settings-routes-'));
   const db = openDatabase(path.join(dir, 'awm.db'));
   const repositories = createRepositories(db);
@@ -47,6 +61,11 @@ function setup() {
     updatedAtMs: clock.now().getTime(),
   };
   repositories.providers.upsert(provider);
+  for (const extraProvider of options.extraProviders ?? []) {
+    repositories.providers.upsert(extraProvider);
+  }
+  const adapters = new Map<string, ProviderAdapter>([['fake', fake]]);
+  for (const adapterId of options.extraAdapterIds ?? []) adapters.set(adapterId, fake);
   const app = buildServer({
     config: loadTestConfig({
       AWM_DB_PATH: path.join(dir, 'awm.db'),
@@ -55,18 +74,65 @@ function setup() {
     }),
     db,
     repositories,
-    adapters: new Map([['fake', fake]]),
+    adapters,
     clock,
     operatorAuth,
+    ...(options.authSessions ? { authSessions: options.authSessions } : {}),
+    ...(options.providerClientUpdates
+      ? { providerClientUpdates: options.providerClientUpdates(repositories) }
+      : {}),
   });
   attachDefaultTestSession(app, operatorAuth.sessions.create().token);
   resources.push({ app, db, dir });
-  return { app, repositories, fake };
+  return { app, db, dir, repositories, fake, clock, operatorAuth };
 }
 
 function headerValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? '';
   return value ?? '';
+}
+
+function updateStatus(providerId: 'codex' | 'antigravity'): ProviderClientUpdateStatus {
+  return {
+    providerId,
+    packagedVersion: '1.0.0',
+    activeVersion: '1.0.0',
+    previousVersion: null,
+    availableVersion: null,
+    updateAvailable: false,
+    status: 'current',
+    lastCheckedAt: '2026-09-19T12:00:00.000Z',
+    lastUpdatedAt: null,
+    lastErrorCode: null,
+  };
+}
+
+function providerUpdateControls(
+  repositories: ReturnType<typeof createRepositories>,
+  runtimeChanging = false,
+) {
+  const actions = {
+    check: vi.fn(() => true),
+    update: vi.fn(() => true),
+    rollback: vi.fn(() => true),
+  };
+  const controls: ProviderClientUpdateWebControls = {
+    getStatus: updateStatus,
+    isRuntimeChanging: (providerId) => runtimeChanging && providerId === 'antigravity',
+    autoUpdateEnabled: (providerId) =>
+      repositories.settings.get<boolean>(`provider-client-auto-update:${providerId}`)?.value ===
+      true,
+    setAutoUpdateEnabled: (providerId, enabled) =>
+      repositories.settings.set(
+        `provider-client-auto-update:${providerId}`,
+        enabled,
+        Date.parse('2026-09-19T12:00:00.000Z'),
+      ),
+    startCheck: actions.check,
+    startUpdate: actions.update,
+    startRollback: actions.rollback,
+  };
+  return { controls, actions };
 }
 
 async function persistObservedWindow(
@@ -106,6 +172,244 @@ async function persistObservedWindow(
 }
 
 describe('settings and schedule pages', () => {
+  it('persists an explicit Antigravity automatic-start choice across SQLite reopen and bootstrap', async () => {
+    const nowMs = Date.parse('2026-09-19T12:00:00.000Z');
+    const antigravity: ProviderRecord = {
+      id: 'antigravity',
+      kind: 'antigravity',
+      enabled: true,
+      mode: 'monitor_only',
+      modeExplicit: false,
+      pollIntervalSeconds: 300,
+      config: {},
+      configVersion: 1,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+    const context = setup({ extraProviders: [antigravity], extraAdapterIds: ['antigravity'] });
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/settings',
+      headers: { host: 'localhost:8787' },
+    });
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: '/settings/providers/antigravity',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}&enabled=on&mode=automation&refreshIntervalPreset=300`,
+    });
+    expect(response.statusCode).toBe(303);
+    expect(context.repositories.providers.get('antigravity')).toMatchObject({
+      mode: 'automation',
+      modeExplicit: true,
+    });
+
+    const tracked = resources.find((resource) => resource.app === context.app);
+    if (!tracked) throw new Error('settings test resources were not registered');
+    await context.app.close();
+    context.db.close();
+
+    const reopenedDb = openDatabase(path.join(context.dir, 'awm.db'));
+    const reopenedRepositories = createRepositories(reopenedDb);
+    seedBootstrapProviderDefaults({
+      repositories: reopenedRepositories,
+      provider: { id: 'antigravity', kind: 'antigravity', config: {} },
+      nowMs: nowMs + 30_000,
+      pollIntervalSeconds: 300,
+      timezone: 'America/Sao_Paulo',
+      triggerEnabled: true,
+    });
+    expect(reopenedRepositories.providers.get('antigravity')).toMatchObject({
+      mode: 'automation',
+      modeExplicit: true,
+    });
+
+    const restartedApp = buildServer({
+      config: loadTestConfig({
+        AWM_DB_PATH: path.join(context.dir, 'awm.db'),
+        AWM_LOG_LEVEL: 'silent',
+        AWM_FAKE_PROVIDER_ENABLED: 'true',
+      }),
+      db: reopenedDb,
+      repositories: reopenedRepositories,
+      adapters: new Map([
+        ['fake', context.fake],
+        ['antigravity', context.fake],
+      ]),
+      clock: context.clock,
+      operatorAuth: context.operatorAuth,
+    });
+    tracked.app = restartedApp;
+    tracked.db = reopenedDb;
+    attachDefaultTestSession(restartedApp, context.operatorAuth.sessions.create().token);
+    const restartedPage = await restartedApp.inject({
+      method: 'GET',
+      url: '/settings',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(restartedPage.statusCode).toBe(200);
+    expect(restartedPage.body).toContain('value="automation" selected');
+  });
+
+  it('blocks provider sign-in while the provider executable is being replaced', async () => {
+    const driver: ProviderAuthDriver = {
+      providerId: 'antigravity',
+      isAlreadyAuthenticated: () => Promise.resolve(false),
+      launch: () => {
+        throw new Error('provider sign-in must not launch during an update');
+      },
+      parseOutput: () => undefined,
+      submitCode: () => undefined,
+      verify: () => Promise.resolve(false),
+    };
+    const authSessions = new AuthSessionManager({
+      clock: new FakeClock('2026-09-19T12:00:00.000Z'),
+      drivers: new Map([['antigravity', driver]]),
+    });
+    const context = setup({
+      authSessions,
+      extraAdapterIds: ['antigravity'],
+      providerClientUpdates: (repositories) => providerUpdateControls(repositories, true).controls,
+    });
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/settings',
+      headers: { host: 'localhost:8787' },
+    });
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/antigravity/auth/start',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/json',
+        'x-csrf-token': token,
+      },
+      payload: '{}',
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: { code: 'PROVIDER_CLIENT_UPDATE_IN_PROGRESS' },
+    });
+    expect(authSessions.status('antigravity').state).toBe('IDLE');
+  });
+
+  it('protects provider-client update controls and exposes only safe status fields', async () => {
+    const clientProvider: ProviderRecord = {
+      id: 'codex',
+      kind: 'codex',
+      enabled: true,
+      mode: 'automation',
+      pollIntervalSeconds: 300,
+      config: {},
+      configVersion: 1,
+      createdAtMs: Date.parse('2026-09-19T12:00:00.000Z'),
+      updatedAtMs: Date.parse('2026-09-19T12:00:00.000Z'),
+    };
+    let actions: ReturnType<typeof providerUpdateControls>['actions'] | undefined;
+    const context = setup({
+      extraProviders: [clientProvider],
+      providerClientUpdates: (repositories) => {
+        const updateControls = providerUpdateControls(repositories);
+        actions = updateControls.actions;
+        return updateControls.controls;
+      },
+    });
+    const actionSpies = actions!;
+
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/settings',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('Provider app updates');
+    expect(page.body).toContain('Active version');
+    expect(page.body).toContain('Automatically install stable updates');
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const action = await context.app.inject({
+      method: 'POST',
+      url: '/settings/provider-clients/codex/check',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}`,
+    });
+    expect(action.statusCode).toBe(303);
+    expect(actionSpies.check).toHaveBeenCalledExactlyOnceWith('codex');
+
+    const apiRead = await context.app.inject({ method: 'GET', url: '/api/v1/provider-clients' });
+    expect(apiRead.statusCode).toBe(200);
+    expect(apiRead.body).toContain('"providerId":"codex"');
+    expect(apiRead.body).toContain('"activeVersion":"1.0.0"');
+    expect(apiRead.body).toContain('"autoUpdate":false');
+    expect(apiRead.body).not.toMatch(/executablePath|sha256|https?:/i);
+
+    const apiUpdate = await context.app.inject({
+      method: 'POST',
+      url: '/api/v1/provider-clients/codex/update',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'x-csrf-token': token,
+        'content-type': 'application/json',
+      },
+      payload: '{}',
+    });
+    expect(apiUpdate.statusCode).toBe(202);
+    expect(actionSpies.update).toHaveBeenCalledExactlyOnceWith('codex');
+
+    const rejected = await context.app.inject({
+      method: 'POST',
+      url: '/settings/provider-clients/codex/rollback',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'https://attacker.invalid',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}`,
+    });
+    expect(rejected.statusCode).toBe(403);
+    expect(actionSpies.rollback).not.toHaveBeenCalled();
+
+    const invalid = await context.app.inject({
+      method: 'POST',
+      url: '/api/v1/provider-clients/fake/update',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'x-csrf-token': token,
+        'content-type': 'application/json',
+      },
+      payload: '{}',
+    });
+    expect(invalid.statusCode).toBe(404);
+  });
+
   it('previews an edited schedule from persisted state without inspecting or saving', async () => {
     const context = setup();
     const inspect = vi.spyOn(context.fake, 'inspect');
@@ -262,10 +566,14 @@ describe('settings and schedule pages', () => {
         cookie,
         'content-type': 'application/x-www-form-urlencoded',
       },
-      payload: `csrfToken=${token}&enabled=on&mode=monitor_only&refreshIntervalPreset=300`,
+      payload: `csrfToken=${token}&enabled=on&mode=automation&refreshIntervalPreset=300`,
     });
     expect(update.statusCode).toBe(303);
-    expect(context.repositories.providers.get('fake')).toMatchObject({ pollIntervalSeconds: 300 });
+    expect(context.repositories.providers.get('fake')).toMatchObject({
+      mode: 'automation',
+      modeExplicit: true,
+      pollIntervalSeconds: 300,
+    });
 
     const customInterval = await context.app.inject({
       method: 'POST',
@@ -279,7 +587,11 @@ describe('settings and schedule pages', () => {
       payload: `csrfToken=${token}&enabled=on&mode=monitor_only&refreshIntervalPreset=custom&customPollIntervalSeconds=450`,
     });
     expect(customInterval.statusCode).toBe(303);
-    expect(context.repositories.providers.get('fake')).toMatchObject({ pollIntervalSeconds: 450 });
+    expect(context.repositories.providers.get('fake')).toMatchObject({
+      mode: 'monitor_only',
+      modeExplicit: true,
+      pollIntervalSeconds: 450,
+    });
 
     const schedule = await context.app.inject({
       method: 'POST',

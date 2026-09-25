@@ -17,6 +17,9 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
   daily usage in the saved timezone.
 - `events`: append-only human/metric history, not the source of truth for reconstructing all state.
 - `action_intents`: durable side-effect state and duplicate prevention.
+- `provider_cleanup_jobs`: durable deletion obligations for disposable provider
+  artifacts created by AWM actions. An opaque external ID remains only until
+  cleanup succeeds; it is not exposed in ordinary history, metrics or read APIs.
 - `settings`/`providers`/`schedule_policies`: current runtime config.
 
 Codex retains the canonical `activation-codex` policy. Antigravity stores two
@@ -51,8 +54,12 @@ after 400 days. No downsampling/OLAP platform is used.
 Action intents use conditional SQL transitions for claim, success, uncertainty,
 retryable failure, confirmation and terminal recovery. `executing` intents are
 recovered as uncertain on startup; an uncertain result is never blindly retried.
-The retention pass protects current state, settings, policies and open/recovery
-states while pruning bounded historical classes.
+The retention pass protects current state, settings, policies, unresolved
+provider-artifact cleanup jobs and open/recovery states while pruning bounded
+historical classes. Cleanup jobs have no age-based expiry: the worker retries
+idempotent deletion with bounded backoff and deletes a job immediately after
+success. A provider row cannot be deleted while a cleanup obligation refers to
+it. Unsupported provider cleanup is not reported as success.
 Settings displays these configured defaults in a read-only summary so operators
 can see how long detailed updates, daily usage history, routine and important
 activity, and completed starts remain. Retention runs for paused or disconnected
@@ -132,6 +139,8 @@ The forward-only schema currently consists of:
   schedules. It preserves the former row as a disabled tombstone, creates
   disabled review-gated family rows, and copies a legacy target only when its
   exact family is provable.
+- `migrations/007_provider_cleanup_jobs.sql` for bounded, durable deletion
+  obligations for AWM-created provider artifacts.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys
@@ -139,10 +148,11 @@ and a bounded busy timeout, and resolves migrations from the packaged applicatio
 path rather than relying only on the process working directory.
 
 `src/storage/repositories.ts` provides repositories for providers, current
-provider state, window samples, usage aggregation, events, settings, schedule policies and action
-intents. Provider observations are validated at the persistence boundary, window
-samples round-trip evidence/source/confidence metadata, and action-intent
-creation uses a transaction plus the database `UNIQUE(dedupe_key)` constraint.
+provider state, window samples, usage aggregation, events, settings, schedule
+policies, action intents and provider cleanup jobs. Provider observations are
+validated at the persistence boundary, window samples round-trip
+evidence/source/confidence metadata, and action-intent creation uses a
+transaction plus the database `UNIQUE(dedupe_key)` constraint.
 
 The reconciler writes a successful normalized observation, all of its window
 samples and a bounded inspection event together. Inspection failures update

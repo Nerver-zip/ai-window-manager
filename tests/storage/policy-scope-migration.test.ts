@@ -46,6 +46,14 @@ function createVersionFiveDatabase(windowKind: string) {
       'trigger_window', 'legacy-intent-key', 'planned', 2000,
       'TARGET_RESET_WINDOW_MATCH', 1000, 2000
     );
+    INSERT INTO action_intents (
+      id, provider_id, policy_id, action_type, dedupe_key, state,
+      scheduled_for_ms, reason_code, created_at_ms, updated_at_ms
+    ) VALUES (
+      'intent-uncertain-antigravity', 'antigravity', 'activation-antigravity',
+      'trigger_window', 'legacy-uncertain-intent-key', 'uncertain', 2000,
+      'ACTION_DISPATCH_UNCERTAIN', 1000, 2000
+    );
   `);
   db.close();
   return { file };
@@ -78,8 +86,13 @@ describe('Antigravity policy scope migration', () => {
     expect(repositories.actionIntents.get('intent-legacy-antigravity')?.policyId).toBe(
       'activation-antigravity',
     );
+    expect(repositories.actionIntents.get('intent-uncertain-antigravity')).toMatchObject({
+      policyId: 'activation-antigravity',
+      state: 'uncertain',
+      dedupeKey: 'legacy-uncertain-intent-key',
+    });
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
-    expect(db.prepare('SELECT COUNT(*) AS count FROM action_intents').get()).toEqual({ count: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM action_intents').get()).toEqual({ count: 2 });
     db.close();
 
     const reopened = openDatabase(file);

@@ -10,12 +10,15 @@ import {
 import { AntigravityProvider } from '../../../src/providers/antigravity/provider.js';
 import { AntigravityOutputError } from '../../../src/providers/antigravity/protocol.js';
 import {
+  hangingStreamingActionProcessFactory,
   outputProcessFactory,
   scriptedProcessFactory,
+  streamingActionProcessFactory,
   type FakeAntigravityProcess,
 } from './support.js';
 
 const observedAt = '2030-01-01T12:00:00.000Z';
+const cleanupContext = { registerCleanupArtifact: () => Promise.resolve() };
 
 function fixture(name: string): string {
   return readFileSync(
@@ -227,15 +230,12 @@ describe('AntigravityProvider', () => {
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
     });
     await expect(
-      triggerProvider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-unknown-family',
-          dedupeKey: 'dedupe-synthetic-unknown-family',
-          reasonCode: 'test',
-          windowKind: 'antigravity_group_1_weekly',
-        },
-      ),
+      triggerProvider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-unknown-family',
+        dedupeKey: 'dedupe-synthetic-unknown-family',
+        reasonCode: 'test',
+        windowKind: 'antigravity_group_1_weekly',
+      }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'AGY_TRIGGER_TARGET_UNSUPPORTED',
@@ -407,26 +407,53 @@ describe('AntigravityProvider', () => {
     expect(provider.capabilities().windowTrigger).not.toHaveProperty('supportedWindowKinds');
   });
 
+  it('requires durable cleanup registration before an Antigravity prompt can start', async () => {
+    let spawnCount = 0;
+    const provider = new AntigravityProvider({
+      executable: 'agy',
+      triggerEnabled: true,
+      triggerModels: { gemini: 'gemini-3.8-flash-low' },
+      now: () => new Date(observedAt),
+      spawnProcess: () => {
+        spawnCount += 1;
+        throw new Error('must not spawn');
+      },
+    });
+
+    await expect(
+      provider.triggerWindow(
+        {},
+        {
+          intentId: 'intent-synthetic-no-cleanup',
+          dedupeKey: 'dedupe-synthetic-no-cleanup',
+          reasonCode: 'test',
+          windowKind: 'antigravity_gemini_five_hour',
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 'rejected',
+      errorCode: 'AGY_CLEANUP_REGISTRATION_REQUIRED',
+    });
+    expect(spawnCount).toBe(0);
+  });
+
   it('does not expose the CLI conversation identifier or response in the action result', async () => {
     const provider = new AntigravityProvider({
       executable: 'agy',
       triggerEnabled: true,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: outputProcessFactory(actionFixture('trigger-success.json')),
+      spawnProcess: streamingActionProcessFactory(actionFixture('trigger-success.json')),
     });
 
-    const result = await provider.triggerWindow(
-      {},
-      {
-        intentId: 'intent-synthetic-privacy',
-        dedupeKey: 'dedupe-synthetic-privacy',
-        reasonCode: 'test',
-        windowKind: 'antigravity_gemini_five_hour',
-      },
-    );
+    const result = await provider.triggerWindow(cleanupContext, {
+      intentId: 'intent-synthetic-privacy',
+      dedupeKey: 'dedupe-synthetic-privacy',
+      reasonCode: 'test',
+      windowKind: 'antigravity_gemini_five_hour',
+    });
     expect(result).toMatchObject({ status: 'succeeded' });
-    expect(JSON.stringify(result)).not.toMatch(/synthetic-antigravity-conversation|Hello\./);
+    expect(JSON.stringify(result)).not.toMatch(/00000000-0000-4000-8000-000000000001|Hello\./);
   });
 
   it.each([
@@ -449,7 +476,7 @@ describe('AntigravityProvider', () => {
         observedArgs = args;
         observedShell = options.shell;
         observedCwd = options.cwd;
-        return outputProcessFactory(actionFixture('trigger-success.json'))(
+        return streamingActionProcessFactory(actionFixture('trigger-success.json'))(
           executable,
           args,
           options,
@@ -460,7 +487,7 @@ describe('AntigravityProvider', () => {
     const controller = new AbortController();
     await expect(
       provider.triggerWindow(
-        { signal: controller.signal },
+        { ...cleanupContext, signal: controller.signal },
         {
           intentId: 'intent-synthetic-1',
           dedupeKey: 'dedupe-synthetic-1',
@@ -470,12 +497,12 @@ describe('AntigravityProvider', () => {
       ),
     ).resolves.toMatchObject({ status: 'succeeded', occurredAt: observedAt });
     expect(observedArgs).toEqual([
-      '-p',
-      'Hi!',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
       '--model',
       expectedModel,
-      '--output-format',
-      'json',
       '--print-timeout',
       '30s',
       '--sandbox',
@@ -505,15 +532,12 @@ describe('AntigravityProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-2',
-          dedupeKey: 'dedupe-synthetic-2',
-          reasonCode: 'test',
-          ...(windowKind ? { windowKind } : {}),
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-2',
+        dedupeKey: 'dedupe-synthetic-2',
+        reasonCode: 'test',
+        ...(windowKind ? { windowKind } : {}),
+      }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode });
     expect(spawnCount).toBe(0);
   });
@@ -538,15 +562,12 @@ describe('AntigravityProvider', () => {
       supportedWindowKinds: ['antigravity_gemini_five_hour', 'antigravity_gemini_weekly'],
     });
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-3',
-          dedupeKey: 'dedupe-synthetic-3',
-          reasonCode: 'test',
-          windowKind: 'antigravity_claude_gpt_five_hour',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-3',
+        dedupeKey: 'dedupe-synthetic-3',
+        reasonCode: 'test',
+        windowKind: 'antigravity_claude_gpt_five_hour',
+      }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'AGY_TRIGGER_MODEL_UNAVAILABLE',
@@ -567,15 +588,12 @@ describe('AntigravityProvider', () => {
       },
     });
     await expect(
-      invalidModelProvider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-invalid-model',
-          dedupeKey: 'dedupe-synthetic-invalid-model',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      invalidModelProvider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-invalid-model',
+        dedupeKey: 'dedupe-synthetic-invalid-model',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode: 'AGY_TRIGGER_MODEL_UNAVAILABLE' });
 
     const validModelProvider = new AntigravityProvider({
@@ -589,15 +607,12 @@ describe('AntigravityProvider', () => {
       },
     });
     await expect(
-      validModelProvider.triggerWindow(
-        {},
-        {
-          intentId: '',
-          dedupeKey: 'dedupe-synthetic-invalid-request',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      validModelProvider.triggerWindow(cleanupContext, {
+        intentId: '',
+        dedupeKey: 'dedupe-synthetic-invalid-request',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode: 'AGY_TRIGGER_REQUEST_INVALID' });
     expect(spawnCount).toBe(0);
   });
@@ -614,48 +629,48 @@ describe('AntigravityProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-4',
-          dedupeKey: 'dedupe-synthetic-4',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-4',
+        dedupeKey: 'dedupe-synthetic-4',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode: 'AGY_TRIGGER_DISABLED' });
     expect(spawnCount).toBe(0);
   });
 
   it('returns uncertainty for timeout after the action process spawned', async () => {
     let processRef: FakeAntigravityProcess | undefined;
+    let markPromptSent: (() => void) | undefined;
+    const promptSent = new Promise<void>((resolve) => {
+      markPromptSent = resolve;
+    });
     const provider = new AntigravityProvider({
       executable: 'agy',
       triggerEnabled: true,
       actionTimeoutSeconds: 1,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: scriptedProcessFactory(
-        (process) => {
-          process.start();
-        },
+      spawnProcess: hangingStreamingActionProcessFactory(
+        () => markPromptSent?.(),
+        undefined,
         (process) => {
           processRef = process;
         },
       ),
     });
 
-    await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-5',
-          dedupeKey: 'dedupe-synthetic-5',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
-    ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN' });
+    const action = provider.triggerWindow(cleanupContext, {
+      intentId: 'intent-synthetic-5',
+      dedupeKey: 'dedupe-synthetic-5',
+      reasonCode: 'test',
+      windowKind: 'antigravity_gemini_five_hour',
+    });
+    await promptSent;
+    await expect(action).resolves.toMatchObject({
+      status: 'uncertain',
+      errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN',
+    });
     expect(processRef?.killSignals).toContain('SIGTERM');
   });
 
@@ -673,15 +688,12 @@ describe('AntigravityProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-invalid',
-          dedupeKey: 'dedupe-synthetic-invalid',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-invalid',
+        dedupeKey: 'dedupe-synthetic-invalid',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'AGY_INVALID_TIME',
@@ -700,15 +712,12 @@ describe('AntigravityProvider', () => {
       },
     });
     await expect(
-      clockThrowsProvider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-throwing-clock',
-          dedupeKey: 'dedupe-synthetic-throwing-clock',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      clockThrowsProvider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-throwing-clock',
+        dedupeKey: 'dedupe-synthetic-throwing-clock',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'AGY_INVALID_TIME',
@@ -720,25 +729,22 @@ describe('AntigravityProvider', () => {
   it.each([
     ['malformed JSON', actionFixture('trigger-malformed.txt'), 'AGY_TRIGGER_OUTPUT_INVALID'],
     ['missing completion response', '{"status":"SUCCESS"}', 'AGY_TRIGGER_OUTCOME_UNKNOWN'],
-    ['empty output after EOF', '', 'AGY_TRIGGER_OUTPUT_INVALID'],
+    ['empty output after EOF', '', 'AGY_TRIGGER_OUTCOME_UNKNOWN'],
   ])('treats %s as uncertain without exposing output', async (_label, output, errorCode) => {
     const provider = new AntigravityProvider({
       executable: 'agy',
       triggerEnabled: true,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: outputProcessFactory(output),
+      spawnProcess: streamingActionProcessFactory(output),
     });
 
-    const result = await provider.triggerWindow(
-      {},
-      {
-        intentId: 'intent-synthetic-6',
-        dedupeKey: 'dedupe-synthetic-6',
-        reasonCode: 'test',
-        windowKind: 'antigravity_gemini_five_hour',
-      },
-    );
+    const result = await provider.triggerWindow(cleanupContext, {
+      intentId: 'intent-synthetic-6',
+      dedupeKey: 'dedupe-synthetic-6',
+      reasonCode: 'test',
+      windowKind: 'antigravity_gemini_five_hour',
+    });
     expect(result).toMatchObject({ status: 'uncertain', errorCode });
     if (output) expect(JSON.stringify(result)).not.toContain(output);
   });
@@ -749,19 +755,16 @@ describe('AntigravityProvider', () => {
       triggerEnabled: true,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: outputProcessFactory(actionFixture('trigger-auth-required.json')),
+      spawnProcess: streamingActionProcessFactory(actionFixture('trigger-auth-required.json')),
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-7',
-          dedupeKey: 'dedupe-synthetic-7',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-7',
+        dedupeKey: 'dedupe-synthetic-7',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN' });
   });
 
@@ -771,19 +774,18 @@ describe('AntigravityProvider', () => {
       triggerEnabled: true,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: outputProcessFactory('{"status":"ERROR","response":"Authentication required"}'),
+      spawnProcess: streamingActionProcessFactory(
+        '{"status":"ERROR","response":"Authentication required"}',
+      ),
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-auth-response',
-          dedupeKey: 'dedupe-synthetic-auth-response',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-auth-response',
+        dedupeKey: 'dedupe-synthetic-auth-response',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN' });
   });
 
@@ -796,19 +798,16 @@ describe('AntigravityProvider', () => {
       triggerEnabled: true,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: outputProcessFactory(output),
+      spawnProcess: streamingActionProcessFactory(output),
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-unverified-turn-count',
-          dedupeKey: 'dedupe-synthetic-unverified-turn-count',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_five_hour',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-unverified-turn-count',
+        dedupeKey: 'dedupe-synthetic-unverified-turn-count',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_five_hour',
+      }),
     ).resolves.toMatchObject({
       status: 'uncertain',
       errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN',
@@ -822,19 +821,16 @@ describe('AntigravityProvider', () => {
       triggerEnabled: true,
       triggerModels: { gemini: 'gemini-3.8-flash-low', claudeGpt: 'claude-sonnet-4-6' },
       now: () => new Date(observedAt),
-      spawnProcess: outputProcessFactory('{"status":"CANCELED","response":"stopped"}'),
+      spawnProcess: streamingActionProcessFactory('{"status":"CANCELED","response":"stopped"}'),
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        {
-          intentId: 'intent-synthetic-8',
-          dedupeKey: 'dedupe-synthetic-8',
-          reasonCode: 'test',
-          windowKind: 'antigravity_gemini_weekly',
-        },
-      ),
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'intent-synthetic-8',
+        dedupeKey: 'dedupe-synthetic-8',
+        reasonCode: 'test',
+        windowKind: 'antigravity_gemini_weekly',
+      }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN' });
   });
 });

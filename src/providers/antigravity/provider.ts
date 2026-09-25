@@ -17,7 +17,7 @@ import type {
   WindowPhase,
   WindowSnapshot,
 } from '../../domain/types.js';
-import type { ProviderAdapter, ProviderContext } from '../provider.js';
+import type { ProviderAdapter, ProviderCleanupArtifact, ProviderContext } from '../provider.js';
 import {
   AntigravityOutputError,
   containsAuthenticationMarker,
@@ -33,6 +33,7 @@ import {
   runAntigravityUsageCommand,
   type AntigravityProcessFactory,
 } from './transport.js';
+import { deleteAntigravityConversation } from './cleanup.js';
 
 const DEFAULT_STALE_AFTER_SECONDS = 300;
 const DEFAULT_PRINT_TIMEOUT_SECONDS = 30;
@@ -52,6 +53,7 @@ export interface AntigravityProviderOptions {
   printTimeoutSeconds?: number;
   timeoutMs?: number;
   actionTimeoutSeconds?: number;
+  antigravityHome?: string;
   triggerEnabled?: boolean;
   triggerModels?: AntigravityTriggerModels;
   cwd?: string;
@@ -182,6 +184,7 @@ export class AntigravityProvider implements ProviderAdapter {
   private readonly printTimeoutSeconds: number;
   private readonly timeoutMs: number;
   private readonly actionTimeoutSeconds: number;
+  private readonly antigravityHome: string;
   private readonly triggerEnabled: boolean;
   private readonly triggerModels: AntigravityTriggerModels;
   private readonly cwd: string | undefined;
@@ -226,6 +229,7 @@ export class AntigravityProvider implements ProviderAdapter {
         `AntigravityProvider actionTimeoutSeconds must be between 1 and ${MAX_ACTION_TIMEOUT_SECONDS}`,
       );
     }
+    this.antigravityHome = options.antigravityHome ?? process.env.HOME ?? process.cwd();
     this.triggerEnabled = options.triggerEnabled ?? false;
     const geminiModel = normalizeTriggerModel(options.triggerModels?.gemini);
     const claudeGptModel = normalizeTriggerModel(options.triggerModels?.claudeGpt);
@@ -291,6 +295,9 @@ export class AntigravityProvider implements ProviderAdapter {
     if (!request.windowKind) {
       return actionResult('rejected', 'AGY_TRIGGER_TARGET_REQUIRED', occurredAt);
     }
+    if (!ctx.registerCleanupArtifact) {
+      return actionResult('rejected', 'AGY_CLEANUP_REGISTRATION_REQUIRED', occurredAt);
+    }
 
     const group = Object.hasOwn(TRIGGER_MODEL_GROUP_BY_WINDOW_KIND, request.windowKind)
       ? TRIGGER_MODEL_GROUP_BY_WINDOW_KIND[request.windowKind]
@@ -304,6 +311,9 @@ export class AntigravityProvider implements ProviderAdapter {
         executable: this.executable,
         model,
         timeoutMs: this.actionTimeoutSeconds * 1_000,
+        registerCleanupArtifact: ctx.registerCleanupArtifact,
+        cleanupUnregisteredConversation: (conversationId) =>
+          deleteAntigravityConversation(this.antigravityHome, conversationId),
         ...(this.spawnProcess ? { spawnProcess: this.spawnProcess } : {}),
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
@@ -324,16 +334,29 @@ export class AntigravityProvider implements ProviderAdapter {
       return actionResult('uncertain', 'AGY_TRIGGER_OUTCOME_UNKNOWN', occurredAt);
     } catch (error) {
       if (error instanceof AntigravityActionTransportError) {
+        if (error.code === 'CLEANUP_REGISTRATION_FAILED') {
+          return actionResult('rejected', 'AGY_CLEANUP_REGISTRATION_FAILED', occurredAt);
+        }
         return actionResult(
           error.disposition,
-          error.code === 'PROCESS_START_FAILED'
-            ? 'PROCESS_START_FAILED'
-            : 'AGY_TRIGGER_OUTCOME_UNKNOWN',
+          error.code === 'STREAM_PROTOCOL_ERROR'
+            ? 'AGY_TRIGGER_OUTPUT_INVALID'
+            : error.code === 'PROCESS_START_FAILED'
+              ? 'PROCESS_START_FAILED'
+              : 'AGY_TRIGGER_OUTCOME_UNKNOWN',
           occurredAt,
         );
       }
       return actionResult('uncertain', 'AGY_TRIGGER_OUTCOME_UNKNOWN', occurredAt);
     }
+  }
+
+  async cleanupArtifact(ctx: ProviderContext, artifact: ProviderCleanupArtifact): Promise<void> {
+    void ctx;
+    if (artifact.kind !== 'antigravity_conversation') {
+      throw new Error('Antigravity cleanup artifact kind is unsupported');
+    }
+    await deleteAntigravityConversation(this.antigravityHome, artifact.externalId);
   }
 
   health(ctx: ProviderContext): Promise<ProviderHealth> {

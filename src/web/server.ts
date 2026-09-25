@@ -26,6 +26,8 @@ import type {
 } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import { filterVisibleProviders, isProviderVisible } from '../providers/visibility.js';
+import { PROVIDER_CLIENT_IDS, type ProviderClientId } from '../provider-clients/runtime-store.js';
+import type { ProviderClientUpdateWebControls } from '../provider-clients/web-controls.js';
 import type { Clock } from '../scheduler/clock.js';
 import { activationPolicyFromRecord, parseActivationPolicy } from '../scheduler/policy.js';
 import {
@@ -124,6 +126,7 @@ export interface BuildServerInput {
   authSessions?: AuthSessionManager;
   operatorAuth: OperatorAuthService;
   requestReconcile?: () => void;
+  providerClientUpdates?: ProviderClientUpdateWebControls;
 }
 
 type ProviderHealthRead = ProviderStateRecord['health'] | 'UNKNOWN';
@@ -372,6 +375,14 @@ export function buildServer(input: BuildServerInput) {
   app.post('/api/v1/providers/:id/auth/start', async (request, reply) => {
     const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
     if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+    if (input.providerClientUpdates?.isRuntimeChanging(providerId)) {
+      return reply.code(409).send({
+        error: {
+          code: 'PROVIDER_CLIENT_UPDATE_IN_PROGRESS',
+          message: 'Wait for the provider app update to finish before signing in.',
+        },
+      });
+    }
     try {
       return reply.code(202).send(input.authSessions!.start(providerId));
     } catch (error) {
@@ -434,6 +445,16 @@ export function buildServer(input: BuildServerInput) {
   });
 
   app.get('/api/v1/settings', () => readApi.getSettings().body);
+  app.get('/api/v1/provider-clients', async (_request, reply) => {
+    const controls = input.providerClientUpdates;
+    if (!controls) return reply.code(503).send({ error: 'PROVIDER_CLIENT_UPDATES_UNAVAILABLE' });
+    return {
+      providerClients: PROVIDER_CLIENT_IDS.map((providerId) => ({
+        ...controls.getStatus(providerId),
+        autoUpdate: controls.autoUpdateEnabled(providerId),
+      })),
+    };
+  });
   app.get('/api/v1/scheduling', () =>
     readScheduling({
       repositories: input.repositories,
@@ -448,6 +469,24 @@ export function buildServer(input: BuildServerInput) {
     return reply
       .code(result.ok ? 200 : result.statusCode)
       .send(result.ok ? result.value : { error: { code: result.code, message: result.message } });
+  });
+
+  app.post('/api/v1/provider-clients/:id/:operation', async (request, reply) => {
+    const controls = input.providerClientUpdates;
+    if (!controls) return reply.code(503).send({ error: 'PROVIDER_CLIENT_UPDATES_UNAVAILABLE' });
+    const providerId = parseProviderClientId((request.params as { id?: unknown }).id);
+    if (!providerId) return reply.code(404).send({ error: 'PROVIDER_CLIENT_NOT_FOUND' });
+    const operation = stringValue((request.params as { operation?: unknown }).operation);
+    if (operation !== 'check' && operation !== 'update' && operation !== 'rollback') {
+      return reply.code(404).send({ error: 'PROVIDER_CLIENT_OPERATION_NOT_FOUND' });
+    }
+    const accepted = startProviderClientOperation(controls, providerId, operation);
+    return accepted
+      ? reply.code(202).send({ accepted: true, providerId, operation })
+      : reply.code(409).send({
+          accepted: false,
+          error: { code: 'PROVIDER_CLIENT_OPERATION_RUNNING' },
+        });
   });
 
   app.post('/api/v1/scheduling', async (request, reply) => {
@@ -743,6 +782,27 @@ export function buildServer(input: BuildServerInput) {
     }
     input.requestReconcile?.();
     return reply.code(303).redirect('/settings?updated=provider');
+  });
+
+  app.post('/settings/provider-clients/:id/:operation', async (request, reply) => {
+    const controls = input.providerClientUpdates;
+    if (!controls)
+      return reply.code(503).type('text/plain').send('Provider app updates unavailable');
+    const providerId = parseProviderClientId((request.params as { id?: unknown }).id);
+    if (!providerId) return reply.code(404).type('text/plain').send('Provider app not found');
+    const operation = stringValue((request.params as { operation?: unknown }).operation);
+    if (operation === 'auto-update') {
+      const enabled = formBoolean(asRecord(request.body).autoUpdate);
+      controls.setAutoUpdateEnabled(providerId, enabled);
+      return reply.code(303).redirect('/settings?updated=provider-client-preference');
+    }
+    if (operation !== 'check' && operation !== 'update' && operation !== 'rollback') {
+      return reply.code(404).type('text/plain').send('Provider app operation not found');
+    }
+    if (!startProviderClientOperation(controls, providerId, operation)) {
+      return reply.code(303).redirect('/settings?updated=provider-client-running');
+    }
+    return reply.code(303).redirect(`/settings?updated=provider-client-${operation}`);
   });
 
   app.post('/settings/timezone', async (request, reply) => {
@@ -1247,6 +1307,20 @@ function formBoolean(value: unknown): boolean {
   return value === true || value === 'on' || value === 'true' || value === '1';
 }
 
+function parseProviderClientId(value: unknown): ProviderClientId | undefined {
+  return value === 'codex' || value === 'antigravity' ? value : undefined;
+}
+
+function startProviderClientOperation(
+  controls: ProviderClientUpdateWebControls,
+  providerId: ProviderClientId,
+  operation: 'check' | 'update' | 'rollback',
+): boolean {
+  if (operation === 'check') return controls.startCheck(providerId);
+  if (operation === 'update') return controls.startUpdate(providerId);
+  return controls.startRollback(providerId);
+}
+
 function queryMessage(query: unknown): string | null {
   const value = asRecord(query).updated;
   return value === 'provider'
@@ -1255,11 +1329,21 @@ function queryMessage(query: unknown): string | null {
       ? 'Schedule saved.'
       : value === 'timezone'
         ? 'Time zone saved.'
-        : value === 'start-requested'
-          ? 'Start request queued. A fresh provider check will run before any message is sent.'
-          : value === 'start-unavailable'
-            ? 'Could not request a start. Check the provider connection, settings, and selected usage window.'
-            : null;
+        : value === 'provider-client-preference'
+          ? 'Provider app update preference saved.'
+          : value === 'provider-client-check'
+            ? 'Checking the official stable release. Refresh this page to see the result.'
+            : value === 'provider-client-update'
+              ? 'Provider app update started. Refresh this page to see progress.'
+              : value === 'provider-client-rollback'
+                ? 'Restoring the previous provider app version. Refresh this page to see progress.'
+                : value === 'provider-client-running'
+                  ? 'A provider app operation is already running.'
+                  : value === 'start-requested'
+                    ? 'Start request queued. A fresh provider check will run before any message is sent.'
+                    : value === 'start-unavailable'
+                      ? 'Could not request a start. Check the provider connection, settings, and selected usage window.'
+                      : null;
 }
 
 function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] {
@@ -1271,6 +1355,11 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
     const capabilities = adapter ? safeCapabilities(adapter) : undefined;
     const state = input.repositories.providerState.get(provider.id);
     const connection = providerConnectionPresentation(state);
+    const providerClientId = parseProviderClientId(provider.id);
+    const providerClientStatus =
+      providerClientId && input.providerClientUpdates
+        ? input.providerClientUpdates.getStatus(providerClientId)
+        : undefined;
     return {
       id: provider.id,
       kind: provider.kind,
@@ -1282,6 +1371,14 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
       staleAfterSeconds: state?.observation?.staleAfterSeconds,
       configured: connection.configured,
       connectionLabel: connection.statusLabel,
+      ...(providerClientId && providerClientStatus && input.providerClientUpdates
+        ? {
+            providerClientUpdate: {
+              ...providerClientStatus,
+              autoUpdate: input.providerClientUpdates.autoUpdateEnabled(providerClientId),
+            },
+          }
+        : {}),
       ...(provider.kind === 'antigravity' && capabilities?.windowTrigger.supported
         ? {
             triggerModels: {

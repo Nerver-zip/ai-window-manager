@@ -101,7 +101,7 @@ function setup(initial = '2026-09-14T07:59:00.000Z') {
 }
 
 describe('Reconciler', () => {
-  it('evaluates Antigravity quota-family policies independently and plans only the selected family', async () => {
+  it('evaluates Antigravity families independently but plans only one provider-wide action', async () => {
     const context = setup();
     const provider = context.repositories.providers.get('fake');
     if (!provider) throw new Error('provider missing');
@@ -150,7 +150,7 @@ describe('Reconciler', () => {
       providerId: 'antigravity',
       scope: 'gemini',
       requiresReview: false,
-      kind: 'manual',
+      kind: 'auto',
       enabled: true,
       timezone: 'UTC',
       config: { windowKind: 'antigravity_gemini_five_hour' },
@@ -183,13 +183,17 @@ describe('Reconciler', () => {
     expect(context.repositories.actionIntents.listOpen()).toMatchObject([
       { policyId: 'activation-antigravity-claude-gpt' },
     ]);
-    expect(report.decisions.some((item) => item.policyId === 'activation-antigravity-gemini')).toBe(
-      true,
+    const geminiDecision = report.decisions.find(
+      (item) => item.policyId === 'activation-antigravity-gemini',
     );
     const claudeDecision = report.decisions.find(
       (item) => item.policyId === 'activation-antigravity-claude-gpt',
     );
     expect(claudeDecision?.decision.kind).toBe('START');
+    expect(geminiDecision?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'ACTION_ALREADY_PENDING',
+    });
     expect(context.triggerCount).toBe(0);
   });
 
@@ -413,6 +417,16 @@ describe('Reconciler', () => {
     });
   });
 
+  it('does not inspect or schedule a provider while its client runtime is changing', async () => {
+    const context = setup();
+    const report = await context.reconciler({ isProviderRuntimeChanging: () => true }).reconcile();
+
+    expect(context.inspectCount).toBe(0);
+    expect(report.inspectedProviderIds).toEqual([]);
+    expect(report.decisions).toEqual([]);
+    expect(context.repositories.providerState.get('fake')).toBeUndefined();
+  });
+
   it('maps non-UP observations and typed inspection errors to bounded failure states', async () => {
     const context = setup();
     let response: ProviderObservation = {
@@ -482,10 +496,12 @@ describe('Reconciler', () => {
     };
     const reconciler = context.reconciler({ adapters: new Map([['fake', adapter]]) });
     const first = reconciler.reconcile();
+    expect(reconciler.isRunning()).toBe(true);
     await Promise.resolve();
     await expect(reconciler.reconcile()).resolves.toMatchObject({ skipped: true });
     release();
     await first;
+    expect(reconciler.isRunning()).toBe(false);
   });
 
   it('does not emit duplicate identical failure events and handles policy/config boundaries', async () => {

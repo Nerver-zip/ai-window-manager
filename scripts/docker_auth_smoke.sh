@@ -296,6 +296,54 @@ sys.exit(0 if "fake" in ids and not ids.intersection({"codex", "antigravity"}) e
 PY
 }
 
+assert_provider_client_runtime() {
+  local status
+  status="$(request_code '/api/v1/provider-clients' --cookie "$COOKIE_JAR")"
+  assert_status '200' "$status" 'GET' '/api/v1/provider-clients'
+  if ! python3 - "$RESPONSE_BODY" "${REPO_ROOT}/provider-clients.lock.json" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as response:
+        payload = json.load(response)
+    with open(sys.argv[2], encoding="utf-8") as manifest_file:
+        manifest = json.load(manifest_file)
+except (OSError, ValueError):
+    sys.exit(1)
+
+clients = {client.get("providerId"): client for client in payload.get("providerClients", [])}
+for provider_id in ("codex", "antigravity"):
+    client = clients.get(provider_id)
+    expected = manifest.get("providers", {}).get(provider_id, {}).get("version")
+    if not client or not expected:
+        sys.exit(1)
+    if client.get("packagedVersion") != expected or client.get("activeVersion") != expected:
+        sys.exit(1)
+PY
+  then
+    fail 'provider-client API did not report the pinned packaged fallback versions'
+  fi
+}
+
+assert_provider_client_volume() {
+  local mode="$1"
+  local script
+  script='import { lstat, readFile, readlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+const project = process.argv[1];
+const mode = process.argv[2];
+const marker = path.join("/provider-clients", `.docker-smoke-${project}`);
+if (mode === "create") await writeFile(marker, project, { flag: "wx", mode: 0o600 });
+else if (await readFile(marker, "utf8") !== project) process.exit(1);
+for (const [provider, expected] of [["codex", "/opt/codex/bin/codex"], ["antigravity", "/opt/antigravity/bin/agy"]]) {
+  const pointer = `/provider-clients/${provider}/current`;
+  if (!(await lstat(pointer)).isSymbolicLink() || await readlink(pointer) !== expected) process.exit(1);
+}'
+  compose exec -T ai-window-manager node --input-type=module -e "$script" "$project_name" "$mode" \
+    || fail "provider-client volume or packaged fallback pointer failed its ${mode} check"
+}
+
 login_operator() {
   local status csrf
   status="$(request_code '/login?next=%2Fschedule' --cookie "$COOKIE_JAR" \
@@ -343,6 +391,8 @@ status="$(request_code '/assets/app.css')"
 assert_status '200' "$status" 'GET' '/assets/app.css'
 
 login_operator
+assert_provider_client_runtime
+assert_provider_client_volume create
 
 for path in / /usage /schedule /logs /settings /logout; do
   status="$(request_code "$path" --cookie "$COOKIE_JAR" --cookie-jar "$COOKIE_JAR")"
@@ -412,6 +462,8 @@ status="$(request_code '/' --cookie "$COOKIE_JAR")"
 assert_status '303' "$status" 'GET after restart' '/'
 
 login_operator
+assert_provider_client_runtime
+assert_provider_client_volume verify
 status="$(request_code '/api/v1/settings' --cookie "$COOKIE_JAR")"
 assert_status '200' "$status" 'GET after re-login' '/api/v1/settings'
 assert_timezone_persisted 'UTC' || fail 'SQLite preference did not survive docker compose restart'
@@ -424,6 +476,8 @@ wait_for_health
 status="$(request_code '/api/v1/providers' --cookie "$COOKIE_JAR")"
 assert_status '401' "$status" 'GET after stop/up' '/api/v1/providers'
 login_operator
+assert_provider_client_runtime
+assert_provider_client_volume verify
 status="$(request_code '/api/v1/settings' --cookie "$COOKIE_JAR")"
 assert_status '200' "$status" 'GET after stop/up re-login' '/api/v1/settings'
 assert_timezone_persisted 'UTC' || fail 'SQLite preference did not survive docker compose stop/up'
@@ -495,4 +549,4 @@ then
   fail 'container logs contain a prohibited error pattern or authentication material'
 fi
 
-printf '%s\n' 'docker-auth-smoke: passed (auth boundary, CSRF, restart invalidation, SQLite persistence, stop/up, and logs)'
+printf '%s\n' 'docker-auth-smoke: passed (auth boundary, CSRF, provider-client fallback/version persistence, restart invalidation, SQLite persistence, stop/up, and logs)'

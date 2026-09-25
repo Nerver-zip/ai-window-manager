@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Research date: **2026-09-24**.
+Research date: **2026-09-25**.
 
 ## Normalized adapter contract
 
@@ -31,6 +31,8 @@ The words below are contractual classifications, not rhetorical labels:
 - The official open-source Codex app-server protocol includes `account/rateLimits/read` and rate-limit update notifications. Its schema represents used percentage, reset time/window duration and multiple quota buckets.
 - The official app-server also exposes `thread/start`, `turn/start` and the
   `turn/completed` lifecycle used by the quota-consuming Codex action adapter.
+- The official app-server exposes `thread/delete`; AWM durably registers the
+  trigger thread ID before `turn/start` and retries deletion independently.
 - Codex supports authenticated ChatGPT account flows in its official client; auth ownership should remain with the official client rather than this project reimplementing OAuth.
 
 SPIKE-001 confirmed that the documented app-server stdio/JSONL lifecycle and
@@ -113,7 +115,7 @@ blindly retried.
   and the observed nested usage payload are parseable, but the nested payload
   remains an official-client output contract with version-drift risk.
 - Community/runtime observations can show model-specific five-hour/weekly countdowns, but those formats must not become domain contracts.
-- In the pinned CLI 1.2.9 sign-in transcript observed on 2026-09-24, `agy`
+- In the pinned CLI 1.2.11 sign-in transcript observed on 2026-09-24, `agy`
   first presents a login-method selector and then prints a wrapped Google OAuth
   URL. AWM advances only when the official screen explicitly marks option 1
   (Google OAuth) as selected, then exposes the complete URL and forwards only
@@ -127,7 +129,7 @@ blindly retried.
 
 ### Inferred
 
-- The operator experiment supports the inference that a normal `agy -p`
+- The operator experiment supports the inference that a normal official CLI
   prompt consumes quota and anchors the five-hour window for the selected
   family. This is account/CLI/model-specific evidence, not a universal
   provider guarantee or a published window-start operation.
@@ -189,12 +191,24 @@ by Google. `INACTIVE` means full unused allowance for the selected target and
 eligibility for the project's safety checks; a `99.95%` remaining observation
 still counts as active.
 
-The adapter accepts success only from a valid one-turn CLI JSON result. Any
-timeout, EOF, malformed output, or auth-looking message after process spawn is
-ambiguous and remains `uncertain`; it is never blindly retried. The durable
-executor confirms the exact requested window with a fresh `/usage` observation.
-No live quota-consuming prompt was sent by the implementation agent during this
-sprint.
+The monitor continues to use the documented headless
+`agy -p /usage --output-format json` read path. Triggering uses the official
+`--input-format stream-json --output-format stream-json` protocol: AWM validates
+the initial `init` event, durably records its canonical UUID conversation ID,
+and only then writes the fixed `Hi!` user event. It discards step text and the
+final answer after validating the transient result. Any timeout, EOF, malformed
+output or auth-looking message after the prompt is written is ambiguous and
+remains `uncertain`; it is never blindly retried. The durable executor confirms
+the exact requested window with a fresh `/usage` observation.
+
+No machine-usable Antigravity conversation-delete command is used. With the
+operator's explicit authorization for exact-ID cleanup, AWM removes only the
+matching UUID-named conversation database and its SQLite sidecars, plus that
+UUID's `brain/` directory, under its dedicated CLI home. It does not open or
+edit database contents, touch summary/index databases, traverse symlinks, or
+delete any other ID. This uses an observed local storage layout rather than an
+official deletion API; if that layout changes, cleanup fails safely and the
+durable job remains pending. Never automate the Antigravity conversation TUI.
 
 ## Provider contract change detection
 

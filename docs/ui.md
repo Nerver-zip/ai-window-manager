@@ -65,6 +65,14 @@ monitoring-only, unsupported, missing, or invalid policies are called out rather
 than being presented as active. Technical window keys never appear as normal
 labels.
 
+When a configured provider is disconnected, the Overview offers a direct
+`Connect Codex` or `Connect Antigravity` action that opens the matching
+provider's onboarding section in Settings. Settings displays the official
+client's one-time sign-in code from the same rendered value used by its copy
+button; clipboard failure selects the actual displayed code or link for manual
+copy. Codes live only in the bounded in-memory sign-in session and disappear
+when that session ends.
+
 When the provider is in automation mode and an exact window is triggerable,
 that window has its own `Start this window now` action. It queues a durable
 intent; it does not dispatch from the HTTP handler. The button itself is the
@@ -124,7 +132,10 @@ state is held in memory only; event history contains lifecycle and bounded reaso
 codes, never process output or submitted codes. The `Connected` indicator is a
 live-status dot and honors reduced-motion preferences. A read-only Data retention
 section summarizes automatic history expiry and the protection for unresolved
-starts.
+starts. Each real-provider card also displays packaged/active/latest stable
+client versions and offers protected check, install, rollback and optional
+off-by-default automatic update controls. Update status is also available from
+the authenticated provider-client API.
 
 ## Usage
 
@@ -158,6 +169,11 @@ rebuild historical data.
 Usage charts have independent `1h`, `3h`, `6h`, `12h`, `24h`, `7d` and `30d`
 periods. Queries cover the selected time domain and downsample while preserving
 endpoints, extrema and outage breaks. Chart labels use the saved timezone.
+Antigravity renders a weekly-family selector within the daily usage section and
+four time-series charts with family plus cadence in every heading. Codex's sole
+weekly window is selected automatically. The heatmap has no alternate day list
+or always-visible zero-usage caveat; its calendar grid retains keyboard
+navigation and per-day accessible names.
 Antigravity always shows four charts named by model family and cadence; each
 period is independent. Its weekly heatmap selects a family only when multiple
 weekly sources are available. There is no redundant page-level window selector

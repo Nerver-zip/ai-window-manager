@@ -138,6 +138,13 @@ provider_id + action_type + schedule_policy_id + target_cycle_instant
 
 The DB unique constraint is the final guard. Repeated ticks can propose the same action without producing multiple triggers.
 
+For `trigger_window`, claiming is additionally serialized at the SQLite
+boundary across every policy for the same provider. An `executing`,
+`succeeded` but unconfirmed, `uncertain`, or retryable trigger blocks another
+family/policy action. If multiple legacy planned rows exist, only the earliest
+deterministic candidate may be claimed. Antigravity's Gemini and Claude/GPT
+policies are independent configuration, not permission to dispatch concurrently.
+
 ## Action lifecycle
 
 ```text
@@ -154,6 +161,11 @@ For quota-affecting `trigger_window`, a transport timeout after dispatch is
 observation before considering any further action. A Codex `turn/completed`
 notification is the provider action confirmation; it does not authorize a
 second turn.
+
+Trigger-created conversations are disposable artifacts. Their exact provider
+identifier is persisted as a cleanup obligation before prompt dispatch where
+the official protocol exposes it. Cleanup failures retry deletion only and do
+not alter, reopen or redispatch the trigger intent.
 
 ## Retries
 

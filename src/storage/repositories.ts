@@ -9,6 +9,7 @@ import type {
 } from '../domain/types.js';
 import { parseProviderObservation, WindowSnapshotSchema } from '../domain/schemas.js';
 import type { UsageInterval, UsageSampleInput, UsageSeriesState } from '../usage/aggregation.js';
+import type { ProviderCleanupArtifactKind } from '../domain/provider-cleanup.js';
 import type { SqliteDatabase } from './database.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
@@ -25,6 +26,7 @@ export type ActionIntentState =
   | 'canceled'
   | 'failed_retryable'
   | 'failed_terminal';
+export type ProviderCleanupJobState = 'pending' | 'executing' | 'retryable';
 export type EventSeverity = 'debug' | 'info' | 'warn' | 'error';
 
 export interface ProviderRecord {
@@ -95,6 +97,20 @@ export interface ActionIntentRecord {
   updatedAtMs: number;
 }
 
+/** Internal provider-side identifier; never include this record in a user-facing DTO. */
+export interface ProviderCleanupJobRecord {
+  id: string;
+  providerId: string;
+  artifactKind: ProviderCleanupArtifactKind;
+  externalId: string;
+  state: ProviderCleanupJobState;
+  attemptCount: number;
+  notBeforeMs: number;
+  lastErrorCode: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
 export interface SettingRecord<T = unknown> {
   key: string;
   value: T;
@@ -122,6 +138,7 @@ export interface StorageRepositories {
   settings: SettingsRepository;
   schedulePolicies: SchedulePolicyRepository;
   actionIntents: ActionIntentRepository;
+  providerCleanupJobs: ProviderCleanupJobRepository;
 }
 
 export function createRepositories(db: SqliteDatabase): StorageRepositories {
@@ -134,6 +151,7 @@ export function createRepositories(db: SqliteDatabase): StorageRepositories {
     settings: new SettingsRepository(db),
     schedulePolicies: new SchedulePolicyRepository(db),
     actionIntents: new ActionIntentRepository(db),
+    providerCleanupJobs: new ProviderCleanupJobRepository(db),
   };
 }
 
@@ -759,6 +777,125 @@ export class SchedulePolicyRepository {
   }
 }
 
+export class ProviderCleanupJobRepository {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  createIfAbsent(job: ProviderCleanupJobRecord): {
+    created: boolean;
+    job: ProviderCleanupJobRecord;
+  } {
+    validateCleanupArtifact(job.providerId, job.artifactKind, job.externalId);
+    return withTransaction(this.db, () => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO provider_cleanup_jobs (
+            id, provider_id, artifact_kind, external_id, state, attempt_count,
+            not_before_ms, last_error_code, created_at_ms, updated_at_ms
+          ) VALUES (
+            @id, @providerId, @artifactKind, @externalId, @state, @attemptCount,
+            @notBeforeMs, @lastErrorCode, @createdAtMs, @updatedAtMs
+          ) ON CONFLICT(provider_id, artifact_kind, external_id) DO NOTHING`,
+        )
+        .run(job);
+      const stored = this.getByArtifact(job.providerId, job.artifactKind, job.externalId);
+      if (!stored) throw new Error('provider cleanup job was not available after insert');
+      return { created: result.changes === 1, job: stored };
+    });
+  }
+
+  get(id: string): ProviderCleanupJobRecord | undefined {
+    const row = this.db.prepare('SELECT * FROM provider_cleanup_jobs WHERE id = ?').get(id) as
+      ProviderCleanupJobRow | undefined;
+    return row ? providerCleanupJobFromRow(row) : undefined;
+  }
+
+  listDue(nowMs: number, limit = 20): ProviderCleanupJobRecord[] {
+    const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM provider_cleanup_jobs
+         WHERE state IN ('pending', 'retryable') AND not_before_ms <= ?
+         ORDER BY not_before_ms, created_at_ms, id
+         LIMIT ?`,
+      )
+      .all(nowMs, bounded) as ProviderCleanupJobRow[];
+    return rows.map(providerCleanupJobFromRow);
+  }
+
+  hasOpenForProvider(providerId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM provider_cleanup_jobs
+           WHERE provider_id = ? AND state IN ('pending', 'executing', 'retryable')
+           LIMIT 1`,
+        )
+        .get(providerId) !== undefined
+    );
+  }
+
+  claim(id: string, nowMs: number): ProviderCleanupJobRecord | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE provider_cleanup_jobs
+         SET state = 'executing', attempt_count = attempt_count + 1, updated_at_ms = @nowMs
+         WHERE id = @id AND state IN ('pending', 'retryable') AND not_before_ms <= @nowMs`,
+      )
+      .run({ id, nowMs });
+    return result.changes === 1 ? this.get(id) : undefined;
+  }
+
+  markRetryable(
+    id: string,
+    updatedAtMs: number,
+    retryAtMs: number,
+    lastErrorCode: string,
+  ): boolean {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(lastErrorCode)) {
+      throw new TypeError('provider cleanup error code is invalid');
+    }
+    return (
+      this.db
+        .prepare(
+          `UPDATE provider_cleanup_jobs SET
+             state = 'retryable', not_before_ms = @retryAtMs,
+             last_error_code = @lastErrorCode, updated_at_ms = @updatedAtMs
+           WHERE id = @id AND state = 'executing'`,
+        )
+        .run({ id, updatedAtMs, retryAtMs, lastErrorCode }).changes === 1
+    );
+  }
+
+  recoverExecuting(nowMs: number): number {
+    return this.db
+      .prepare(
+        `UPDATE provider_cleanup_jobs SET
+           state = 'retryable', not_before_ms = @nowMs,
+           last_error_code = 'CLEANUP_INTERRUPTED', updated_at_ms = @nowMs
+         WHERE state = 'executing'`,
+      )
+      .run({ nowMs }).changes;
+  }
+
+  delete(id: string): boolean {
+    return this.db.prepare('DELETE FROM provider_cleanup_jobs WHERE id = ?').run(id).changes === 1;
+  }
+
+  private getByArtifact(
+    providerId: string,
+    artifactKind: ProviderCleanupArtifactKind,
+    externalId: string,
+  ): ProviderCleanupJobRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM provider_cleanup_jobs
+         WHERE provider_id = ? AND artifact_kind = ? AND external_id = ?`,
+      )
+      .get(providerId, artifactKind, externalId) as ProviderCleanupJobRow | undefined;
+    return row ? providerCleanupJobFromRow(row) : undefined;
+  }
+}
+
 export class ActionIntentRepository {
   constructor(private readonly db: SqliteDatabase) {}
 
@@ -923,6 +1060,47 @@ export class ActionIntentRepository {
           updated_at_ms = @nowMs
          WHERE id = @id
            AND state = @expectedState
+           AND (
+             action_type <> 'trigger_window'
+             OR NOT EXISTS (
+               SELECT 1 FROM action_intents AS other
+               WHERE other.provider_id = action_intents.provider_id
+                 AND other.action_type = 'trigger_window'
+                 AND other.id <> action_intents.id
+                 AND other.state IN (
+                   'executing', 'succeeded', 'uncertain', 'failed_retryable', 'planned'
+                 )
+                 AND (
+                   other.state IN ('executing', 'succeeded', 'uncertain')
+                   OR (
+                     action_intents.state = 'planned'
+                     AND other.state = 'failed_retryable'
+                   )
+                   OR (
+                     action_intents.state = 'planned'
+                     AND other.state = 'planned'
+                     AND (
+                       other.scheduled_for_ms < action_intents.scheduled_for_ms
+                       OR (
+                         other.scheduled_for_ms = action_intents.scheduled_for_ms
+                         AND other.id < action_intents.id
+                       )
+                     )
+                   )
+                   OR (
+                     action_intents.state = 'failed_retryable'
+                     AND other.state = 'failed_retryable'
+                     AND (
+                       other.scheduled_for_ms < action_intents.scheduled_for_ms
+                       OR (
+                         other.scheduled_for_ms = action_intents.scheduled_for_ms
+                         AND other.id < action_intents.id
+                       )
+                     )
+                   )
+                 )
+             )
+           )
            AND (not_before_ms IS NULL OR not_before_ms <= @nowMs)
            AND (
              expires_at_ms IS NULL
@@ -1113,6 +1291,19 @@ interface ActionIntentRow {
   created_at_ms: number;
   started_at_ms: number | null;
   finished_at_ms: number | null;
+  updated_at_ms: number;
+}
+
+interface ProviderCleanupJobRow {
+  id: string;
+  provider_id: string;
+  artifact_kind: ProviderCleanupArtifactKind;
+  external_id: string;
+  state: ProviderCleanupJobState;
+  attempt_count: number;
+  not_before_ms: number;
+  last_error_code: string | null;
+  created_at_ms: number;
   updated_at_ms: number;
 }
 
@@ -1313,8 +1504,49 @@ function actionIntentFromRow(row: ActionIntentRow): ActionIntentRecord {
   };
 }
 
+function providerCleanupJobFromRow(row: ProviderCleanupJobRow): ProviderCleanupJobRecord {
+  return {
+    id: row.id,
+    providerId: row.provider_id,
+    artifactKind: row.artifact_kind,
+    externalId: row.external_id,
+    state: row.state,
+    attemptCount: row.attempt_count,
+    notBeforeMs: row.not_before_ms,
+    lastErrorCode: row.last_error_code,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
 function booleanToInteger(value: boolean): 0 | 1 {
   return value ? 1 : 0;
+}
+
+function validateCleanupArtifact(
+  providerId: string,
+  artifactKind: ProviderCleanupArtifactKind,
+  externalId: string,
+): void {
+  const expectedProvider =
+    artifactKind === 'codex_thread'
+      ? 'codex'
+      : artifactKind === 'antigravity_conversation'
+        ? 'antigravity'
+        : undefined;
+  if (
+    !expectedProvider ||
+    providerId !== expectedProvider ||
+    typeof externalId !== 'string' ||
+    externalId.length < 1 ||
+    externalId.length > 256 ||
+    Array.from(externalId).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    })
+  ) {
+    throw new TypeError('provider cleanup artifact is invalid');
+  }
 }
 
 function boundedLimit(value: number | undefined): number {

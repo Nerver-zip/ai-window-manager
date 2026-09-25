@@ -64,6 +64,19 @@ describe('retention maintenance', () => {
     repositories.providerState.upsert(providerState());
     repositories.settings.set('retention', { days: 90 }, oldImportant);
     repositories.schedulePolicies.upsert(schedulePolicy(oldImportant));
+    repositories.providers.upsert(provider({ id: 'codex', kind: 'codex' }));
+    repositories.providerCleanupJobs.createIfAbsent({
+      id: 'old-cleanup-job',
+      providerId: 'codex',
+      artifactKind: 'codex_thread',
+      externalId: 'synthetic-thread-id',
+      state: 'pending',
+      attemptCount: 0,
+      notBeforeMs: oldImportant,
+      lastErrorCode: null,
+      createdAtMs: oldImportant,
+      updatedAtMs: oldImportant,
+    });
     for (const state of ['planned', 'executing', 'uncertain', 'failed_retryable'] as const) {
       repositories.actionIntents.createIfAbsent(actionIntent(`open-${state}`, state, oldImportant));
     }
@@ -109,6 +122,10 @@ describe('retention maintenance', () => {
       updatedAtMs: oldImportant,
     });
     expect(repositories.schedulePolicies.get('policy-1')).toEqual(schedulePolicy(oldImportant));
+    expect(repositories.providerCleanupJobs.get('old-cleanup-job')).toMatchObject({
+      state: 'pending',
+      artifactKind: 'codex_thread',
+    });
     for (const state of ['confirmed', 'skipped', 'canceled', 'failed_terminal'] as const) {
       expect(repositories.actionIntents.get(`old-terminal-${state}`)).toBeUndefined();
     }
@@ -223,6 +240,35 @@ describe('retention maintenance', () => {
     ).toEqual([{ source_sample_id: 2 }]);
   });
 
+  it('expires history even when a provider is paused, disconnected, or hidden from the UI', () => {
+    const { db, repositories } = openTestDatabase();
+    const oldSampleAt = NOW - 91 * DAY_MS;
+    const oldState = providerState();
+    repositories.providers.upsert(provider({ enabled: false }));
+    repositories.providerState.upsert({
+      ...oldState,
+      health: 'AUTH_REQUIRED',
+      lastErrorCode: 'AUTH_REQUIRED',
+    });
+    repositories.windowSamples.insert(sample(oldSampleAt));
+    repositories.usageAggregation.advanceCheckpoint(
+      repositories.usageAggregation.maxSampleId(),
+      NOW,
+    );
+    appendEvent(repositories.events, 'usage_sampled', oldSampleAt);
+
+    const result = runRetentionMaintenance(db, { clock: new FakeClock(new Date(NOW)) });
+
+    expect(result.windowSamplesDeleted).toBe(1);
+    expect(result.eventsDeleted.ordinary).toBe(1);
+    expect(repositories.windowSamples.list('fake')).toEqual([]);
+    expect(repositories.events.list('fake')).toEqual([]);
+    expect(repositories.providerState.get('fake')).toMatchObject({
+      health: 'AUTH_REQUIRED',
+      lastErrorCode: 'AUTH_REQUIRED',
+    });
+  });
+
   it('rejects invalid retention configuration before changing rows', () => {
     const { db, repositories } = openTestDatabase();
     repositories.windowSamples.insert(sample(NOW - DAY_MS));
@@ -250,7 +296,7 @@ function openTestDatabase() {
   return { db, repositories };
 }
 
-function provider(): ProviderRecord {
+function provider(overrides: Partial<ProviderRecord> = {}): ProviderRecord {
   return {
     id: 'fake',
     kind: 'fake',
@@ -261,6 +307,7 @@ function provider(): ProviderRecord {
     configVersion: 1,
     createdAtMs: NOW,
     updatedAtMs: NOW,
+    ...overrides,
   };
 }
 

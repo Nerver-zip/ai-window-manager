@@ -5,7 +5,12 @@ import {
   runAntigravityTriggerCommand,
   runAntigravityUsageCommand,
 } from '../../../src/providers/antigravity/transport.js';
-import { scriptedProcessFactory, type FakeAntigravityProcess } from './support.js';
+import {
+  hangingStreamingActionProcessFactory,
+  scriptedProcessFactory,
+  streamingActionProcessFactory,
+  type FakeAntigravityProcess,
+} from './support.js';
 
 const validJson = '{"status":"ERROR","error":"Authentication required"}';
 const validActionJson = '{"status":"SUCCESS","response":"Hello.","num_turns":1}';
@@ -223,14 +228,26 @@ describe('Antigravity action transport', () => {
     executable: '/opt/agy',
     model: 'gemini-3.8-flash-low',
     timeoutMs: 1_000,
+    registerCleanupArtifact: () => Promise.resolve(),
+    cleanupUnregisteredConversation: () => Promise.resolve(),
   };
 
-  it('passes only the fixed prompt and explicit safe CLI arguments without a shell', async () => {
+  it('uses official stream-json input/output and sends the fixed prompt only after cleanup registration', async () => {
     let observedArgs: string[] = [];
     let observedShell: boolean | undefined;
     let observedEnvIsSanitized: boolean | undefined;
+    let registered = false;
+    let observedInput = '';
     await runAntigravityTriggerCommand({
       ...defaults,
+      registerCleanupArtifact: (artifact) => {
+        expect(artifact).toEqual({
+          kind: 'antigravity_conversation',
+          externalId: '00000000-0000-4000-8000-000000000001',
+        });
+        registered = true;
+        return Promise.resolve();
+      },
       spawnProcess: (executable, args, options) => {
         observedArgs = args;
         observedShell = options.shell;
@@ -250,50 +267,109 @@ describe('Antigravity action transport', () => {
             'DBUS_SESSION_BUS_ADDRESS',
           ].includes(name),
         );
-        return scriptedProcessFactory((process) => process.complete(validActionJson))(
-          executable,
-          args,
-          options,
-        );
+        return streamingActionProcessFactory(validActionJson, (input) => {
+          observedInput = input;
+          expect(registered).toBe(true);
+        })(executable, args, options);
       },
     });
 
     expect(observedArgs).toEqual([
-      '-p',
-      'Hi!',
+      '--input-format',
+      'stream-json',
+      '--output-format',
+      'stream-json',
       '--model',
       defaults.model,
-      '--output-format',
-      'json',
       '--print-timeout',
       '1s',
       '--sandbox',
     ]);
+    expect(JSON.parse(observedInput)).toEqual({
+      event: 'user',
+      message: { content: 'Hi!' },
+    });
     expect(observedShell).toBe(false);
     expect(observedEnvIsSanitized).toBe(true);
   });
 
-  it('returns structured stdout only after successful process completion', async () => {
+  it('returns only the terminal result after successful stream completion', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
-        spawnProcess: scriptedProcessFactory((process) => process.complete(validActionJson)),
+        spawnProcess: streamingActionProcessFactory(validActionJson),
       }),
-    ).resolves.toBe(validActionJson);
+    ).resolves.toSatisfy((output: string) => {
+      const result = JSON.parse(output) as Record<string, unknown>;
+      expect(result).toMatchObject({ status: 'SUCCESS', num_turns: 1 });
+      expect(String(result.response)).toBe('Hello.');
+      return true;
+    });
   });
 
-  it('accepts string stream chunks and ignores late child errors after settlement', async () => {
+  it('accepts string stream chunks and returns only the terminal result, not progress events', async () => {
+    const output = await runAntigravityTriggerCommand({
+      ...defaults,
+      spawnProcess: streamingActionProcessFactory(
+        validActionJson,
+        undefined,
+        undefined,
+        0,
+        'bounded diagnostic',
+        (process) => process.stdout.setEncoding('utf8'),
+      ),
+    });
+    expect(output).toContain('Hello.');
+    expect(output).not.toContain('step_update');
+  });
+
+  it('does not send the prompt if durable conversation registration fails', async () => {
+    let observedInput = '';
+    let registrationAttempts = 0;
+    let compensatedConversationId: string | undefined;
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
-        spawnProcess: scriptedProcessFactory((process) => {
-          process.stdout.setEncoding('utf8');
-          process.stderr.setEncoding('utf8');
-          process.complete(validActionJson, 0, 'bounded diagnostic');
-          queueMicrotask(() => process.emit('error', new Error('late child error')));
+        registerCleanupArtifact: () => {
+          registrationAttempts += 1;
+          return Promise.reject(new Error('synthetic database failure'));
+        },
+        cleanupUnregisteredConversation: (conversationId) => {
+          compensatedConversationId = conversationId;
+          return Promise.resolve();
+        },
+        spawnProcess: streamingActionProcessFactory(validActionJson, (input) => {
+          observedInput = input;
         }),
       }),
-    ).resolves.toBe(validActionJson);
+    ).rejects.toMatchObject({ code: 'CLEANUP_REGISTRATION_FAILED', disposition: 'failed' });
+    expect(registrationAttempts).toBe(2);
+    expect(compensatedConversationId).toBe('00000000-0000-4000-8000-000000000001');
+    expect(observedInput).toBe('');
+  });
+
+  it('recovers a transient durable-registration failure without duplicating the conversation', async () => {
+    let registrationAttempts = 0;
+    let promptInput = '';
+    const output = await runAntigravityTriggerCommand({
+      ...defaults,
+      registerCleanupArtifact: () => {
+        registrationAttempts += 1;
+        if (registrationAttempts === 1)
+          return Promise.reject(new Error('synthetic transient database failure'));
+        return Promise.resolve();
+      },
+      spawnProcess: streamingActionProcessFactory(validActionJson, (input) => {
+        promptInput = input;
+      }),
+    });
+
+    expect(registrationAttempts).toBe(2);
+    expect(JSON.parse(promptInput)).toEqual({
+      event: 'user',
+      message: { content: 'Hi!' },
+    });
+    expect(output).toContain('SUCCESS');
   });
 
   it('classifies a synchronous process factory throw as pre-dispatch failure', async () => {
@@ -307,7 +383,7 @@ describe('Antigravity action transport', () => {
     ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
-  it('keeps authentication output after spawn uncertain because dispatch cannot be proven', async () => {
+  it('classifies authentication failure before an init/prompt as a safe pre-dispatch failure', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
@@ -315,15 +391,19 @@ describe('Antigravity action transport', () => {
           process.complete('', 1, 'Authentication required; sign in first.'),
         ),
       }),
-    ).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });
+    ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
-  it('classifies any other non-zero exit after spawn as uncertain', async () => {
+  it('classifies a non-zero exit after sending the registered prompt as uncertain', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
-        spawnProcess: scriptedProcessFactory((process) =>
-          process.complete('', 7, 'provider internal diagnostic'),
+        spawnProcess: streamingActionProcessFactory(
+          validActionJson,
+          undefined,
+          undefined,
+          7,
+          'provider internal diagnostic',
         ),
       }),
     ).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });
@@ -351,7 +431,7 @@ describe('Antigravity action transport', () => {
     ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
-  it('classifies stdin failure after spawn as uncertain', async () => {
+  it('classifies stdin failure before the prompt as a safe pre-dispatch failure', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
@@ -360,7 +440,7 @@ describe('Antigravity action transport', () => {
           queueMicrotask(() => process.stdin.emit('error', new Error('private stdin detail')));
         }),
       }),
-    ).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });
+    ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
   it('classifies a timeout before the child starts as a pre-dispatch failure', async () => {
@@ -396,7 +476,7 @@ describe('Antigravity action transport', () => {
     expect(spawnCount).toBe(0);
   });
 
-  it('classifies an unexpected process error after spawn as uncertain', async () => {
+  it('classifies an unexpected process error before the prompt as a safe pre-dispatch failure', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
@@ -405,50 +485,55 @@ describe('Antigravity action transport', () => {
           queueMicrotask(() => process.emit('error', new Error('synthetic private detail')));
         }),
       }),
-    ).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });
+    ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
-  it('treats timeout after spawn as uncertain and terminates the child', async () => {
+  it('treats timeout after dispatch as uncertain and terminates the child', async () => {
     let processRef: FakeAntigravityProcess | undefined;
-    await expect(
-      runAntigravityTriggerCommand({
-        ...defaults,
-        timeoutMs: 10,
-        spawnProcess: scriptedProcessFactory(
-          (process) => process.start(),
-          (process) => {
-            processRef = process;
-          },
-        ),
-      }),
-    ).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });
+    let markPromptSent: (() => void) | undefined;
+    const promptSent = new Promise<void>((resolve) => {
+      markPromptSent = resolve;
+    });
+    const pending = runAntigravityTriggerCommand({
+      ...defaults,
+      timeoutMs: 100,
+      spawnProcess: hangingStreamingActionProcessFactory(
+        () => markPromptSent?.(),
+        undefined,
+        (process) => {
+          processRef = process;
+        },
+      ),
+    });
+    const rejection = expect(pending).rejects.toMatchObject({
+      code: 'OUTCOME_UNKNOWN',
+      disposition: 'uncertain',
+    });
+    await promptSent;
+    await rejection;
     expect(processRef?.killSignals).toContain('SIGTERM');
   });
 
-  it('keeps cleanup safe when both termination signals fail', async () => {
+  it('keeps cleanup safe when both termination signals fail after dispatch', async () => {
     vi.useFakeTimers();
     let processRef: FakeAntigravityProcess | undefined;
-    let markSpawned: (() => void) | undefined;
-    const spawned = new Promise<void>((resolve) => {
-      markSpawned = resolve;
+    let markPromptSent: (() => void) | undefined;
+    const promptSent = new Promise<void>((resolve) => {
+      markPromptSent = resolve;
     });
     try {
       const pending = runAntigravityTriggerCommand({
         ...defaults,
         timeoutMs: 100,
-        spawnProcess: scriptedProcessFactory(
+        spawnProcess: hangingStreamingActionProcessFactory(
+          () => markPromptSent?.(),
+          undefined,
           (process) => {
-            process.exitCode = null;
-            process.signalCode = null;
+            processRef = process;
             process.kill = (signal) => {
               process.killSignals.push(signal);
               throw new Error('synthetic termination failure');
             };
-            process.start();
-          },
-          (process) => {
-            processRef = process;
-            process.once('spawn', () => markSpawned?.());
           },
         ),
       });
@@ -456,8 +541,7 @@ describe('Antigravity action transport', () => {
         code: 'OUTCOME_UNKNOWN',
         disposition: 'uncertain',
       });
-
-      await spawned;
+      await promptSent;
       await vi.advanceTimersByTimeAsync(100);
       await rejection;
       await vi.advanceTimersByTimeAsync(250);
@@ -467,25 +551,25 @@ describe('Antigravity action transport', () => {
     }
   });
 
-  it('treats abort after spawn as uncertain but abort before spawn as a safe failure', async () => {
+  it('treats abort after dispatch as uncertain but abort before spawn as a safe failure', async () => {
     const controller = new AbortController();
     let processRef: FakeAntigravityProcess | undefined;
-    let markSpawned: (() => void) | undefined;
-    const spawned = new Promise<void>((resolve) => {
-      markSpawned = resolve;
+    let markPromptSent: (() => void) | undefined;
+    const promptSent = new Promise<void>((resolve) => {
+      markPromptSent = resolve;
     });
     const dispatched = runAntigravityTriggerCommand({
       ...defaults,
       signal: controller.signal,
-      spawnProcess: scriptedProcessFactory(
-        (process) => process.start(),
+      spawnProcess: hangingStreamingActionProcessFactory(
+        () => markPromptSent?.(),
+        undefined,
         (process) => {
           processRef = process;
-          process.once('spawn', () => markSpawned?.());
         },
       ),
     });
-    await spawned;
+    await promptSent;
     controller.abort();
     await expect(dispatched).rejects.toMatchObject({
       code: 'OUTCOME_UNKNOWN',
@@ -509,17 +593,17 @@ describe('Antigravity action transport', () => {
     expect(spawnCount).toBe(0);
   });
 
-  it('bounds action output and never includes provider diagnostics in safe errors', async () => {
+  it('bounds streamed output and stderr without exposing diagnostics', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
-        spawnProcess: scriptedProcessFactory((process) =>
-          process.complete('x'.repeat(128 * 1024 + 1)),
+        spawnProcess: streamingActionProcessFactory(
+          JSON.stringify({ status: 'SUCCESS', response: 'x'.repeat(128 * 1024 + 1), num_turns: 1 }),
         ),
       }),
     ).rejects.toSatisfy((error: unknown) => {
       expect(error).toBeInstanceOf(AntigravityActionTransportError);
-      expect(error).toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });
+      expect(error).toMatchObject({ code: 'STREAM_PROTOCOL_ERROR', disposition: 'uncertain' });
       expect(String(error)).not.toContain('x'.repeat(64));
       return true;
     });
@@ -527,8 +611,12 @@ describe('Antigravity action transport', () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
-        spawnProcess: scriptedProcessFactory((process) =>
-          process.complete('', 0, 'x'.repeat(16 * 1024 + 1)),
+        spawnProcess: streamingActionProcessFactory(
+          validActionJson,
+          undefined,
+          undefined,
+          0,
+          'x'.repeat(16 * 1024 + 1),
         ),
       }),
     ).rejects.toMatchObject({ code: 'OUTCOME_UNKNOWN', disposition: 'uncertain' });

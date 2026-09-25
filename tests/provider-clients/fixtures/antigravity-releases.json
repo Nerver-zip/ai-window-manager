@@ -1,0 +1,16 @@
+{
+  "tag_name": "1.2.11",
+  "draft": false,
+  "prerelease": false,
+  "published_at": "2026-09-25T04:22:17Z",
+  "assets": [
+    {
+      "name": "agy_cli_linux_x64.tar.gz",
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "name": "agy_cli_linux_arm64.tar.gz",
+      "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  ]
+}
