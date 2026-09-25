@@ -51,8 +51,9 @@ providers in `automation` mode with an enabled `auto` (“Whenever possible”)
 policy. After connecting, select the exact usage window (and Antigravity quota
 family) to manage; the application does not guess a target. Explicit SQLite
 choices remain authoritative; a one-time upgrade changes only legacy defaults
-that were never explicitly saved. The base Compose interpolation
-defaults remain disabled when `.env` is absent.
+that were never explicitly saved. The base Compose interpolation defaults for
+both action gates are enabled; set either gate to `false` in `.env` to opt out.
+Provider monitoring itself remains separately opt-in.
 
 At startup the daemon seeds enabled bootstrap providers missing from SQLite and,
 with a trigger gate enabled, upgrades only legacy automation defaults that were
