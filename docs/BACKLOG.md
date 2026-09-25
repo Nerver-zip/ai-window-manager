@@ -115,7 +115,7 @@ identity headers or credential storage in SQLite is in scope.
 
 ## STORAGE-002 — Implement retention maintenance
 
-**Status: complete (2026-09-19).**
+**Status: complete (2026-09-19; Settings exposes a read-only retention summary).**
 
 **Scope**: bounded deletes for samples/events based on documented classes.  
 **Acceptance**: current state/open intents preserved; retention test uses FakeClock.  

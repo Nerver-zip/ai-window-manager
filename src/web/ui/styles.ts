@@ -298,6 +298,12 @@ dd { margin: 0; overflow-wrap: anywhere; }
 
 .settings-page, .logs-page, .history-page, .usage-page { display: grid; gap: 24px; }
 .settings-stack { display: grid; gap: 16px; }
+.retention-list { grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; }
+.retention-list > div { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr); gap: 16px; border-bottom: 1px solid var(--border); padding: 11px 0; }
+.retention-list > div:last-child { border-bottom: 0; }
+.retention-list dt { font-size: 13px; }
+.retention-list dd { color: var(--text); font-size: 13px; }
+.retention-list dd span { display: block; margin-top: 3px; color: var(--text-muted); font-size: 12px; }
 .provider-settings { margin-bottom: 0; }
 .provider-settings h3 { margin-bottom: 4px; }
 .provider-connection-badge[data-connection-state="connected"] { color: var(--success); }
@@ -568,6 +574,7 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   .current-window-read { grid-template-columns: 1fr; gap: 14px; }
   .current-window-read > :last-child { text-align: left; }
   .settings-page .section-heading { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .retention-list > div { grid-template-columns: 1fr; gap: 4px; }
   .upcoming-list li { grid-template-columns: 1fr; gap: 4px; }
   .horizon-axis { font-size: 9px; }
   .horizon-milestones li { grid-template-columns: 1fr; gap: 3px; }

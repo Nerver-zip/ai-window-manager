@@ -122,7 +122,9 @@ Connected accounts show their settings and keep reconnect options secondary.
 Sign-in links and device codes can be copied from the inline flow. Auth-session
 state is held in memory only; event history contains lifecycle and bounded reason
 codes, never process output or submitted codes. The `Connected` indicator is a
-live-status dot and honors reduced-motion preferences.
+live-status dot and honors reduced-motion preferences. A read-only Data retention
+section summarizes automatic history expiry and the protection for unresolved
+starts.
 
 ## Usage
 
@@ -156,8 +158,11 @@ rebuild historical data.
 Usage charts have independent `1h`, `3h`, `6h`, `12h`, `24h`, `7d` and `30d`
 periods. Queries cover the selected time domain and downsample while preserving
 endpoints, extrema and outage breaks. Chart labels use the saved timezone.
-Keyboard grid navigation and a plain day-list alternative complement the
-calendar; the controls remain server-rendered and work without JavaScript.
+Antigravity always shows four charts named by model family and cadence; each
+period is independent. Its weekly heatmap selects a family only when multiple
+weekly sources are available. There is no redundant page-level window selector
+or alternate day list. The calendar supports keyboard grid navigation and
+remains server-rendered.
 
 ## Logs
 

@@ -20,6 +20,7 @@ import { windowKindBelongsToPolicyScope } from '../scheduler/policy-scope.js';
 import { renderAppShell } from './ui/layout.js';
 import { renderProviderPicker } from './ui/provider-picker.js';
 import { renderAuthOnboarding, type AuthOnboardingInput } from './ui/auth-onboarding.js';
+import { renderRetentionSummary } from './retention-ui.js';
 import {
   capabilityLabel,
   durationLabel,
@@ -843,6 +844,7 @@ export function renderSettingsPage(input: SettingsPageInput): string {
         <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Accounts</p><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>
         <div class="settings-stack">${providerSections}</div>
       </section>
+      ${renderRetentionSummary()}
     </div>`,
   });
 }

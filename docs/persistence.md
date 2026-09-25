@@ -53,6 +53,10 @@ retryable failure, confirmation and terminal recovery. `executing` intents are
 recovered as uncertain on startup; an uncertain result is never blindly retried.
 The retention pass protects current state, settings, policies and open/recovery
 states while pruning bounded historical classes.
+Settings displays these configured defaults in a read-only summary so operators
+can see how long detailed updates, daily usage history, routine and important
+activity, and completed starts remain. Retention runs for paused or disconnected
+providers too; it is not a per-provider TTL control.
 
 ## Backups and restore runbook
 

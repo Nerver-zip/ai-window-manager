@@ -82,6 +82,8 @@ describe('settings UI helpers', () => {
     const empty = renderSettingsPage({ csrfToken, providers: [], notice: 'saved' });
     expect(empty).toContain('No providers configured');
     expect(empty).toContain('saved');
+    expect(empty).toContain('<h2 id="data-retention-title">Data retention</h2>');
+    expect(empty).toContain('Daily usage history');
 
     const html = renderSettingsPage({
       csrfToken,
