@@ -121,6 +121,9 @@ The forward-only schema currently consists of:
   custom-schedule/active-hours policy model and its compatibility migration.
 - `migrations/004_usage_aggregation.sql` for the durable usage checkpoint,
   per-window baseline and reset-safe UTC contribution intervals.
+- `migrations/005_explicit_automation_preferences.sql` for explicit opt-out
+  markers, restoring the latest audited provider/schedule preference, and
+  distinguishing operator choices from old bootstrap defaults.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

@@ -25,6 +25,7 @@ describe('openDatabase', () => {
       { version: 2, applied_at_ms: appliedAtMs },
       { version: 3, applied_at_ms: appliedAtMs },
       { version: 4, applied_at_ms: appliedAtMs },
+      { version: 5, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -43,7 +44,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(4);
+    ).toBe(5);
     reopened.close();
   });
 
@@ -101,7 +102,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
+    ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
     expect(
       upgraded
         .prepare(
@@ -110,6 +111,57 @@ describe('openDatabase', () => {
         .get(),
     ).toEqual({ name: 'phase_confidence' });
     expect(upgraded.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    upgraded.close();
+  });
+
+  it('recovers explicit automation preferences from the settings audit during upgrade', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-settings-upgrade-'));
+    dirs.push(dir);
+    const file = path.join(dir, 'awm.db');
+    const previousMigrations = path.join(dir, 'previous-migrations');
+    fs.mkdirSync(previousMigrations);
+    for (const version of [1, 2, 3, 4]) {
+      const migration = fs
+        .readdirSync(path.resolve('migrations'))
+        .find((name) => name.startsWith(`${String(version).padStart(3, '0')}_`));
+      if (!migration) throw new Error(`missing migration ${version}`);
+      fs.copyFileSync(
+        path.resolve('migrations', migration),
+        path.join(previousMigrations, migration),
+      );
+    }
+
+    const legacy = openDatabase(file, { migrationsDir: previousMigrations });
+    legacy.exec(`
+      INSERT INTO providers (id, kind, mode, created_at_ms, updated_at_ms)
+      VALUES ('codex', 'codex', 'monitor_only', 1000, 2000),
+             ('antigravity', 'antigravity', 'monitor_only', 1000, 2000);
+      INSERT INTO schedule_policies (id, provider_id, kind, timezone, config_json, created_at_ms, updated_at_ms)
+      VALUES ('activation-codex', 'codex', 'auto', 'UTC', '{}', 1000, 2000),
+             ('activation-antigravity', 'antigravity', 'manual', 'UTC', '{}', 1000, 2000);
+      INSERT INTO events (occurred_at_ms, provider_id, type, severity, data_json)
+      VALUES (2000, 'codex', 'provider_settings_updated', 'info', '{"mode":"automation"}'),
+             (2001, 'codex', 'schedule_policy_updated', 'info', '{"policyId":"activation-codex","policyKind":"fixed"}');
+    `);
+    legacy.close();
+
+    const upgraded = openDatabase(file);
+    expect(
+      upgraded.prepare('SELECT mode, mode_explicit FROM providers WHERE id = ?').get('codex'),
+    ).toEqual({ mode: 'automation', mode_explicit: 1 });
+    expect(
+      upgraded.prepare('SELECT mode, mode_explicit FROM providers WHERE id = ?').get('antigravity'),
+    ).toEqual({ mode: 'monitor_only', mode_explicit: 0 });
+    expect(
+      upgraded
+        .prepare('SELECT kind, kind_explicit FROM schedule_policies WHERE id = ?')
+        .get('activation-codex'),
+    ).toEqual({ kind: 'fixed', kind_explicit: 1 });
+    expect(
+      upgraded
+        .prepare('SELECT kind, kind_explicit FROM schedule_policies WHERE id = ?')
+        .get('activation-antigravity'),
+    ).toEqual({ kind: 'manual', kind_explicit: 0 });
     upgraded.close();
   });
 });

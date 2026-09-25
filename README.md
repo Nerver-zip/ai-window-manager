@@ -93,9 +93,10 @@ Antigravity monitoring and their trigger capability gates are enabled, with
 provider state kept in dedicated Docker volumes. It contains no credentials.
 With those gates enabled, a fresh database seeds providers in automation mode
 with a “Whenever possible” policy. The operator still chooses the exact usage
-window to manage; without a target, no action is planned. Existing SQLite
+window to manage; without a target, no action is planned. Explicit SQLite
 choices, including an explicit monitoring-only setting, are preserved across
-restarts. A trigger is a real provider request (`Hi!`) and can consume quota.
+restarts; upgrades migrate only old untouched defaults to automation. A trigger
+is a real provider request (`Hi!`) and can consume quota.
 The base Compose defaults remain disabled when these variables are absent.
 
 For source development, install dependencies and use `pnpm dev` separately;

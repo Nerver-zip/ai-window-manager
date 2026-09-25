@@ -66,8 +66,61 @@ describe('bootstrap provider defaults', () => {
 
     expect(repositories.providers.get('antigravity')?.mode).toBe('monitor_only');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
-      { id: 'activation-antigravity', kind: 'manual', enabled: true, config: {} },
+      {
+        id: 'activation-antigravity',
+        kind: 'manual',
+        kindExplicit: false,
+        enabled: true,
+        config: {},
+      },
     ]);
+  });
+
+  it('upgrades untouched legacy defaults to automation when the trigger gate is enabled', () => {
+    const { repositories } = openFixture();
+    seed(repositories, false);
+
+    seed(repositories, true);
+
+    expect(repositories.providers.get('antigravity')).toMatchObject({
+      mode: 'automation',
+      modeExplicit: false,
+    });
+    expect(repositories.schedulePolicies.get('activation-antigravity')).toMatchObject({
+      kind: 'auto',
+      kindExplicit: false,
+    });
+  });
+
+  it('keeps explicit provider and schedule opt-outs after bootstrap', () => {
+    const { repositories } = openFixture();
+    seed(repositories, true);
+    const provider = repositories.providers.get('antigravity');
+    const policy = repositories.schedulePolicies.get('activation-antigravity');
+    if (!provider || !policy) throw new Error('bootstrap defaults were not created');
+    repositories.providers.upsert({
+      ...provider,
+      mode: 'monitor_only',
+      modeExplicit: true,
+      updatedAtMs: 2_000,
+    });
+    repositories.schedulePolicies.upsert({
+      ...policy,
+      kind: 'manual',
+      kindExplicit: true,
+      updatedAtMs: 2_000,
+    });
+
+    seed(repositories, true);
+
+    expect(repositories.providers.get('antigravity')).toMatchObject({
+      mode: 'monitor_only',
+      modeExplicit: true,
+    });
+    expect(repositories.schedulePolicies.get('activation-antigravity')).toMatchObject({
+      kind: 'manual',
+      kindExplicit: true,
+    });
   });
 
   it('does not reset a saved automation preference when the gate is temporarily disabled', () => {
@@ -92,11 +145,13 @@ describe('bootstrap provider defaults', () => {
     fixture.repositories.providers.upsert({
       ...provider,
       mode: 'monitor_only',
+      modeExplicit: true,
       updatedAtMs: 2_000,
     });
     fixture.repositories.schedulePolicies.upsert({
       ...policy,
       kind: 'manual',
+      kindExplicit: true,
       updatedAtMs: 2_000,
     });
     const repositories = reopen(fixture);

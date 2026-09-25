@@ -22,7 +22,7 @@ const ID = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 export const ProviderSettingsSchema = z
   .object({
     enabled: z.boolean().default(false),
-    mode: z.enum(['monitor_only', 'automation']).default('monitor_only'),
+    mode: z.enum(['monitor_only', 'automation']).optional(),
     pollIntervalSeconds: z.number().int().min(30).max(86400),
   })
   .strict();
@@ -251,6 +251,7 @@ export function updateActivationPolicy(
     id: policyId,
     providerId: parsed.data.providerId,
     kind: parsed.data.kind,
+    kindExplicit: true,
     enabled: parsed.data.enabled,
     timezone,
     config,
@@ -319,7 +320,8 @@ export function updateProviderSettings(
 
   const parsed = ProviderSettingsSchema.safeParse(body);
   if (!parsed.success) return failure(400, 'BAD_REQUEST', 'provider settings are invalid');
-  if (parsed.data.mode === 'automation') {
+  const mode = parsed.data.mode ?? provider.mode;
+  if (mode === 'automation') {
     const adapter = input.adapters.get(providerId);
     if (!adapter) return failure(409, 'PROVIDER_UNAVAILABLE', 'provider adapter is unavailable');
     try {
@@ -336,7 +338,8 @@ export function updateProviderSettings(
   input.repositories.providers.upsert({
     ...provider,
     enabled: parsed.data.enabled,
-    mode: parsed.data.mode,
+    mode,
+    modeExplicit: parsed.data.mode === undefined ? (provider.modeExplicit ?? false) : true,
     pollIntervalSeconds: parsed.data.pollIntervalSeconds,
     updatedAtMs: nowMs,
   });
@@ -348,11 +351,11 @@ export function updateProviderSettings(
     reasonCode: 'PROVIDER_SETTINGS_UPDATED',
     data: {
       enabled: parsed.data.enabled,
-      mode: parsed.data.mode,
+      mode,
       pollIntervalSeconds: parsed.data.pollIntervalSeconds,
     },
   });
-  return { ok: true, value: { providerId, mode: parsed.data.mode } };
+  return { ok: true, value: { providerId, mode } };
 }
 
 export function updateScheduleSettings(
@@ -392,6 +395,7 @@ export function updateScheduleSettings(
     id: policyId,
     providerId: parsed.data.providerId,
     kind: 'target_reset',
+    kindExplicit: previous?.kindExplicit ?? false,
     enabled: parsed.data.enabled,
     timezone: parsed.data.timezone,
     config: {

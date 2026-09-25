@@ -42,7 +42,7 @@ pending. The Antigravity effect is experimental and not a provider-wide
 guarantee. Work-window recommendations and broader statistics remain out of
 scope.
 
-Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one explicit opt-in ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
+Provider research materially constrains the MVP. OpenAI officially documents that a new five-hour Work/Codex window starts with the first message after the prior window ends, and the official Codex open-source app-server exposes account rate-limit snapshots and turn lifecycle events. The implemented trigger is one environment-gated ordinary `Hi!` request; it consumes normal provider quota and is not a zero-cost “start window” API. In the gate-enabled local profile, automatic starts are the default unless the operator explicitly disables them. Reset-time phase inference is marked inferred and remains operator-controlled. Internal backend `/api/codex/usage` paths are observed in official source but are not treated as stable public APIs.
 
 Antigravity documents Pro/Ultra five-hour quota refresh, `/usage`, headless
 `agy -p`, and official keyring auth. SPIKE-002 validated a structured official
@@ -53,7 +53,9 @@ optional mounted unlock file. No token extraction or backend impersonation is
 allowed. SPIKE-005 records operator-provided evidence that one `Hi!` anchored
 the selected family's five-hour window on one account/CLI/model path. This is
 not a universal guarantee. The official-CLI action is implemented behind an
-independent default-off gate, but live AWM action acceptance remains pending.
+independent gate that is off when unset; the checked-in local profile enables
+it and defaults to automation unless explicitly disabled. Live AWM action
+acceptance remains pending.
 Authenticated state reuse after recreation/restart was verified for the local
 operator deployment on 2026-09-24; this does not generalize to a fresh install.
 
@@ -158,11 +160,13 @@ Terms prohibit circumventing rate limits/restrictions. The implementation must n
 
 The project-level decision accepts this self-hosted single-operator integration
 only through Google's official CLI. Do not extract tokens or reproduce backend
-calls. Monitoring is opt-in; the quota-consuming experimental trigger is
-separately opt-in behind its environment capability gate. With that gate
-enabled, a fresh database seeds provider automation and an automatic policy;
-the operator still has to select the exact quota window/model family. It uses a
-fixed `Hi!` and never retries an uncertain post-dispatch result.
+calls. Monitoring is controlled by its environment setting; the quota-consuming
+experimental trigger remains behind its separate environment capability gate.
+With that gate enabled, a fresh database or an old implicit default uses
+provider automation and an automatic policy unless the operator explicitly
+chooses Off or “Only when I ask”; the exact quota window/model family must still
+be selected. It uses a fixed `Hi!` and never retries an uncertain post-dispatch
+result.
 
 ## D. Product boundaries
 
@@ -308,7 +312,7 @@ Retention: raw samples/ordinary sampling events 90d, action/lifecycle/config eve
 
 ## L. Configuration model
 
-No mutable YAML + DB conflict. Environment only owns process/bootstrap values and seeds mutable defaults once on a fresh DB. SQLite becomes authoritative for runtime/UI settings. Secrets are referenced, not stored as UI settings/DB plaintext.
+No mutable YAML + DB conflict. Environment owns process/bootstrap values and seeds defaults on a fresh DB; a one-time migration upgrades old implicit automation defaults while preserving explicit SQLite choices. SQLite remains authoritative for runtime/UI settings afterward. Secrets are referenced, not stored as UI settings/DB plaintext.
 
 Restart-required: bind/port, DB/data paths, low-level logging/startup provider executable paths. Runtime: timezone, enable/mode, polling, schedule, retention.
 
@@ -507,8 +511,9 @@ remain capability-gated.**
 ### Phase 4 — Codex monitor
 
 **Status: CODEX-001 offline adapter and OPS-002 runtime packaging complete;
-operator-authorized live monitor/heartbeat acceptance complete. Trigger
-execution remains explicitly disabled by default.**
+operator-authorized live monitor/heartbeat acceptance complete. The trigger
+gate remains off when unset; the local profile enables it and defaults to
+automation unless explicitly disabled.**
 
 **Goal**: real read-only Codex state through official client surface.  
 **Components**: dedicated client state, adapter, parser/schema validation.  
@@ -522,7 +527,8 @@ timeout separation and uncertain-outcome confirmation are enforced.**
 
 **Goal**: position an inactive Codex window using one minimal legitimate normal
 request only when `AWM_CODEX_TRIGGER_ENABLED=true` and provider mode is
-`automation`. The action sends only `Hi!` and is not enabled by default.
+`automation`. The action sends only `Hi!`; the environment gate is off when
+unset, while the checked-in local profile enables automatic starts by default.
 
 ### Phase 6 — Antigravity monitor and experimental action
 
@@ -533,7 +539,9 @@ deployment on 2026-09-24; live AWM action acceptance remains pending.
 **Goal**: official-CLI-only read path and one target-specific `Hi!` action.
 **Acceptance**: safe auth persistence, strict parser, exact target confirmation,
 durable intent and no retry after an uncertain result.
-**Trigger**: disabled by default; not a universal start-window guarantee.
+**Trigger**: disabled when its environment gate is unset; automatic starts are
+the gate-enabled default unless explicitly disabled in SQLite. The observed
+effect is not a universal start-window guarantee.
 
 ### Phase 7 — Settings/logs/usage polish
 

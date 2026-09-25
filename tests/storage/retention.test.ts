@@ -269,6 +269,7 @@ function schedulePolicy(updatedAtMs: number): SchedulePolicyRecord {
     id: 'policy-1',
     providerId: 'fake',
     kind: 'target_reset',
+    kindExplicit: false,
     enabled: true,
     timezone: 'UTC',
     config: { target: '08:00' },

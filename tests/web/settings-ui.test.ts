@@ -538,8 +538,8 @@ describe('settings UI helpers', () => {
   });
 
   it('ships progressive policy, preview, and non-persisting timezone detection behavior', () => {
-    expect(APP_JS).toContain('form[data-quota-confirm]');
-    expect(APP_JS).toContain('window.confirm(message)');
+    expect(APP_JS).not.toContain('data-quota-confirm');
+    expect(APP_JS).not.toContain('window.confirm');
     expect(APP_JS).toContain('[data-policy-form]');
     expect(APP_JS).toContain('control.disabled = !active');
     expect(APP_JS).toContain('form.querySelector(\'[name="policyKind"]:checked\')?.value');
@@ -563,56 +563,6 @@ describe('settings UI helpers', () => {
     });
     expect(manualSettings).toContain('data-timezone-auto-detect="false"');
   });
-
-  it.each([
-    {
-      target: 'antigravity',
-      confirmed: false,
-      prevented: true,
-      impact: 'both the five-hour and weekly limits for this model family',
-    },
-    {
-      target: 'provider',
-      confirmed: true,
-      prevented: false,
-      impact: 'The provider may update more than one usage window.',
-    },
-  ])(
-    'confirms a $target quota-consuming manual start before submission',
-    ({ target, confirmed, prevented: expectedPrevented, impact }) => {
-      let submitListener: ((event: { preventDefault: () => void }) => void) | undefined;
-      let message = '';
-      const form = {
-        dataset: { quotaConfirm: target },
-        addEventListener: (
-          type: string,
-          listener: (event: { preventDefault: () => void }) => void,
-        ) => {
-          if (type === 'submit') submitListener = listener;
-        },
-      };
-      const document = {
-        querySelectorAll: (selector: string) =>
-          selector === 'form[data-quota-confirm]' ? [form] : [],
-      };
-      new Script(APP_JS).runInNewContext({
-        document,
-        window: {
-          confirm: (value: string) => {
-            message = value;
-            return confirmed;
-          },
-        },
-      });
-
-      let submissionPrevented = false;
-      submitListener?.({ preventDefault: () => (submissionPrevented = true) });
-
-      expect(submissionPrevented).toBe(expectedPrevented);
-      expect(message).toContain('one "Hi!" message and uses normal provider quota');
-      expect(message).toContain(impact);
-    },
-  );
 
   it('offers grouped timezone choices with offsets and preserves a saved unlisted zone', () => {
     const preset = renderSettingsPage({

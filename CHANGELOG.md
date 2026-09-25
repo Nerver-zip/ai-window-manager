@@ -2,12 +2,12 @@
 
 ## Unreleased
 
-- Fresh databases now default trigger-enabled providers to automation with a
-  “Whenever possible” policy, while preserving saved SQLite choices and
-  requiring an exact window target. Antigravity bootstrap no longer resets a
-  persisted mode during restart.
-- Moved the quota-impact warning from the Overview cards to a confirmation shown
-  only when starting a window manually.
+- Trigger-enabled providers now default to automation with a “Whenever
+  possible” policy on fresh databases; migration upgrades only old implicit
+  defaults and preserves explicit Off/Manual choices. Exact window selection is
+  still required. Antigravity bootstrap no longer resets an explicit mode.
+- Removed the verbose quota warning/confirmation from the Overview start
+  action; its exact-window button remains an explicit manual-start command.
 - The schedule horizon uses five-hour ticks for a known five-hour window and
   retains an endpoint at 24 hours; other windows keep six-hour ticks.
 - The local `.env.example` now mirrors the `awm` Compose profile, including

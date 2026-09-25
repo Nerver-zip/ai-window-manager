@@ -56,7 +56,8 @@ use the enabled `AWM_CODEX_TRIGGER_ENABLED` gate and the persisted provider mode
 `automation` plus an enabled automatic policy; the action sends only the fixed
 `Hi!` message. With the trigger gate enabled, a fresh database seeds automation
 mode and a “Whenever possible” policy; the exact target window still must be
-selected. Existing SQLite choices remain authoritative. Its app-server stages
+selected. Explicit SQLite choices remain authoritative; old untouched defaults
+are upgraded to automation on first startup with the gate enabled. Its app-server stages
 use `AWM_CODEX_ACTION_TIMEOUT_SECONDS` (default
 30 seconds; the local example sets 60), separate
 from the short timeout used by read-only inspection. A post-dispatch timeout

@@ -69,8 +69,8 @@ requires `AWM_CODEX_TRIGGER_ENABLED=true`. Antigravity additionally requires
 model. Its only implemented action is one ordinary `Hi!` through official
 `agy -p`; it consumes normal quota. A selected model family is targeted, but
 the provider may also account that request against the family's other window.
-The UI warns about this before dispatch. A post-dispatch uncertain result is
-never blindly retried.
+The Overview does not add a separate warning before a manual start. A
+post-dispatch uncertain result is never blindly retried.
 
 Manual starts remain separate from the saved automatic schedule: selecting a
 provider/window for the action does not alter that provider's one saved policy.

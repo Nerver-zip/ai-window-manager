@@ -1736,7 +1736,7 @@ function renderWindow(
   const targetLabel = windowGroupDisplayName(window.windowKind);
   const actionLabel = targetLabel ? `${targetLabel}, ${label}` : label;
   const startAction = canManuallyTrigger(provider, window)
-    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-quota-confirm="${provider.kind === 'antigravity' ? 'antigravity' : 'provider'}"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<noscript><p class="notice">This sends one “Hi!” message through the provider and uses normal provider quota.</p></noscript><button class="button button-secondary" type="submit" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
+    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
     : '';
   return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction}</section>`;
 }

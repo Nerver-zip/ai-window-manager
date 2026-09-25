@@ -227,6 +227,7 @@ describe('activation policy settings persistence', () => {
     expect(context.repositories.schedulePolicies.get('activation-fake')).toMatchObject({
       providerId: 'fake',
       kind: body.kind,
+      kindExplicit: true,
       enabled: body.enabled,
       timezone: 'UTC',
       config,

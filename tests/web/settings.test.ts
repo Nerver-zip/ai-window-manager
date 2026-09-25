@@ -78,11 +78,31 @@ describe('settings API', () => {
     expect(context.repositories.providers.get('fake')).toMatchObject({
       enabled: false,
       mode: 'automation',
+      modeExplicit: true,
       pollIntervalSeconds: 60,
       config: { safe: true },
     });
     expect(context.repositories.events.list('fake')[0]).toMatchObject({
       type: 'provider_settings_updated',
+    });
+  });
+
+  it('does not turn automatic starts off when a settings update omits the mode', () => {
+    const context = setup();
+    const provider = context.repositories.providers.get('fake');
+    if (!provider) throw new Error('test provider missing');
+    context.repositories.providers.upsert({
+      ...provider,
+      mode: 'automation',
+      modeExplicit: true,
+    });
+
+    expect(
+      updateProviderSettings(context, 'fake', { enabled: true, pollIntervalSeconds: 60 }),
+    ).toMatchObject({ ok: true, value: { mode: 'automation' } });
+    expect(context.repositories.providers.get('fake')).toMatchObject({
+      mode: 'automation',
+      modeExplicit: true,
     });
   });
 

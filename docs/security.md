@@ -36,9 +36,10 @@ not validate a fresh Web-assisted sign-in or keyring setup in another
 deployment; operators must verify those there.
 
 The quota-consuming trigger gate defaults to disabled when unset; the local
-`.env.example` sets it to `true`. Dispatch additionally requires the SQLite
-provider mode and automatic policy to be deliberately configured. The adapter
-then sends one fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
+`.env.example` sets it to `true`. With the gate enabled, a fresh database uses
+automation mode and an automatic policy unless the operator explicitly chooses
+Off or “Only when I ask”; dispatch still requires a supported exact target. The
+adapter then sends one fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
 is explicitly marked inferred; it must not be treated as an official lifecycle
 field. Read-only app-server requests retain a short timeout; the quota-consuming
 action uses the separately bounded `AWM_CODEX_ACTION_TIMEOUT_SECONDS` setting,
@@ -55,7 +56,8 @@ local example, and still requires the persisted provider mode `automation` and
 an automatic policy. The adapter uses only official headless `agy -p`
 with one fixed `Hi!`, and only for one exact supported quota-window target and
 its configured model. This is a normal provider request, not a start-only API;
-the UI warns that another window in the same model family may also be charged.
+the Overview start button is explicit and does not display an additional quota
+warning.
 Operator-provided observations support the reset-anchoring effect for one
 account and pinned client, but this is not a universal provider guarantee.
 Timeout, EOF, malformed output or other ambiguity after spawn becomes
@@ -138,7 +140,7 @@ cannot mark cookies secure or influence source-based throttling.
 | container escape                  | Low-Medium | non-root, cap_drop ALL, no-new-privileges, read-only rootfs where feasible, no Docker socket                                     |
 | dependency/supply-chain           | Medium     | lockfile, minimal dependencies, Dependabot/audit, pin build actions/image bases deliberately                                     |
 | SQLite corruption                 | Medium     | WAL, transactional migrations, health check, backups, integrity recovery documentation                                           |
-| UI operator error causing trigger | Medium     | separate opt-in gates, explicit exact-window start button, quota warning, durable intent and fresh preflight                     |
+| UI operator error causing trigger | Medium     | separate opt-in gates, explicit exact-window start button, durable intent and fresh preflight                                    |
 
 ## HTTP baseline
 

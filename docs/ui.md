@@ -67,9 +67,9 @@ labels.
 
 When the provider is in automation mode and an exact window is triggerable,
 that window has its own `Start this window now` action. It queues a durable
-intent; it does not dispatch from the HTTP handler. The action is accompanied by
-a quota warning. For Antigravity, the warning explains that a prompt aimed at a
-model family may affect both that family's five-hour and weekly allowance.
+intent; it does not dispatch from the HTTP handler. The button itself is the
+operator's explicit manual-start action; the overview does not add a separate
+quota warning or confirmation dialog.
 
 The Overview does not duplicate the scheduler's next-decision explanation. The
 Schedule page owns the persisted decision and live preview, and still never

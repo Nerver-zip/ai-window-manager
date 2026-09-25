@@ -171,8 +171,8 @@ processes and never spends quota.
 
 Show a CSRF/Origin-protected form on each exact supported window only when the
 provider is enabled, in automation mode, and advertises that target. Display
-the selected Antigravity model and a quota warning. The form queues an intent;
-the HTTP handler never inspects or dispatches a provider action.
+the selected Antigravity model. The explicit start button queues an intent; the
+HTTP handler never inspects or dispatches a provider action.
 
 ## TIME-001 — Implement IANA local schedule conversion
 

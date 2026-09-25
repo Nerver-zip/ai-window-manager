@@ -49,13 +49,15 @@ action timeouts to 60 seconds. It contains no usable credential or keyring
 unlock value. With these trigger gates enabled, a fresh database seeds the
 providers in `automation` mode with an enabled `auto` (“Whenever possible”)
 policy. After connecting, select the exact usage window (and Antigravity quota
-family) to manage; the application does not guess a target. Existing SQLite
-choices remain authoritative across restarts. The base Compose interpolation
+family) to manage; the application does not guess a target. Explicit SQLite
+choices remain authoritative; a one-time upgrade changes only legacy defaults
+that were never explicitly saved. The base Compose interpolation
 defaults remain disabled when `.env` is absent.
 
-At startup the daemon seeds only enabled bootstrap providers when their DB record
-does not already exist, performs one reconcile, then uses one coalescing global
-reconcile interval. Runtime provider state and planned intents remain in SQLite;
+At startup the daemon seeds enabled bootstrap providers missing from SQLite and,
+with a trigger gate enabled, upgrades only legacy automation defaults that were
+never explicitly saved. It performs one reconcile, then uses one coalescing
+global reconcile interval. Runtime provider state and planned intents remain in SQLite;
 the overview/API only reads that persisted state. The image packages the
 official Codex CLI `0.155.1` at `/opt/codex/bin/codex`, verified by
 architecture-specific release checksums. The runtime image includes the
@@ -65,7 +67,8 @@ connections. Codex monitoring uses the dedicated
 unset. The image contains no Codex credentials. Codex trigger support is
 separately gated by `AWM_CODEX_TRIGGER_ENABLED`; with that gate enabled, a
 fresh database seeds automatic mode and policy. Existing SQLite choices are
-not changed by the gate. `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
+not changed by the gate, except that a one-time upgrade moves old defaults that
+were never explicitly saved to automatic mode. `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
 app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
 it does not turn an ambiguous outcome into a retryable failure.
 
@@ -80,7 +83,8 @@ URL and forwards the operator-entered browser code back to that CLI. Normal
 inspection runs only the documented headless `/usage` command. Antigravity
 trigger capability has an independent `AWM_ANTIGRAVITY_TRIGGER_ENABLED` gate
 (false when unset). If enabled, a fresh database seeds automatic mode and
-policy. Existing SQLite provider choices remain authoritative; the adapter
+policy. Explicit SQLite provider choices remain authoritative; a one-time
+upgrade moves only old defaults that were never explicitly saved. The adapter
 still exposes only the four exact Gemini / Claude-and-GPT five-hour or weekly
 targets and uses the configured family model. One `Hi!` is a quota-consuming
 normal prompt, not a provider start-only operation. A request aimed at one

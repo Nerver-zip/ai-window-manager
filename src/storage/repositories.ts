@@ -31,6 +31,7 @@ export interface ProviderRecord {
   kind: string;
   enabled: boolean;
   mode: ProviderMode;
+  modeExplicit?: boolean;
   pollIntervalSeconds: number;
   config: unknown;
   configVersion: number;
@@ -63,6 +64,7 @@ export interface SchedulePolicyRecord {
   id: string;
   providerId: string;
   kind: SchedulePolicyKind;
+  kindExplicit?: boolean;
   enabled: boolean;
   timezone: string;
   config: unknown;
@@ -143,14 +145,15 @@ export class ProviderRepository {
     this.db
       .prepare(
         `INSERT INTO providers (
-          id, kind, enabled, mode, poll_interval_seconds, config_json,
+          id, kind, enabled, mode, mode_explicit, poll_interval_seconds, config_json,
           config_version, created_at_ms, updated_at_ms
-        ) VALUES (@id, @kind, @enabled, @mode, @pollIntervalSeconds, @config,
+        ) VALUES (@id, @kind, @enabled, @mode, @modeExplicit, @pollIntervalSeconds, @config,
           @configVersion, @createdAtMs, @updatedAtMs)
         ON CONFLICT(id) DO UPDATE SET
           kind = excluded.kind,
           enabled = excluded.enabled,
           mode = excluded.mode,
+          mode_explicit = excluded.mode_explicit,
           poll_interval_seconds = excluded.poll_interval_seconds,
           config_json = excluded.config_json,
           config_version = excluded.config_version,
@@ -159,6 +162,7 @@ export class ProviderRepository {
       .run({
         ...provider,
         enabled: booleanToInteger(provider.enabled),
+        modeExplicit: booleanToInteger(provider.modeExplicit ?? false),
         config: stringifyJson(provider.config),
       });
   }
@@ -708,11 +712,12 @@ export class SchedulePolicyRepository {
     this.db
       .prepare(
         `INSERT INTO schedule_policies (
-          id, provider_id, kind, enabled, timezone, config_json, created_at_ms, updated_at_ms
-        ) VALUES (@id, @providerId, @kind, @enabled, @timezone, @config, @createdAtMs, @updatedAtMs)
+          id, provider_id, kind, kind_explicit, enabled, timezone, config_json, created_at_ms, updated_at_ms
+        ) VALUES (@id, @providerId, @kind, @kindExplicit, @enabled, @timezone, @config, @createdAtMs, @updatedAtMs)
         ON CONFLICT(id) DO UPDATE SET
           provider_id = excluded.provider_id,
           kind = excluded.kind,
+          kind_explicit = excluded.kind_explicit,
           enabled = excluded.enabled,
           timezone = excluded.timezone,
           config_json = excluded.config_json,
@@ -721,6 +726,7 @@ export class SchedulePolicyRepository {
       .run({
         ...policy,
         enabled: booleanToInteger(policy.enabled),
+        kindExplicit: booleanToInteger(policy.kindExplicit ?? false),
         config: stringifyJson(policy.config),
       });
   }
@@ -1003,6 +1009,7 @@ interface ProviderRow {
   kind: string;
   enabled: number;
   mode: ProviderMode;
+  mode_explicit: number;
   poll_interval_seconds: number;
   config_json: string;
   config_version: number;
@@ -1072,6 +1079,7 @@ interface SchedulePolicyRow {
   id: string;
   provider_id: string;
   kind: SchedulePolicyKind;
+  kind_explicit: number;
   enabled: number;
   timezone: string;
   config_json: string;
@@ -1105,6 +1113,7 @@ function providerFromRow(row: ProviderRow): ProviderRecord {
     kind: row.kind,
     enabled: row.enabled === 1,
     mode: row.mode,
+    modeExplicit: row.mode_explicit === 1,
     pollIntervalSeconds: row.poll_interval_seconds,
     config: parseJson(row.config_json),
     configVersion: row.config_version,
@@ -1262,6 +1271,7 @@ function schedulePolicyFromRow(row: SchedulePolicyRow): SchedulePolicyRecord {
     id: row.id,
     providerId: row.provider_id,
     kind: row.kind,
+    kindExplicit: row.kind_explicit === 1,
     enabled: row.enabled === 1,
     timezone: row.timezone,
     config: parseJson(row.config_json),

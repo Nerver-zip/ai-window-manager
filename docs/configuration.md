@@ -12,8 +12,8 @@ Environment/.env/Compose controls process/container concerns:
 - log level;
 - data/secret/provider-home paths;
 - migration/startup behavior;
-- initial provider/policy defaults (including `AWM_TIMEZONE`) **only when the
-  DB is empty**;
+- initial provider/policy defaults (including `AWM_TIMEZONE`) when the DB is
+  empty, plus a one-time migration of legacy implicit automation defaults;
 - feature flags needed before DB access.
 - provider executable paths and dedicated provider state paths;
 - `AWM_AUTH_SESSION_TIMEOUT_SECONDS` (60–1800 seconds, default 900);
@@ -48,13 +48,18 @@ The environment gates determine which trigger capabilities are available and
 are also the initial automation default for a newly seeded provider. When a
 gate is enabled, a fresh database seeds that provider in `automation` mode with
 an enabled `auto` (“Whenever possible”) policy. When a gate is absent or false,
-the initial mode is `monitor_only` with a manual policy. The automatic policy
-does not guess a target: after connecting, select the exact provider-reported
-window (and, for Antigravity, quota family) before any action can be planned.
-Existing SQLite settings are authoritative and are never overwritten by later
-environment changes or container restarts. Any configured trigger sends a
-normal `Hi!` provider request and may consume quota; an ambiguous dispatched
-request is not retried automatically.
+the initial mode is `monitor_only` with a manual policy. On upgrade, the
+migration restores saved provider/policy choices from the configuration audit
+and marks them explicit. A legacy `monitor_only`/manual pair that has no saved
+operator choice is upgraded to the automatic defaults when its trigger gate is
+enabled. After that, choosing Off or “Only when I ask” is an explicit SQLite
+preference and remains off across restarts and environment changes.
+
+The automatic policy does not guess a target: after connecting, select the
+exact provider-reported window (and, for Antigravity, quota family) before any
+action can be planned. Any configured trigger sends a normal `Hi!` provider
+request and may consume quota; an ambiguous dispatched request is not retried
+automatically.
 
 ## Runtime configuration: SQLite
 
@@ -95,8 +100,8 @@ in `.env` or Compose environment.
 hardcoded safe defaults
     ↓ (initial bootstrap only)
 bootstrap environment
-    ↓ (persist initial mutable settings once)
-SQLite runtime settings = authority afterward
+    ↓ (seed new DB, or migrate only legacy implicit automation defaults)
+SQLite runtime settings = authority for explicit choices
 ```
 
 Changing `AWM_TIMEZONE` after DB initialization does not silently override a UI-configured timezone. A documented admin reset/import operation is required to re-bootstrap.
