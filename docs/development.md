@@ -11,8 +11,14 @@
 ```bash
 cp .env.example .env
 pnpm install
-pnpm dev
 ```
+
+`.env.example` mirrors the local Docker profile and uses container-only
+provider executable paths. For the application in Docker, run
+`docker compose up --build -d` and open `http://127.0.0.1:8878/`. For source
+development with `pnpm dev`, use the host's installed provider CLI paths and
+explicitly configure the provider environment as needed; do not assume the
+container paths in `.env.example` exist on the host.
 
 ## Validation
 
@@ -35,13 +41,15 @@ pnpm validate
 `pnpm validate` is the canonical completion gate. It runs format checking, lint, strict typechecking, the coverage-enforced test suite, the build, and Gitleaks. Install Gitleaks before running it locally. `pnpm test:coverage` requires at least 90% global lines, statements, functions, and branches and writes text/LCOV reports under the ignored `coverage/` directory.
 
 The daemon performs one initial reconcile and then one coalescing global tick.
-FakeProvider is enabled by default; Codex monitoring is opt-in through
+FakeProvider is disabled in the checked-in local profile. Codex monitoring uses
 `AWM_CODEX_ENABLED=true`, `AWM_CODEX_HOME=/codex-state` and
 `AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex` in the container. The image pins
 the official Codex CLI to `0.155.1`. Quota-consuming Codex actions additionally
-require `AWM_CODEX_TRIGGER_ENABLED=true` and the persisted provider mode
-`automation`; the action sends only the fixed `Hi!` message. Its app-server
-stages use `AWM_CODEX_ACTION_TIMEOUT_SECONDS` (default 30 seconds), separate
+use the enabled `AWM_CODEX_TRIGGER_ENABLED` gate and the persisted provider mode
+`automation` plus an enabled automatic policy; the action sends only the fixed
+`Hi!` message. A fresh database remains monitor-only/manual until configured in
+the UI. Its app-server stages use `AWM_CODEX_ACTION_TIMEOUT_SECONDS` (default
+30 seconds; the local example sets 60), separate
 from the short timeout used by read-only inspection. A post-dispatch timeout
 remains uncertain and is never retried automatically.
 

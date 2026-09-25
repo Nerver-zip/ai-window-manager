@@ -16,8 +16,9 @@ Gitleaks uses its upstream default rules through `.gitleaks.toml`. The local `pn
 
 ### Codex
 
-The image packages the official Codex CLI `0.155.1` with release checksums,
-but the runtime keeps `AWM_CODEX_ENABLED=false` by default. A dedicated
+The image packages the official Codex CLI `0.155.1` with release checksums.
+`AWM_CODEX_ENABLED` is false when unset; the checked-in `.env.example`
+explicitly enables the local profile without containing credentials. A dedicated
 `/codex-state` volume is owned by the container user and may be authenticated
 only through the official Codex login/device/app-server flow. AI Window
 Manager talks to the official client protocol and does not copy a workstation
@@ -34,9 +35,10 @@ recreation/restart and resumed read-only observations on 2026-09-24. This does
 not validate a fresh Web-assisted sign-in or keyring setup in another
 deployment; operators must verify those there.
 
-The quota-consuming trigger gate defaults to disabled. When an operator enables
-`AWM_CODEX_TRIGGER_ENABLED=true` and provider automation, the adapter sends one
-fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
+The quota-consuming trigger gate defaults to disabled when unset; the local
+`.env.example` sets it to `true`. Dispatch additionally requires the SQLite
+provider mode and automatic policy to be deliberately configured. The adapter
+then sends one fixed `Hi!` turn in an ephemeral read-only workspace. Reset-time phase inference
 is explicitly marked inferred; it must not be treated as an official lifecycle
 field. Read-only app-server requests retain a short timeout; the quota-consuming
 action uses the separately bounded `AWM_CODEX_ACTION_TIMEOUT_SECONDS` setting,
@@ -45,11 +47,12 @@ cannot be retried blindly.
 
 ### Antigravity
 
-The accepted integration invokes only the pinned official `agy` CLI. It is
-monitoring is opt-in (`AWM_ANTIGRAVITY_ENABLED=false` by default). Its
-experimental, quota-consuming trigger is independently disabled by
-`AWM_ANTIGRAVITY_TRIGGER_ENABLED=false`; enabling it also requires the persisted
-provider mode `automation`. The adapter uses only official headless `agy -p`
+The accepted integration invokes only the pinned official `agy` CLI.
+Monitoring is disabled when `AWM_ANTIGRAVITY_ENABLED` is unset; the checked-in
+`.env.example` explicitly enables it for the local profile. Its experimental,
+quota-consuming trigger has a separate environment gate, also enabled by the
+local example, and still requires the persisted provider mode `automation` and
+an automatic policy. The adapter uses only official headless `agy -p`
 with one fixed `Hi!`, and only for one exact supported quota-window target and
 its configured model. This is a normal provider request, not a start-only API;
 the UI warns that another window in the same model family may also be charged.

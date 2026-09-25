@@ -28,6 +28,16 @@ keyring is mounted.
   SIGTERM to the app and waits for it to close HTTP/SQLite before D-Bus exits;
 - no Docker socket.
 
+The checked-in `.env.example` deliberately matches the local `awm` profile
+rather than these unset-variable Compose defaults: it uses host port `8878`,
+enables both official provider clients and both action capability gates, and
+sets action timeouts to 60 seconds. It contains no credentials or keyring
+unlock value. The gates expose supported actions but do not enable automatic
+scheduling in a fresh database. Providers are seeded `monitor_only` with
+manual policies, so authenticate and explicitly configure provider mode,
+target window and activation policy in the UI. The base Compose interpolation
+defaults remain disabled when `.env` is absent.
+
 At startup the daemon seeds only enabled bootstrap providers when their DB record
 does not already exist, performs one reconcile, then uses one coalescing global
 reconcile interval. Runtime provider state and planned intents remain in SQLite;
@@ -35,26 +45,26 @@ the overview/API only reads that persisted state. The image packages the
 official Codex CLI `0.155.1` at `/opt/codex/bin/codex`, verified by
 architecture-specific release checksums. The runtime image includes the
 system CA bundle required for official Codex HTTPS login and app-server
-connections. Optional Codex monitoring uses the dedicated
-`AWM_CODEX_HOME=/codex-state` volume and is disabled by default. The
-image contains no Codex credentials. Codex trigger support is separately gated
-by `AWM_CODEX_TRIGGER_ENABLED=false` and the persisted provider mode remains
+connections. Codex monitoring uses the dedicated
+`AWM_CODEX_HOME=/codex-state` volume and is disabled when its variable is
+unset. The image contains no Codex credentials. Codex trigger support is
+separately gated by `AWM_CODEX_TRIGGER_ENABLED` and the persisted provider mode remains
 `monitor_only` until an operator explicitly changes it.
 When enabled deliberately, `AWM_CODEX_ACTION_TIMEOUT_SECONDS` bounds each
 app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
 it does not turn an ambiguous outcome into a retryable failure.
 
 The image also packages the official Antigravity CLI `1.2.9` with
-architecture-specific SHA-256 verification. `AWM_ANTIGRAVITY_ENABLED=false` is
-the default. When enabled, the entrypoint starts a private D-Bus session and
+architecture-specific SHA-256 verification. `AWM_ANTIGRAVITY_ENABLED` defaults
+to false when unset. When enabled, the entrypoint starts a private D-Bus session and
 GNOME Secret Service as UID 10001, with `XDG_*` paths rooted in the dedicated
 provider volumes. It does not copy workstation login state. The Settings
 onboarding flow advances the official CLI only after its login-method prompt
 shows Google OAuth selected, then presents the CLI's complete authorization
 URL and forwards the operator-entered browser code back to that CLI. Normal
 inspection runs only the documented headless `/usage` command. Antigravity
-trigger capability remains disabled by default through the independent
-`AWM_ANTIGRAVITY_TRIGGER_ENABLED=false` gate. If deliberately enabled, provider
+trigger capability has an independent `AWM_ANTIGRAVITY_TRIGGER_ENABLED` gate
+(false when unset). If enabled, provider
 automation mode must also be selected in the UI; the adapter then exposes only
 the four exact Gemini / Claude-and-GPT five-hour or weekly targets and uses the
 configured family model. One `Hi!` is a quota-consuming normal prompt, not a
@@ -76,7 +86,9 @@ read-only usage observation succeeds. Restart the container and verify the
 provider reconnects without asking for sign-in again.
 
 This acceptance does not require sending a Codex or Antigravity turn or any
-other quota-consuming action. Both trigger paths remain separately gated. For
+other quota-consuming action. Trigger gates may be enabled by the checked-in
+local profile, but execution still requires deliberate SQLite automation mode
+and an enabled automatic policy. For
 Antigravity, configure the optional mounted keyring unlock file only if the
 dedicated keyring requires it; never mount host home, keyring, or D-Bus state.
 Offline package/runtime probes do not count as authenticated restart acceptance.

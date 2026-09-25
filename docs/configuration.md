@@ -28,6 +28,21 @@ Environment/.env/Compose controls process/container concerns:
 
 These generally require restart.
 
+The checked-in `.env.example` is an explicit local Compose profile, not the
+unset-variable defaults: it sets project `awm`, publishes on loopback port
+`8878`, enables Codex and Antigravity monitoring and their trigger capability
+gates, and uses 60-second action timeouts. It contains no provider credentials
+or keyring unlock secret. The application/Compose defaults remain disabled when
+these variables are absent.
+
+The environment gates do not rewrite SQLite runtime settings. A fresh database
+still seeds enabled providers in `monitor_only` mode with manual activation
+policies. After authenticating the official clients, choose the provider mode,
+window target, and activation policy in the UI. Existing SQLite settings remain
+authoritative across container restarts. Any configured trigger sends a normal
+`Hi!` provider request and may consume quota; an ambiguous dispatched request is
+not retried automatically.
+
 ## Runtime configuration: SQLite
 
 The UI/API changes non-secret product behavior in DB:

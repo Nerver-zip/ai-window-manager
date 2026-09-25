@@ -63,18 +63,29 @@ One application process owns state and scheduling. Official provider CLIs/app-se
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full A–Z implementation plan and [`docs/architecture.md`](docs/architecture.md) for the shorter canonical architecture.
 
-## Quick start: scaffold
+## Quick start: local Compose profile
 
 Prerequisites: Node 24+, pnpm 10+, or Docker.
 
 ```bash
 cp .env.example .env
-pnpm install
-pnpm validate
-pnpm dev
+docker compose up --build -d
+docker compose ps
 ```
 
-Open `http://127.0.0.1:8787/`.
+Open `http://127.0.0.1:8878/`.
+
+The checked-in example mirrors the local `awm` Compose profile: Codex and
+Antigravity monitoring and their trigger capability gates are enabled, with
+provider state kept in dedicated Docker volumes. It contains no credentials.
+On a fresh database, providers still start in `monitor_only` mode with manual
+policies; connect each official client, review its target, then deliberately
+enable automation and configure the activation policy in the UI. A trigger is a
+real provider request (`Hi!`) and can consume quota. The base Compose defaults
+remain disabled when these variables are absent.
+
+For source development, install dependencies and use `pnpm dev` separately;
+the example's provider executable paths are container paths.
 
 Docker:
 
@@ -111,23 +122,24 @@ Included now:
 - bounded retention maintenance for samples, events and terminal intent history;
 - official Codex app-server adapter with offline protocol fixtures and an opt-in
   fixed `Hi!` turn;
-- opt-in, target-specific Antigravity `Hi!` actions through the official `agy`
+- target-specific Antigravity `Hi!` actions through the official `agy`
   CLI, with separate Gemini and Claude/GPT model selection, fresh target-window
   confirmation, and no blind retry after ambiguous dispatch;
 - supervised, in-memory Codex and Antigravity login sessions through their
   official clients, with same-origin/CSRF-protected onboarding in Settings;
-- Antigravity usage adapter using the pinned official `agy` CLI, with its
-  experimental quota action disabled by default;
-- Docker/Compose hardening with pinned Codex and Antigravity clients, isolated
-  state/keyring volumes, and Antigravity disabled by default;
+- Antigravity usage adapter using the pinned official `agy` CLI; its action is
+  experimental and separately gated;
+- Docker/Compose hardening with pinned Codex and Antigravity clients and
+  isolated state/keyring volumes;
 - CI/validation scaffolding;
 - provider research and compliance classification;
 - ADRs, roadmap, backlog and agent skills.
 
-Intentionally **not** enabled by default:
+Still requires separate runtime configuration or remains out of scope:
 
-- Codex or Antigravity quota-consuming actions; each requires its explicit
-  environment gate and provider automation mode;
+- automatic actions on a fresh SQLite database: despite the local `.env.example`
+  enabling both environment gates, providers bootstrap as `monitor_only` with
+  manual policies until deliberately configured in the UI;
 - fresh sign-in and authenticated-state acceptance in each new deployment are
   operator-run. Existing Codex and Antigravity sessions in the local `awm`
   deployment survived container recreation/restart and resumed read-only
