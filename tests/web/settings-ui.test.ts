@@ -7,6 +7,7 @@ import {
   renderSchedulePage,
   renderSettingsPage,
   renderSchedulePreview,
+  renderTimezoneSelect,
 } from '../../src/web/settings-ui.js';
 import { APP_JS } from '../../src/web/ui/chart-interactions.js';
 import type { ProviderCapabilities, WindowSnapshot } from '../../src/domain/types.js';
@@ -181,7 +182,9 @@ describe('settings UI helpers', () => {
     expect(section).toContain('Update could not be completed');
     expect(section).toContain('Check the service logs, then try again.');
     expect(section).toMatch(/<button[^>]*type="submit"[^>]*disabled>Install update<\/button>/);
-    expect(section).toMatch(/<button[^>]*type="submit"[^>]*disabled>Restore previous version<\/button>/);
+    expect(section).toMatch(
+      /<button[^>]*type="submit"[^>]*disabled>Restore previous version<\/button>/,
+    );
     expect(section).toContain('name="autoUpdate" value="true">');
     expect(section).not.toContain('name="autoUpdate" value="true" checked');
     expect(section).not.toContain('<script>');
@@ -1143,6 +1146,101 @@ describe('settings UI helpers', () => {
     });
     expect(paused).toContain('This schedule is paused.');
     expect(paused).not.toContain('horizon-projected');
+  });
+
+  it('renders projected wake-up and reset cycle cards when window duration is known', () => {
+    const referenceInstant = new Date('2026-09-19T07:00:00.000Z');
+    const horizon = renderScheduleHorizon({
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'five_hour',
+        anchorLocalTime: '08:00',
+        toleranceSeconds: 900,
+        updatedAtMs: referenceInstant.getTime(),
+      },
+      provider: { ...provider, windows: [windowWithDuration('exact')], staleAfterSeconds: 300 },
+      currentWindow: {
+        providerId: 'fake',
+        status: 'INACTIVE',
+        windowKind: 'five_hour',
+        observedAt: referenceInstant.toISOString(),
+        confidence: 'exact',
+      },
+      referenceInstant,
+      timezone: 'UTC',
+    });
+
+    expect(horizon).toContain('class="horizon-cycles"');
+    expect(horizon).toContain('class="horizon-cycle-card"');
+    expect(horizon).toContain('Cycle 1');
+    expect(horizon).toContain('Wake-up');
+    expect(horizon).toContain('08:00');
+    expect(horizon).toContain('Reset');
+    expect(horizon).toContain('13:00');
+    expect(horizon).toContain('Scheduled start opportunity (window resets at Sat 13:00)');
+  });
+
+  it('renders fixed policy quick presets and +/-1h stepper buttons', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [{ ...provider, configured: true, windows: [windowWithDuration('exact')] }],
+      policy: {
+        id: 'activation-fake',
+        providerId: 'fake',
+        kind: 'fixed',
+        enabled: true,
+        timezone: 'America/Sao_Paulo',
+        windowKind: 'five_hour',
+        anchorLocalTime: '13:00',
+        toleranceSeconds: 900,
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+      referenceInstant: new Date('2026-09-19T10:00:00.000Z'),
+    });
+
+    expect(html).toContain('data-anchor-preset="08:00"');
+    expect(html).toContain('data-anchor-preset="13:00"');
+    expect(html).toContain('data-anchor-preset="18:00"');
+    expect(html).toContain('data-time-step="-60"');
+    expect(html).toContain('data-time-step="60"');
+    expect(html).toContain('class="time-stepper"');
+  });
+
+  it('renders categorized timezone select with regional groups, offset labels, and unlisted zones', () => {
+    const select = renderTimezoneSelect({
+      id: 'custom-tz',
+      name: 'timezone',
+      selectedValue: 'America/Sao_Paulo',
+      referenceInstant: new Date('2026-09-19T12:00:00.000Z'),
+      required: true,
+      describedBy: 'custom-tz-help',
+    });
+
+    expect(select).toContain('id="custom-tz" name="timezone"');
+    expect(select).toContain('aria-describedby="custom-tz-help"');
+    expect(select).toContain('required');
+    expect(select).toContain('<optgroup label="Americas">');
+    expect(select).toContain('<optgroup label="Europe">');
+    expect(select).toContain('<optgroup label="Asia">');
+    expect(select).toContain(
+      '<option value="America/Sao_Paulo" selected>São Paulo (UTC-03:00)</option>',
+    );
+
+    const unlisted = renderTimezoneSelect({
+      id: 'unlisted-tz',
+      name: 'timezone',
+      selectedValue: 'Pacific/Marquesas',
+      referenceInstant: new Date('2026-09-19T12:00:00.000Z'),
+    });
+    expect(unlisted).toContain('<optgroup label="Saved location">');
+    expect(unlisted).toContain(
+      '<option value="Pacific/Marquesas" selected>Pacific/Marquesas (UTC-09:30)</option>',
+    );
   });
 });
 

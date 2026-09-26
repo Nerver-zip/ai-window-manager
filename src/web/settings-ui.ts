@@ -273,7 +273,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
           ${windowField}
           ${renderPolicyFields('auto', kind === 'auto' && !noObservedTargets, '<p class="policy-guidance">The service checks for a newly available window and starts it only when fresh provider data and provider safety checks agree.</p>')}
           ${renderPolicyFields('custom_schedule', kind === 'custom_schedule' && !noObservedTargets, `<div class="policy-controls-grid">${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Times use your saved local time zone.', 'custom-times-help', true)}</div><p class="policy-guidance">A scheduled time is an opportunity, not a guarantee. The service checks periodically and still requires fresh, safe provider data.</p>`)}
-          ${renderPolicyFields('fixed', kind === 'fixed' && !noObservedTargets, `<div class="policy-controls-grid">${renderField('fixed-anchor', 'Cycle start time', `<input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
+          ${renderPolicyFields('fixed', kind === 'fixed' && !noObservedTargets, `<div class="policy-controls-grid">${renderField('fixed-anchor', 'Cycle start time', `<div class="time-input-group"><input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required><div class="time-stepper" aria-label="Adjust start time"><button type="button" class="button button-secondary button-step" data-time-step="-60" aria-label="Subtract 1 hour" title="1 hour earlier">−1h</button><button type="button" class="button button-secondary button-step" data-time-step="60" aria-label="Add 1 hour" title="1 hour later">+1h</button></div></div><div class="schedule-presets" aria-label="Suggested cycle start times"><button type="button" class="button button-secondary" data-anchor-preset="08:00">Morning <span>08:00</span></button><button type="button" class="button button-secondary" data-anchor-preset="13:00">Afternoon <span>13:00</span></button><button type="button" class="button button-secondary" data-anchor-preset="18:00">Evening <span>18:00</span></button></div>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
           ${renderPolicyFields('active_hours', kind === 'active_hours' && !noObservedTargets, `<div class="policy-controls-grid">${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
           ${renderPolicyFields('manual', kind === 'manual', '<p class="policy-guidance">Monitoring continues. The service will not start a window automatically.</p>')}
           <div class="form-actions"><button type="submit"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div>
@@ -373,7 +373,13 @@ export function renderScheduleHorizon(input: ScheduleHorizonInput): string {
   for (const item of schedule) {
     const at = Date.parse(item.at);
     if (Number.isFinite(at) && at >= referenceInstant.getTime() && at <= endMs) {
-      milestones.push({ at: item.at, label: 'Scheduled start opportunity', type: 'start' });
+      const resetTime = durationSeconds
+        ? formatUpcomingTime(new Date(at + durationSeconds * 1000).toISOString(), timezone || 'UTC')
+        : undefined;
+      const label = resetTime
+        ? `Scheduled start opportunity (window resets at ${resetTime})`
+        : 'Scheduled start opportunity';
+      milestones.push({ at: item.at, label, type: 'start' });
     }
   }
   const resetFact = currentWindow?.expectedEndAt;
@@ -449,6 +455,26 @@ export function renderScheduleHorizon(input: ScheduleHorizonInput): string {
           : opportunitiesInView === 0
             ? 'No start opportunity falls within this 24-hour view.'
             : `${opportunitiesInView} start ${opportunitiesInView === 1 ? 'opportunity' : 'opportunities'} in this view.`;
+  const projectedCycles =
+    durationSeconds && policy && policy.enabled && policy.kind !== 'manual'
+      ? schedule
+          .filter((item) => {
+            const at = Date.parse(item.at);
+            return Number.isFinite(at) && at >= referenceInstant.getTime() && at <= endMs;
+          })
+          .slice(0, 4)
+          .map((item, index) => {
+            const startMs = Date.parse(item.at);
+            const resetIso = new Date(startMs + durationSeconds * 1000).toISOString();
+            const startLabel = formatUpcomingTime(item.at, timezone || 'UTC');
+            const resetLabel = formatUpcomingTime(resetIso, timezone || 'UTC');
+            return `<div class="horizon-cycle-card"><span class="horizon-cycle-badge">Cycle ${index + 1}</span><div class="horizon-cycle-flow"><span class="cycle-start"><span class="cycle-dot cycle-dot-start" aria-hidden="true"></span><strong>Wake-up</strong> ${escapeHtml(startLabel)}</span><span class="cycle-arrow" aria-hidden="true">→</span><span class="cycle-reset"><span class="cycle-dot cycle-dot-reset" aria-hidden="true"></span><strong>Reset</strong> ${escapeHtml(resetLabel)}</span></div></div>`;
+          })
+          .join('')
+      : '';
+  const cyclesBlock = projectedCycles
+    ? `<div class="horizon-cycles" aria-label="Projected window wake-up and reset cycles"><span class="field-label">Projected wake-up &amp; reset cycles</span><div class="horizon-cycles-grid">${projectedCycles}</div></div>`
+    : '';
   const milestonesHtml = visibleMilestones.length
     ? `<ol class="horizon-milestones">${visibleMilestones.map((item) => `<li><time datetime="${escapeAttribute(item.at)}">${escapeHtml(formatReadableInstant(item.at, timezone || 'UTC'))}</time><span>${escapeHtml(item.label)}</span></li>`).join('')}</ol>`
     : `<p class="horizon-empty">${escapeHtml(stateNote)}</p>`;
@@ -462,7 +488,7 @@ export function renderScheduleHorizon(input: ScheduleHorizonInput): string {
     policy?.kind === 'active_hours'
       ? '<span><i class="horizon-legend-hours"></i>Chosen active hours</span>'
       : '';
-  return `<div class="schedule-horizon"><div class="horizon-timeline-head"><strong>Now</strong><span>Next 24 hours</span></div><div class="horizon-chart-wrap"><svg class="schedule-horizon-chart" viewBox="0 0 1000 92" role="img" aria-label="${escapeAttribute(title)}"><title>${escapeHtml(title)}</title>${activeHoursSegments}<line class="horizon-track" x1="40" y1="48" x2="960" y2="48"/>${currentSegment}${projectedSegments}${ticks}${markerSvg}${nowLine}</svg><div class="horizon-axis" aria-hidden="true">${axis}</div></div><div class="horizon-legend">${selectedHoursLegend}<span><i class="horizon-legend-current"></i>Current window</span><span><i class="horizon-legend-projected"></i>Projected coverage</span><span><i class="horizon-legend-start"></i>Start opportunity</span></div><h3 class="horizon-milestones-title">Next milestones</h3>${milestonesHtml}<p class="field-help horizon-safety-note">${escapeHtml(stateDescription)} Schedule markers are opportunities; the service checks periodically and verifies safety before starting.</p></div>`;
+  return `<div class="schedule-horizon"><div class="horizon-timeline-head"><strong>Now</strong><span>Next 24 hours</span></div><div class="horizon-chart-wrap"><svg class="schedule-horizon-chart" viewBox="0 0 1000 92" role="img" aria-label="${escapeAttribute(title)}"><title>${escapeHtml(title)}</title>${activeHoursSegments}<line class="horizon-track" x1="40" y1="48" x2="960" y2="48"/>${currentSegment}${projectedSegments}${ticks}${markerSvg}${nowLine}</svg><div class="horizon-axis" aria-hidden="true">${axis}</div></div><div class="horizon-legend">${selectedHoursLegend}<span><i class="horizon-legend-current"></i>Current window</span><span><i class="horizon-legend-projected"></i>Projected coverage</span><span><i class="horizon-legend-start"></i>Start opportunity</span></div>${cyclesBlock}<h3 class="horizon-milestones-title">Next milestones</h3>${milestonesHtml}<p class="field-help horizon-safety-note">${escapeHtml(stateDescription)} Schedule markers are opportunities; the service checks periodically and verifies safety before starting.</p></div>`;
 }
 
 function renderActiveHoursSegments(
@@ -568,7 +594,11 @@ function renderPolicyListItem(
   const label = kind === 'time' ? `Time ${index + 1}` : `Period ${index + 1}`;
   const type = kind === 'time' ? 'time' : 'text';
   const placeholder = kind === 'time' ? '' : '08:00-12:00';
-  return `<div class="dynamic-list-item${kind === 'time' ? ' time-chip' : ''}" data-list-item><label for="${escapeAttribute(`${id}-${index}`)}">${escapeHtml(label)}<input id="${escapeAttribute(`${id}-${index}`)}" name="${escapeAttribute(name)}" type="${type}" value="${escapeAttribute(value)}"${placeholder ? ` placeholder="${placeholder}"` : ''} required data-list-value></label><button class="button button-secondary dynamic-list-remove" type="button" data-list-remove>Remove</button></div>`;
+  const stepper =
+    kind === 'time'
+      ? `<div class="time-stepper" aria-label="Adjust time"><button type="button" class="button button-secondary button-step" data-time-step="-60" aria-label="Subtract 1 hour" title="1 hour earlier">−1h</button><button type="button" class="button button-secondary button-step" data-time-step="60" aria-label="Add 1 hour" title="1 hour later">+1h</button></div>`
+      : '';
+  return `<div class="dynamic-list-item${kind === 'time' ? ' time-chip' : ''}" data-list-item><label for="${escapeAttribute(`${id}-${index}`)}">${escapeHtml(label)}<input id="${escapeAttribute(`${id}-${index}`)}" name="${escapeAttribute(name)}" type="${type}" value="${escapeAttribute(value)}"${placeholder ? ` placeholder="${placeholder}"` : ''} required data-list-value></label>${stepper}<button class="button button-secondary dynamic-list-remove" type="button" data-list-remove>Remove</button></div>`;
 }
 
 function renderActiveHoursField(periods: readonly { start: string; end: string }[]): string {
@@ -815,22 +845,55 @@ export function previewTargetReset(input: {
   }
 }
 
-export function renderSettingsPage(input: SettingsPageInput): string {
-  const csrfToken = escapeHtml(input.csrfToken);
-  const timezoneValue = input.timezone?.timezone ?? '';
+export interface TimezoneSelectInput {
+  id: string;
+  name: string;
+  selectedValue: string;
+  referenceInstant?: Date;
+  autoDetect?: boolean;
+  required?: boolean;
+  describedBy?: string;
+  placeholder?: string;
+}
+
+export function renderTimezoneSelect(input: TimezoneSelectInput): string {
   const referenceInstant = input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT;
   const knownZones = new Set<string>(
     TIME_ZONE_GROUPS.flatMap(([, zones]) => zones.map(([zone]) => zone)),
   );
   const timezoneOptions = TIME_ZONE_GROUPS.map(
     ([region, zones]) =>
-      `<optgroup label="${region}">${zones.map(([zone, label]) => `<option value="${escapeAttribute(zone)}"${zone === timezoneValue ? ' selected' : ''}>${escapeHtml(label)} (${escapeHtml(timeZoneOffsetLabel(zone, referenceInstant))})</option>`).join('')}</optgroup>`,
+      `<optgroup label="${region}">${zones.map(([zone, label]) => `<option value="${escapeAttribute(zone)}"${zone === input.selectedValue ? ' selected' : ''}>${escapeHtml(label)} (${escapeHtml(timeZoneOffsetLabel(zone, referenceInstant))})</option>`).join('')}</optgroup>`,
   ).join('');
   const savedZoneOption =
-    timezoneValue && !knownZones.has(timezoneValue)
-      ? `<optgroup label="Saved location"><option value="${escapeAttribute(timezoneValue)}" selected>${escapeHtml(timezoneValue)} (${escapeHtml(timeZoneOffsetLabel(timezoneValue, referenceInstant))})</option></optgroup>`
+    input.selectedValue && !knownZones.has(input.selectedValue)
+      ? `<optgroup label="Saved location"><option value="${escapeAttribute(input.selectedValue)}" selected>${escapeHtml(input.selectedValue)} (${escapeHtml(timeZoneOffsetLabel(input.selectedValue, referenceInstant))})</option></optgroup>`
       : '';
-  const timezoneField = `<select id="account-timezone" name="timezoneChoice" data-timezone-select data-timezone-auto-detect="${input.timezone ? 'false' : 'true'}" required><option value=""${timezoneValue ? '' : ' selected'} disabled>Choose your local time zone</option>${timezoneOptions}${savedZoneOption}</select>`;
+  const autoDetectAttr =
+    input.autoDetect !== undefined
+      ? ` data-timezone-auto-detect="${input.autoDetect ? 'true' : 'false'}"`
+      : '';
+  const describedByAttr = input.describedBy
+    ? ` aria-describedby="${escapeAttribute(input.describedBy)}"`
+    : '';
+  const requiredAttr = input.required ? ' required' : '';
+  const placeholderText = input.placeholder ?? 'Choose your local time zone';
+
+  return `<select id="${escapeAttribute(input.id)}" name="${escapeAttribute(input.name)}" data-timezone-select${autoDetectAttr}${describedByAttr}${requiredAttr}><option value=""${input.selectedValue ? '' : ' selected'} disabled>${escapeHtml(placeholderText)}</option>${timezoneOptions}${savedZoneOption}</select>`;
+}
+
+export function renderSettingsPage(input: SettingsPageInput): string {
+  const csrfToken = escapeHtml(input.csrfToken);
+  const timezoneValue = input.timezone?.timezone ?? '';
+  const referenceInstant = input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT;
+  const timezoneField = renderTimezoneSelect({
+    id: 'account-timezone',
+    name: 'timezoneChoice',
+    selectedValue: timezoneValue,
+    referenceInstant,
+    autoDetect: !input.timezone,
+    required: true,
+  });
   const authProviders = new Map<string, AuthOnboardingInput>(
     (input.authProviders ?? []).map((provider) => [provider.providerId, provider] as const),
   );

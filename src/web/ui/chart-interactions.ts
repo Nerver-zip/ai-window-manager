@@ -21,14 +21,14 @@ export const APP_JS = `(() => {
   for (const select of document.querySelectorAll('[data-chart-range-select]')) {
     select.addEventListener('change', () => {
       const form = select.closest('form');
-      if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+      if (form?.requestSubmit) form.requestSubmit();
     });
   }
 
   for (const form of document.querySelectorAll('[data-provider-picker-auto-submit]')) {
     for (const input of form.querySelectorAll('.provider-picker-input')) {
       input.addEventListener('change', () => {
-        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        if (form?.requestSubmit) form.requestSubmit();
       });
     }
   }
@@ -37,8 +37,8 @@ export const APP_JS = `(() => {
     form.addEventListener('change', (event) => {
       const target = event.target;
       if (target?.matches?.('select[name="window"]')) {
-        if (typeof form.requestSubmit === 'function') form.requestSubmit();
-        else form.submit?.();
+        if (form?.requestSubmit) form.requestSubmit();
+        else form?.submit?.();
       }
     });
   }
@@ -107,6 +107,26 @@ export const APP_JS = `(() => {
     };
     form.addEventListener('input', refreshPreview);
     form.addEventListener('change', refreshPreview);
+    form.addEventListener('click', (event) => {
+      const p = event.target.closest?.('[data-anchor-preset]');
+      if (p) {
+        const input = form.querySelector('[name="anchorLocalTime"]');
+        if (input) { input.value = p.dataset.anchorPreset; input.dispatchEvent(new Event('input', { bubbles: true })); }
+      }
+      const s = event.target.closest?.('[data-time-step]');
+      if (s) {
+        const delta = parseInt(s.dataset.timeStep, 10);
+        const input = (s.closest('.time-input-group') || s.closest('.dynamic-list-item') || form).querySelector('input[type="time"]');
+        if (input) {
+          const [h, m] = (input.value || '08:00').split(':').map(Number);
+          if (!isNaN(h) && !isNaN(m)) {
+            const tot = ((h * 60 + m + delta) % 1440 + 1440) % 1440;
+            input.value = String(Math.floor(tot / 60)).padStart(2, '0') + ':' + String(tot % 60).padStart(2, '0');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
+      }
+    });
   }
 
   function renumberList(list) {
@@ -276,16 +296,7 @@ export const APP_JS = `(() => {
     for (const item of points) {
       const row = document.createElement('div');
       row.className = 'chart-tooltip-row';
-      const indicator = document.createElement('span');
-      indicator.className = 'chart-tooltip-indicator chart-series-' + (item.dataset.chartSeriesIndex || '1');
-      indicator.setAttribute('aria-hidden', 'true');
-      const label = document.createElement('span');
-      label.className = 'chart-tooltip-label';
-      label.textContent = item.dataset.chartSeries || 'Value';
-      const value = document.createElement('strong');
-      value.className = 'chart-tooltip-value';
-      value.textContent = item.dataset.chartValue || 'Not available';
-      row.append(indicator, label, value);
+      row.innerHTML = '<span class="chart-tooltip-indicator chart-series-' + (item.dataset.chartSeriesIndex || '1') + '" aria-hidden="true"></span><span class="chart-tooltip-label">' + (item.dataset.chartSeries || 'Value') + '</span><strong class="chart-tooltip-value">' + (item.dataset.chartValue || 'Not available') + '</strong>';
       values.append(row);
     }
 

@@ -279,6 +279,22 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 .horizon-legend-projected { border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 24%, transparent); }
 .horizon-legend-start { width: 2px !important; height: 13px !important; border-radius: 0 !important; background: var(--accent); }
 .horizon-milestones-title { margin: 4px 0 -6px; font-size: 13px; }
+.horizon-cycles { display: grid; gap: 8px; margin-top: 14px; }
+.horizon-cycles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.horizon-cycle-card { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); padding: 10px 12px; }
+.horizon-cycle-badge { align-self: flex-start; border-radius: 4px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent-strong); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 6px; }
+.horizon-cycle-flow { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; }
+.cycle-start, .cycle-reset { display: inline-flex; align-items: center; gap: 5px; color: var(--text-soft); }
+.cycle-start strong, .cycle-reset strong { color: var(--text); font-weight: 600; }
+.cycle-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.cycle-dot-start { background: var(--accent); }
+.cycle-dot-reset { background: var(--success); }
+.cycle-arrow { color: var(--text-muted); font-size: 13px; font-weight: bold; }
+.time-input-group { display: flex; align-items: center; gap: 8px; }
+.time-input-group input[type="time"] { flex: 1; min-width: 0; }
+.time-stepper { display: inline-flex; align-items: center; gap: 4px; }
+.button-step { min-height: 38px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
+.time-chip .time-stepper { margin: 0 4px; }
 .horizon-milestones { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
 .horizon-milestones li { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(0, 1.2fr); gap: 12px; border-bottom: 1px solid var(--border); padding: 10px 0; }
 .horizon-milestones li:last-child { border-bottom: 0; }
@@ -596,6 +612,10 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   .retention-list > div { grid-template-columns: 1fr; gap: 4px; }
   .upcoming-list li { grid-template-columns: 1fr; gap: 4px; }
   .horizon-axis { font-size: 9px; }
+  .horizon-cycles-grid { grid-template-columns: 1fr; }
+  .time-input-group { flex-wrap: wrap; }
+  .time-stepper { justify-content: stretch; }
+  .time-stepper .button-step { flex: 1; }
   .horizon-milestones li { grid-template-columns: 1fr; gap: 3px; }
   .window-card { padding: 16px; }
   .manual-start-form button { width: 100%; }
