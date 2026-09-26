@@ -634,6 +634,26 @@ describe('Codex app-server JSONL transport', () => {
     await expect(client.readRateLimits()).rejects.toMatchObject({ code: 'PROCESS_ERROR' });
   });
 
+  it('maps an asynchronous stdin pipe error to a process error and closes the child', async () => {
+    let child: FakeCodexProcess | undefined;
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory(
+        (message, process) => {
+          if (message.method === 'initialize') {
+            queueMicrotask(() => process.stdin.emit('error', new Error('broken pipe')));
+          }
+        },
+        (created) => {
+          child = created;
+        },
+      ),
+    });
+
+    await expect(client.readRateLimits()).rejects.toMatchObject({ code: 'PROCESS_ERROR' });
+    expect(child?.killSignals).toEqual(['SIGTERM']);
+  });
+
   it('rejects an aborted request and exposes no trigger/action surface', async () => {
     const controller = new AbortController();
     const client = new CodexAppServerClient({

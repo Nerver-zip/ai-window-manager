@@ -41,7 +41,9 @@ implemented in `src/providers/codex/`, requires a dedicated persistent
 `CODEX_HOME` and official client-owned authentication. In the application,
 the quota-action gate defaults on for an enabled provider; operators can set
 `AWM_CODEX_TRIGGER_ENABLED=false` or choose monitoring-only/manual settings to
-opt out.
+opt out. Child stdin/stdout errors and early process exit are converted into
+sanitized transport failures; a broken pipe cannot escape as an unhandled
+daemon exception.
 
 ### Observed / internal
 

@@ -283,6 +283,7 @@ export class CodexAppServerClient {
     const child = this.spawnProcess(this.options.executable, ['app-server'], options);
     this.process = child;
 
+    child.stdin.on('error', () => this.failAll(new CodexTransportError('PROCESS_ERROR')));
     child.stdout.on('data', (chunk: Buffer | string) => this.handleStdoutChunk(chunk));
     child.stdout.on('end', () => this.failAll(new CodexTransportError('EOF')));
     child.stdout.on('error', () => this.failAll(new CodexTransportError('PROCESS_ERROR')));
