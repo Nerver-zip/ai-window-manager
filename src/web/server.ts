@@ -1239,10 +1239,12 @@ function normalizeActivationScheduleBody(body: unknown): unknown {
   if (typeof record.timezone === 'string' && record.timezone.length > 0) {
     (base as Record<string, unknown>).timezone = record.timezone;
   }
-  if (record.policyKind === 'auto') {
+  if (record.policyKind === 'manual' || record.policyKind === 'auto') {
     return {
       ...base,
-      ...(typeof record.windowKind === 'string' ? { windowKind: record.windowKind } : {}),
+      ...(typeof record.windowKind === 'string' && record.windowKind.length > 0
+        ? { windowKind: record.windowKind }
+        : {}),
     };
   }
   if (record.policyKind === 'fixed') {

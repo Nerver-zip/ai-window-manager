@@ -544,6 +544,35 @@ describe('settings and schedule pages', () => {
     });
   });
 
+  it('preserves the selected usage window in a manual policy', async () => {
+    const context = setup();
+    await persistObservedWindow(context, 'five_hour');
+    const page = await context.app.inject({
+      method: 'GET',
+      url: '/schedule',
+      headers: { host: 'localhost:8787' },
+    });
+    const cookie = headerValue(page.headers['set-cookie']);
+    const token = /awm_csrf=([^;]+)/.exec(cookie)?.[1];
+    if (!token) throw new Error('csrf token missing');
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: '/schedule',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: `csrfToken=${token}&policyKind=manual&providerId=fake&enabled=on&timezone=UTC&windowKind=five_hour`,
+    });
+    expect(response.statusCode).toBe(303);
+    expect(context.repositories.schedulePolicies.list('fake')[0]?.config).toMatchObject({
+      windowKind: 'five_hour',
+    });
+  });
+
   it('renders forms and persists same-origin CSRF-protected updates', async () => {
     const context = setup();
     const page = await context.app.inject({
