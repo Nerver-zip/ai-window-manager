@@ -1046,7 +1046,7 @@ function renderProviderClientUpdates(provider: SettingsProviderView, csrfToken: 
     </div>
     <form method="post" action="${escapeAttribute(`${actionBase}/auto-update`)}" class="provider-client-auto-update">
       ${csrfInput(csrfToken)}
-      <label><input type="checkbox" name="autoUpdate" value="true"${update.autoUpdate ? ' checked' : ''}> Automatically install stable updates</label>
+      <label class="checkbox-label"><input type="checkbox" name="autoUpdate" value="true"${update.autoUpdate ? ' checked' : ''}> Automatically install stable updates</label>
       <p class="field-help">When enabled, the service checks for and installs stable releases while this provider is idle.</p>
       <div class="form-actions"><button type="submit">Save update preference</button></div>
     </form>

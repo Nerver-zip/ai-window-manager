@@ -143,6 +143,7 @@ describe('settings UI helpers', () => {
     expect(section).toContain('Check for updates');
     expect(section).toContain('Install update</button>');
     expect(section).toContain('Restore previous version</button>');
+    expect(section).toContain('class="checkbox-label"');
     expect(section).toContain('Automatically install stable updates');
     expect(section).toContain('Last checked:');
     expect(section).toContain('Last changed:');

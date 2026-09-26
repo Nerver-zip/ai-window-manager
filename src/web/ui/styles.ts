@@ -213,9 +213,11 @@ fieldset { min-inline-size: 0; border: 1px solid var(--border); border-radius: v
 fieldset > legend { max-width: 100%; margin-left: -4px; padding: 0 5px; color: var(--text-soft); font-size: 13px; font-weight: 650; }
 form { min-width: 0; }
 label { display: grid; gap: 8px; font-size: 12px; font-weight: 550; }
-input, select { display: block; width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); color: var(--text); padding: 10px 12px; }
-input:hover, select:hover { border-color: var(--border-strong); }
-input:focus, select:focus { border-color: var(--accent); }
+input:not([type="checkbox"]):not([type="radio"]), select { display: block; width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); color: var(--text); padding: 10px 12px; }
+input:not([type="checkbox"]):not([type="radio"]):hover, select:hover { border-color: var(--border-strong); }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { border-color: var(--accent); }
+input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; min-height: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.checkbox-label { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .field-help, .help-text { color: var(--text-muted); font-size: 12px; font-weight: 400; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
