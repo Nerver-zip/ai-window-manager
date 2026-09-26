@@ -1040,9 +1040,9 @@ function renderProviderClientUpdates(provider: SettingsProviderView, csrfToken: 
     <p class="provider-client-update-status" role="status"><strong>Status:</strong> ${escapeHtml(updateStatus.label)}${updateStatus.detail ? ` <span class="field-help">${escapeHtml(updateStatus.detail)}</span>` : ''}</p>
     ${lastChecked}${lastUpdated}
     <div class="provider-client-update-actions" aria-label="Provider app update actions">
-      ${renderProviderClientAction(`${actionBase}/check`, csrfToken, 'Check for updates')}
-      ${renderProviderClientAction(`${actionBase}/update`, csrfToken, 'Install update', !update.updateAvailable)}
-      ${renderProviderClientAction(`${actionBase}/rollback`, csrfToken, 'Restore previous version', !update.previousVersion)}
+      ${renderProviderClientAction(`${actionBase}/check`, csrfToken, 'Check for updates', false, 'secondary')}
+      ${renderProviderClientAction(`${actionBase}/update`, csrfToken, 'Install update', !update.updateAvailable, update.updateAvailable ? 'primary' : 'secondary')}
+      ${renderProviderClientAction(`${actionBase}/rollback`, csrfToken, 'Restore previous version', !update.previousVersion, 'secondary')}
     </div>
     <form method="post" action="${escapeAttribute(`${actionBase}/auto-update`)}" class="provider-client-auto-update">
       ${csrfInput(csrfToken)}
@@ -1058,8 +1058,10 @@ function renderProviderClientAction(
   csrfToken: string,
   label: string,
   disabled = false,
+  variant: 'primary' | 'secondary' = 'secondary',
 ): string {
-  return `<form method="post" action="${escapeAttribute(action)}">${csrfInput(csrfToken)}<button type="submit"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button></form>`;
+  const buttonClass = variant === 'primary' ? 'button button-primary' : 'button button-secondary';
+  return `<form method="post" action="${escapeAttribute(action)}">${csrfInput(csrfToken)}<button class="${buttonClass}" type="submit"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button></form>`;
 }
 
 function providerClientUpdateStatus(

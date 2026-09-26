@@ -180,8 +180,8 @@ describe('settings UI helpers', () => {
     expect(section).toContain('Not checked</dd>');
     expect(section).toContain('Update could not be completed');
     expect(section).toContain('Check the service logs, then try again.');
-    expect(section).toMatch(/<button type="submit" disabled>Install update<\/button>/);
-    expect(section).toMatch(/<button type="submit" disabled>Restore previous version<\/button>/);
+    expect(section).toMatch(/<button[^>]*type="submit"[^>]*disabled>Install update<\/button>/);
+    expect(section).toMatch(/<button[^>]*type="submit"[^>]*disabled>Restore previous version<\/button>/);
     expect(section).toContain('name="autoUpdate" value="true">');
     expect(section).not.toContain('name="autoUpdate" value="true" checked');
     expect(section).not.toContain('<script>');
