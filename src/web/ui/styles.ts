@@ -113,6 +113,7 @@ main { width: 100%; max-width: var(--content-width); min-width: 0; margin: auto;
 .provider-header h2, .provider-header h3 { margin-bottom: 4px; }
 .provider-meta { margin: 0; color: var(--text-muted); font-size: 12px; }
 .provider-policy { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; margin: -4px 0 22px; border-bottom: 1px solid var(--border); padding: 0 0 18px; }
+.provider-onboarding-cta + .provider-policy { margin-top: 18px; }
 .provider-policy > div { display: grid; gap: 4px; min-width: 0; }
 .provider-policy strong { font-size: 14px; font-weight: 620; }
 .provider-policy a { display: inline-flex; align-items: center; min-height: 44px; flex: 0 0 auto; color: var(--accent-strong); font-size: 12px; }
