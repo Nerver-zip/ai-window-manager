@@ -50,8 +50,9 @@ pnpm validate
 The daemon performs one initial reconcile and then one coalescing global tick.
 FakeProvider is disabled in the checked-in local profile. Codex monitoring uses
 `AWM_CODEX_ENABLED=true`, `AWM_CODEX_HOME=/codex-state` and
-`AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex` in the container. The image pins
-the official Codex CLI to `0.155.1`. Quota-consuming Codex actions additionally
+`AWM_CODEX_EXECUTABLE=/provider-clients/codex/current` in the container. The image
+pins the official Codex CLI through `provider-clients.lock.json`, with the
+packaged binary at `/opt/codex/bin/codex` as a fallback. Quota-consuming Codex actions additionally
 use the enabled `AWM_CODEX_TRIGGER_ENABLED` gate and the persisted provider mode
 `automation` plus an enabled automatic policy; the action sends only the fixed
 `Hi!` message. With the trigger gate enabled, a fresh database seeds automation

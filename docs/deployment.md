@@ -85,7 +85,7 @@ shows Google OAuth selected, then presents the CLI's complete authorization
 URL and forwards the operator-entered browser code back to that CLI. Normal
 inspection runs only the documented headless `/usage` command. Antigravity
 trigger capability has an independent `AWM_ANTIGRAVITY_TRIGGER_ENABLED` gate
-(false when unset). If enabled, a fresh database seeds automatic mode and
+(true when unset). If enabled, a fresh database seeds automatic mode and
 policy. Explicit SQLite provider choices remain authoritative; a one-time
 upgrade moves only old defaults that were never explicitly saved. The adapter
 still exposes only the four exact Gemini / Claude-and-GPT five-hour or weekly

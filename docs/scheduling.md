@@ -33,8 +33,9 @@ timezone:
   `activation-antigravity-claude-gpt` policies;
 - `fixed`: repeat one local anchor using the observed window duration;
 - `custom_schedule`: evaluate a bounded list of local times;
-- `active_hours`: start only while enough time remains in a configured local
-  period to cover a full window.
+- `active_hours`: start only inside a configured local period with at least
+  one hour remaining. The current implementation does not require the entire
+  selected window to fit before the period ends.
 
 The observed current window is a separate fact from the activation policy. The
 UI/API can therefore show `Active`, `Inactive`, `Unknown` or `Monitoring
