@@ -332,7 +332,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .refresh-interval-field details .field-help { margin: 0; }
 .schedule-safety { margin: 24px 0 0; }
 
-.history-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(480px, 1.35fr); gap: 24px; align-items: end; margin-bottom: 0; }
+.history-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(480px, 1.35fr); gap: 24px; align-items: start; margin-bottom: 0; }
 .history-toolbar-summary { display: grid; gap: 4px; }
 .history-toolbar-summary strong { font-size: 18px; }
 .history-toolbar-summary .eyebrow { margin-bottom: 0; }
