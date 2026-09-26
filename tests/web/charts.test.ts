@@ -201,4 +201,27 @@ describe('shared chart primitives', () => {
     expect(html).toContain(' L 624,188 Z"');
     expect(APP_CSS).toContain('.chart-area.chart-series-1 { fill: var(--chart-1); stroke: none; }');
   });
+
+  it('keeps an observed reset drop sharp while drawing one continuous filled run', () => {
+    const points = [
+      { observedAt: '2026-09-19T10:00:00.000Z', value: 1 },
+      { observedAt: '2026-09-19T10:01:00.000Z', value: 1 },
+      { observedAt: '2026-09-19T10:02:00.000Z', value: 0, smoothingBreakBefore: true },
+      { observedAt: '2026-09-19T10:03:00.000Z', value: 0 },
+    ];
+    expect(averageChartPoints(points, 5, 0, 1).map((point) => point.value)).toEqual([1, 1, 0, 0]);
+    const html = renderTimeSeriesChart({
+      id: 'reset',
+      title: 'Reset',
+      range: '1h',
+      summary: [],
+      series: [{ key: 'used', label: 'Used', colorIndex: 1, unit: '%', averageWindow: 5, points }],
+      yAxis: { min: 0, max: 1, ticks: [1, 0], format: formatRatioPercent },
+      footer: '',
+    });
+    expect(html.match(/class="chart-line chart-series-1"/g)).toHaveLength(1);
+    expect(html.match(/class="chart-area chart-series-1"/g)).toHaveLength(1);
+    expect(html).toContain('data-chart-value="100%"');
+    expect(html).toContain('data-chart-value="0%"');
+  });
 });

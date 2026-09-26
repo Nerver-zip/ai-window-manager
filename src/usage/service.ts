@@ -7,9 +7,9 @@ import { aggregateDailyUsage, transitionUsageSample, type DailyUsageCell } from 
 
 export const USAGE_AGGREGATION_BATCH_SIZE = 500;
 export const USAGE_HEATMAP_DAYS = 365;
-// Four extrema/endpoints plus at most one gap marker per bucket remain within
-// the chart's 384-point rendering budget.
-export const USAGE_CHART_BUCKETS = 76;
+// Six selected endpoints/boundaries/extrema per bucket plus a possible trailing
+// unknown reading stay below the 384-point chart budget.
+export const USAGE_CHART_BUCKETS = 63;
 
 export interface AggregationBatchResult {
   processed: number;

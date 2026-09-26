@@ -143,9 +143,17 @@ The server-rendered `/usage` page and `GET /api/v1/usage` read only persisted
 SQLite state; neither route inspects a provider or starts a Codex turn. Usage
 charts appear first, followed by the daily-use heatmap; Logs stays focused on
 events. Each chart keeps its own selected time range, smooths nearby readings,
-and fills the area under its line while leaving missing samples and outages
-visible. A calendar day is derived from positive changes in one trustworthy
-seven-day window, not from the current remaining balance. Each weekly reset
+and fills the area under its line. Visual continuity allows three effective
+polling intervals plus one reconcile tick between valid readings; a longer
+outage splits both line and fill. Short missing readings can be bridged only
+when the valid endpoints fit that limit. A drop in observed usage stays sharp,
+without averaging across the drop. This display rule does not fill missing
+history or change the daily heatmap's unknown/partial accounting. The current
+saved polling interval is used when displaying older samples, so changing it
+can change how historical gaps appear.
+
+A calendar day is derived from positive changes in one trustworthy seven-day
+window, not from the current remaining balance. Each weekly reset
 starts a new counter baseline without subtracting or fabricating the previous
 cycle's use. The first observation is a baseline, and gaps, corrections, and
 unproven resets are visibly marked partial/unknown.
@@ -168,7 +176,8 @@ rebuild historical data.
 
 Usage charts have independent `1h`, `3h`, `6h`, `12h`, `24h`, `7d` and `30d`
 periods. Queries cover the selected time domain and downsample while preserving
-endpoints, extrema and outage breaks. Chart labels use the saved timezone.
+endpoints, extrema and outage breaks within a 384-point per-series limit.
+Chart labels use the saved timezone.
 Antigravity renders a weekly-family selector within the daily usage section and
 four time-series charts with family plus cadence in every heading. Codex's sole
 weekly window is selected automatically. The heatmap has no alternate day list

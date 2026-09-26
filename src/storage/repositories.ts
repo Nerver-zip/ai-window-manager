@@ -363,9 +363,10 @@ export class WindowSampleRepository {
     usageRatio: number | null;
     remainingRatio: number | null;
     gapBefore: boolean;
+    smoothingBreakBefore: boolean;
   }> {
-    if (!Number.isSafeInteger(buckets) || buckets < 1 || buckets > 384) {
-      throw new RangeError('chart buckets must be between 1 and 384');
+    if (!Number.isSafeInteger(buckets) || buckets < 1 || buckets > 63) {
+      throw new RangeError('chart buckets must be between 1 and 63');
     }
     if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || toMs <= fromMs) {
       throw new RangeError('chart range must be a positive UTC interval');
@@ -375,44 +376,60 @@ export class WindowSampleRepository {
     }
     const rows = this.db
       .prepare(
-        `WITH sequenced AS (
+        `WITH deduplicated AS (
            SELECT id, observed_at_ms, usage_ratio, remaining_ratio,
-                  LAG(observed_at_ms) OVER (ORDER BY observed_at_ms, id) AS previous_at
+                  ROW_NUMBER() OVER (PARTITION BY observed_at_ms ORDER BY id DESC) AS timestamp_rank
            FROM window_samples
            WHERE provider_id = @providerId AND window_kind = @windowKind
-             AND observed_at_ms >= @scanFromMs AND observed_at_ms < @toMs
-         ), filtered AS (
-           SELECT id, observed_at_ms, usage_ratio, remaining_ratio,
-                  CAST(MIN(@buckets - 1, ((observed_at_ms - @fromMs) * @buckets) / (@toMs - @fromMs)) AS INTEGER) AS bucket,
-                  CASE WHEN previous_at IS NOT NULL AND observed_at_ms - previous_at > @maxGapMs THEN 1 ELSE 0 END AS gap_start
-           FROM sequenced
-           WHERE observed_at_ms >= @fromMs
-         ), annotated AS (
+             AND observed_at_ms >= @fromMs AND observed_at_ms < @toMs
+         ), known AS (
+           SELECT id, observed_at_ms, usage_ratio, remaining_ratio
+           FROM deduplicated
+           WHERE timestamp_rank = 1 AND usage_ratio BETWEEN 0 AND 1
+         ), sequenced AS (
            SELECT *,
-             SUM(gap_start) OVER (PARTITION BY bucket) AS bucket_gap_count,
-             MIN(CASE WHEN gap_start = 1 THEN observed_at_ms END) OVER (PARTITION BY bucket) AS first_gap_at,
-             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY CASE WHEN gap_start = 1 THEN 0 ELSE 1 END, observed_at_ms, id) AS gap_rank
-           FROM filtered
+             LAG(observed_at_ms) OVER (ORDER BY observed_at_ms, id) AS previous_at,
+             LAG(usage_ratio) OVER (ORDER BY observed_at_ms, id) AS previous_usage
+           FROM known
+         ), classified AS (
+           SELECT *,
+             CASE WHEN previous_at IS NOT NULL AND observed_at_ms - previous_at > @maxGapMs THEN 1 ELSE 0 END AS gap_start,
+             CASE WHEN previous_usage IS NOT NULL AND usage_ratio < previous_usage THEN 1 ELSE 0 END AS decrease_start
+           FROM sequenced
+         ), runs AS (
+           SELECT *,
+             SUM(gap_start) OVER (ORDER BY observed_at_ms, id) AS run_id,
+             SUM(CASE WHEN gap_start = 1 OR decrease_start = 1 THEN 1 ELSE 0 END)
+               OVER (ORDER BY observed_at_ms, id) AS smoothing_id,
+             LEAD(decrease_start) OVER (ORDER BY observed_at_ms, id) AS before_decrease,
+             CAST(MIN(@buckets - 1, ((observed_at_ms - @fromMs) * @buckets) / (@toMs - @fromMs)) AS INTEGER) AS bucket
+           FROM classified
          ), ranked AS (
            SELECT *,
-             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY observed_at_ms ASC, id ASC) AS first_rank,
-             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY observed_at_ms DESC, id DESC) AS last_rank,
-             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY CASE WHEN usage_ratio IS NULL THEN 1 ELSE 0 END, usage_ratio ASC, observed_at_ms ASC, id ASC) AS low_rank,
-             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY CASE WHEN usage_ratio IS NULL THEN 1 ELSE 0 END, usage_ratio DESC, observed_at_ms ASC, id ASC) AS high_rank
-           FROM annotated
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY observed_at_ms, id) AS bucket_first,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY observed_at_ms DESC, id DESC) AS bucket_last,
+             ROW_NUMBER() OVER (PARTITION BY bucket, run_id ORDER BY observed_at_ms, id) AS run_first,
+             ROW_NUMBER() OVER (PARTITION BY bucket, run_id ORDER BY observed_at_ms DESC, id DESC) AS run_last,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY usage_ratio, observed_at_ms, id) AS lowest,
+             ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY usage_ratio DESC, observed_at_ms, id) AS highest
+           FROM runs
+         ), candidates AS (
+           SELECT *, CASE
+             WHEN bucket_first = 1 OR bucket_last = 1 THEN 0
+             WHEN run_first = 1 OR run_last = 1 THEN 1
+             WHEN decrease_start = 1 OR before_decrease = 1 THEN 2
+             ELSE 3 END AS priority
+           FROM ranked
+           WHERE bucket_first = 1 OR bucket_last = 1 OR run_first = 1 OR run_last = 1
+              OR decrease_start = 1 OR before_decrease = 1 OR lowest = 1 OR highest = 1
+         ), selected AS (
+           SELECT *, ROW_NUMBER() OVER
+             (PARTITION BY bucket ORDER BY priority, observed_at_ms, id) AS choice
+           FROM candidates
          )
-         SELECT DISTINCT id, observed_at_ms, usage_ratio, remaining_ratio,
-                CASE
-                  WHEN gap_start = 1 AND gap_rank = 1 THEN 1
-                  WHEN bucket_gap_count > 1 AND observed_at_ms >= first_gap_at
-                    AND (first_rank = 1 OR last_rank = 1 OR low_rank = 1 OR high_rank = 1) THEN 1
-                  ELSE 0
-                END AS gap_before
-         FROM ranked
-         WHERE first_rank = 1 OR last_rank = 1
-            OR (usage_ratio IS NOT NULL AND (low_rank = 1 OR high_rank = 1))
-            OR (gap_start = 1 AND gap_rank = 1)
-         ORDER BY observed_at_ms ASC, id ASC`,
+         SELECT id, observed_at_ms, usage_ratio, remaining_ratio, run_id, smoothing_id
+         FROM selected WHERE choice <= 6
+         ORDER BY observed_at_ms, id`,
       )
       .all({
         providerId,
@@ -421,21 +438,49 @@ export class WindowSampleRepository {
         toMs,
         buckets,
         maxGapMs,
-        scanFromMs: fromMs - maxGapMs,
       }) as Array<{
       id: number;
       observed_at_ms: number;
       usage_ratio: number | null;
       remaining_ratio: number | null;
-      gap_before: number;
+      run_id: number;
+      smoothing_id: number;
     }>;
-    return rows.map((row) => ({
+    const points = rows.map((row, index) => ({
       id: row.id,
       observedAtMs: row.observed_at_ms,
       usageRatio: row.usage_ratio,
       remainingRatio: row.remaining_ratio,
-      gapBefore: row.gap_before === 1,
+      gapBefore: index > 0 && row.run_id !== rows[index - 1]!.run_id,
+      smoothingBreakBefore: index > 0 && row.smoothing_id !== rows[index - 1]!.smoothing_id,
     }));
+    // Retain a trailing unknown sample for the raw remaining summary. Interior
+    // unknowns are intentionally omitted: valid endpoints determine continuity.
+    const latest = this.db
+      .prepare(
+        `SELECT id, observed_at_ms, usage_ratio, remaining_ratio FROM window_samples
+         WHERE provider_id = ? AND window_kind = ? AND observed_at_ms >= ? AND observed_at_ms < ?
+         ORDER BY observed_at_ms DESC, id DESC LIMIT 1`,
+      )
+      .get(providerId, windowKind, fromMs, toMs) as
+      | {
+          id: number;
+          observed_at_ms: number;
+          usage_ratio: number | null;
+          remaining_ratio: number | null;
+        }
+      | undefined;
+    if (latest && latest.usage_ratio === null) {
+      points.push({
+        id: latest.id,
+        observedAtMs: latest.observed_at_ms,
+        usageRatio: null,
+        remainingRatio: latest.remaining_ratio,
+        gapBefore: false,
+        smoothingBreakBefore: false,
+      });
+    }
+    return points;
   }
 
   listWindowKinds(providerId: string, fromMs: number, toMs: number): string[] {
