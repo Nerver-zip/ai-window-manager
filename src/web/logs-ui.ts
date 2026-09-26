@@ -77,6 +77,7 @@ export interface HistoryUsageSample {
   usageRatio?: number | null;
   remainingRatio?: number | null;
   gapBefore?: boolean;
+  smoothingBreakBefore?: boolean;
 }
 
 export interface HistoryFilter {
@@ -99,6 +100,7 @@ export interface HistoryUsagePoint {
   usageRatio: number | null;
   remainingRatio: number | null;
   gapBefore?: boolean;
+  smoothingBreakBefore?: boolean;
 }
 
 export interface HistoryUsageSeries {
@@ -287,15 +289,18 @@ export function buildUsageSeries(
       usageRatio: ratioOrNull(sample.usageRatio),
       remainingRatio: ratioOrNull(sample.remainingRatio),
       ...(sample.gapBefore ? { gapBefore: true } : {}),
+      ...(sample.smoothingBreakBefore ? { smoothingBreakBefore: true } : {}),
     });
   }
 
   return [...grouped.values()]
     .map((series) => ({
       ...series,
-      points: series.points
-        .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt))
-        .slice(-MAX_USAGE_POINTS),
+      points: boundUsagePoints(
+        series.points.sort(
+          (left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt),
+        ),
+      ),
     }))
     .sort((left, right) =>
       `${left.providerId}\u0000${left.windowKind}`.localeCompare(
@@ -303,6 +308,29 @@ export function buildUsageSeries(
       ),
     )
     .slice(0, MAX_USAGE_SERIES);
+}
+
+/** The repository normally supplies <=384 rows; retain both time ends for direct callers too. */
+function boundUsagePoints(points: HistoryUsagePoint[]): HistoryUsagePoint[] {
+  if (points.length <= MAX_USAGE_POINTS) return points;
+  const selected: HistoryUsagePoint[] = [];
+  let previousIndex = -1;
+  for (let slot = 0; slot < MAX_USAGE_POINTS; slot += 1) {
+    const index = Math.round((slot * (points.length - 1)) / (MAX_USAGE_POINTS - 1));
+    const point = points[index]!;
+    const skipped = points.slice(previousIndex + 1, index);
+    selected.push({
+      ...point,
+      ...(point.gapBefore || skipped.some((item) => item.gapBefore || item.usageRatio === null)
+        ? { gapBefore: true }
+        : {}),
+      ...(point.smoothingBreakBefore || skipped.some((item) => item.smoothingBreakBefore)
+        ? { smoothingBreakBefore: true }
+        : {}),
+    });
+    previousIndex = index;
+  }
+  return selected;
 }
 
 export function buildBoundedHistoryView(input: HistoryPageInput): BoundedHistoryView {
@@ -521,7 +549,7 @@ function renderUsageChart(
   const chartTitle =
     controls.seriesTitles?.[chartRangeKey(providerId, windowKind)] ??
     `${providerLabel} / ${windowLabel}`;
-  const points = series.points.slice(-MAX_USAGE_POINTS).map((point) => ({
+  const points = series.points.map((point) => ({
     ...point,
     usageRatio: ratioOrNull(point.usageRatio),
     remainingRatio: ratioOrNull(point.remainingRatio),
@@ -561,6 +589,7 @@ function renderUsageChart(
           observedAt: point.observedAt,
           value: point.usageRatio,
           ...(point.gapBefore ? { gapBefore: true } : {}),
+          ...(point.smoothingBreakBefore ? { smoothingBreakBefore: true } : {}),
         })),
       },
     ],

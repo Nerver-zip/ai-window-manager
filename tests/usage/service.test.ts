@@ -10,6 +10,8 @@ import {
 } from '../../src/storage/repositories.js';
 import { processUsageAggregationBatch, readUsagePageData } from '../../src/usage/service.js';
 import type { WindowSnapshot } from '../../src/domain/types.js';
+import { chartContinuityGapMs } from '../../src/usage/chart-continuity.js';
+import { USAGE_CHART_BUCKETS } from '../../src/usage/service.js';
 
 const dirs: string[] = [];
 const openDbs: SqliteDatabase[] = [];
@@ -87,6 +89,12 @@ function fiveHourSample(atMs: number, ratio: number): WindowSnapshot {
       observedAt: sample.observedAt,
     },
   };
+}
+
+function unknownUsageSample(atMs: number): WindowSnapshot {
+  const { usageRatio: _omitted, ...snapshot } = weeklySample(atMs, 0);
+  void _omitted;
+  return snapshot;
 }
 
 describe('usage aggregation persistence', () => {
@@ -255,7 +263,7 @@ describe('usage aggregation persistence', () => {
       1,
       10 * 60_000,
     );
-    expect(points).toHaveLength(3);
+    expect(points).toHaveLength(4);
     expect(points.filter((point) => point.gapBefore).map((point) => point.observedAtMs)).toEqual([
       start + 40 * 60_000,
     ]);
@@ -277,7 +285,176 @@ describe('usage aggregation persistence', () => {
       10 * 60_000,
     );
     const breaks = points.filter((point) => point.gapBefore).map((point) => point.observedAtMs);
-    expect(breaks).toContain(start + 40 * 60_000);
-    expect(breaks).toContain(start + 81 * 60_000);
+    expect(breaks).toEqual([start + 40 * 60_000, start + 80 * 60_000]);
+    expect(points.some((point) => point.observedAtMs === start + 41 * 60_000)).toBe(true);
+  });
+
+  it('keeps normal jitter within the polling-aware grace period connected', () => {
+    const { repositories } = database();
+    const start = now - 60 * 60_000;
+    [0, 30_000, 90_000, 120_000].forEach((offset) =>
+      repositories.windowSamples.insert(weeklySample(start + offset, 0.6)),
+    );
+
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      start + 121_000,
+      1,
+      120_000,
+    );
+    expect(points.map((point) => point.gapBefore)).toEqual(Array(points.length).fill(false));
+    expect(points[0]?.observedAtMs).toBe(start);
+    expect(points.at(-1)?.observedAtMs).toBe(start + 120_000);
+  });
+
+  it.each([
+    [-1, false],
+    [0, false],
+    [1, true],
+  ])('classifies two readings at G %+i ms', (offset, breaks) => {
+    const { repositories } = database();
+    const start = now - 60 * 60_000;
+    const gap = chartContinuityGapMs(30, 30);
+    repositories.windowSamples.insert(weeklySample(start, 0.6));
+    repositories.windowSamples.insert(weeklySample(start + gap + offset, 0.7));
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      start + gap + 2,
+      1,
+      gap,
+    );
+    expect(points).toHaveLength(2);
+    expect(points[1]?.gapBefore).toBe(breaks);
+  });
+
+  it('uses the exact continuity boundary between valid readings across missing samples', () => {
+    const { repositories } = database();
+    const start = now - 60 * 60_000;
+    const gap = chartContinuityGapMs(30, 30);
+    repositories.windowSamples.insert(weeklySample(start, 0.6));
+    repositories.windowSamples.insert(unknownUsageSample(start + 30_000));
+    repositories.windowSamples.insert(weeklySample(start + gap - 1, 0.61));
+    repositories.windowSamples.insert(weeklySample(start + gap, 0.62));
+    repositories.windowSamples.insert(weeklySample(start + 2 * gap + 1, 0.63));
+
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      start + 3 * gap,
+      4,
+      gap,
+    );
+    expect(points.map((point) => point.observedAtMs)).toEqual([
+      start,
+      start + gap - 1,
+      start + gap,
+      start + 2 * gap + 1,
+    ]);
+    expect(points.filter((point) => point.gapBefore).map((point) => point.observedAtMs)).toEqual([
+      start + 2 * gap + 1,
+    ]);
+  });
+
+  it('treats long missing clusters as unknown and keeps the last raw remaining value', () => {
+    const { repositories } = database();
+    const start = now - 60 * 60_000;
+    repositories.windowSamples.insert(weeklySample(start, 0.6));
+    repositories.windowSamples.insert(unknownUsageSample(start + 60_000));
+    repositories.windowSamples.insert(weeklySample(start + 121_000, 0.7));
+    repositories.windowSamples.insert({
+      ...unknownUsageSample(start + 150_000),
+      remainingRatio: {
+        value: 0.3,
+        source: 'official_supported',
+        confidence: 'exact',
+        observedAt: new Date(start + 150_000).toISOString(),
+      },
+    });
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      start + 151_000,
+      1,
+      120_000,
+    );
+    expect(points.map((point) => point.usageRatio)).toEqual([0.6, 0.7, null]);
+    expect(points[1]?.gapBefore).toBe(true);
+    expect(points[2]?.remainingRatio).toBe(0.3);
+  });
+
+  it('uses the last sample at a duplicate timestamp and keeps all-null input explicit', () => {
+    const { repositories } = database();
+    const start = now - 60 * 60_000;
+    repositories.windowSamples.insert(weeklySample(start, 0.8));
+    repositories.windowSamples.insert(weeklySample(start, 0.3));
+    repositories.windowSamples.insert(unknownUsageSample(start + 30_000));
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      start + 31_000,
+      1,
+      120_000,
+    );
+    expect(points.map((point) => point.usageRatio)).toEqual([0.3, null]);
+    const unknown = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start + 1,
+      start + 31_000,
+      1,
+      120_000,
+    );
+    expect(unknown.map((point) => point.usageRatio)).toEqual([null]);
+  });
+
+  it('bounds a dense selected month while retaining both time ends and reset boundaries', () => {
+    const { repositories } = database();
+    const start = now - 30 * 24 * 60 * 60_000;
+    const count = 2_000;
+    for (let index = 0; index < count; index += 1) {
+      const ratio = index < 1_000 ? index / 1_000 : (index - 1_000) / 1_000;
+      repositories.windowSamples.insert(weeklySample(start + index * 60_000, ratio));
+    }
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      now + 1,
+      USAGE_CHART_BUCKETS,
+      120_000,
+    );
+    expect(points.length).toBeLessThanOrEqual(384);
+    expect(points[0]?.observedAtMs).toBe(start);
+    expect(points.at(-1)?.observedAtMs).toBe(start + (count - 1) * 60_000);
+    expect(points.some((point) => point.smoothingBreakBefore)).toBe(true);
+    expect(points.every((point) => !point.gapBefore)).toBe(true);
+  });
+
+  it('keeps endpoints and conservative breaks when outages exceed the point budget', () => {
+    const { repositories } = database();
+    const start = now - 30 * 24 * 60 * 60_000;
+    const count = 800;
+    for (let index = 0; index < count; index += 1) {
+      repositories.windowSamples.insert(weeklySample(start + index * 30 * 60_000, 0.6));
+    }
+    const points = repositories.windowSamples.chartPoints(
+      'codex',
+      'weekly',
+      start,
+      now + 1,
+      USAGE_CHART_BUCKETS,
+      120_000,
+    );
+    expect(points.length).toBeLessThanOrEqual(384);
+    expect(points[0]?.observedAtMs).toBe(start);
+    expect(points.at(-1)?.observedAtMs).toBe(start + (count - 1) * 30 * 60_000);
+    expect(points.slice(1).every((point) => point.gapBefore)).toBe(true);
   });
 });

@@ -300,7 +300,7 @@ describe('history UI helpers', () => {
     expect(series).toHaveLength(2);
     const fakeSeries = series.find((item) => item.providerId === 'fake');
     expect(fakeSeries?.points).toHaveLength(MAX_USAGE_POINTS);
-    expect(fakeSeries?.points[0]?.observedAt).toBe('2026-09-19T00:04:00.000Z');
+    expect(fakeSeries?.points[0]?.observedAt).toBe('2026-09-19T00:00:00.000Z');
     expect(fakeSeries?.points.at(-1)?.usageRatio).toBeCloseTo(
       (MAX_USAGE_POINTS + 3) / (MAX_USAGE_POINTS + 4),
     );

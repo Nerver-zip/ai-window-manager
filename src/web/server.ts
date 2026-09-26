@@ -59,6 +59,7 @@ import {
 } from './settings-api.js';
 import { readScheduling } from './scheduling-api.js';
 import { readUsagePageData, USAGE_CHART_BUCKETS } from '../usage/service.js';
+import { chartContinuityGapMs } from '../usage/chart-continuity.js';
 import { renderUsagePage } from './usage-ui.js';
 import {
   renderActivationSchedulePage,
@@ -1583,7 +1584,10 @@ function resolveUsageView(input: BuildServerInput, query: Record<string, unknown
   if (providerId) {
     const rangeStartMs = now.getTime() - getHistoryRange('30d').durationMs;
     const provider = providers.find((item) => item.id === providerId);
-    const maxGapMs = (provider?.pollIntervalSeconds ?? 300) * 2_000;
+    const maxGapMs = chartContinuityGapMs(
+      provider?.pollIntervalSeconds ?? 300,
+      input.config.AWM_RECONCILE_INTERVAL_SECONDS,
+    );
     for (const windowKind of input.repositories.windowSamples
       .listWindowKinds(providerId, rangeStartMs, now.getTime() + 1)
       .slice(0, 16)) {
@@ -1606,6 +1610,7 @@ function resolveUsageView(input: BuildServerInput, query: Record<string, unknown
           usageRatio: point.usageRatio,
           remainingRatio: point.remainingRatio,
           ...(point.gapBefore ? { gapBefore: true } : {}),
+          ...(point.smoothingBreakBefore ? { smoothingBreakBefore: true } : {}),
         });
       }
     }

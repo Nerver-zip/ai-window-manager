@@ -6,6 +6,8 @@ export interface ChartPoint {
   observedAt: string;
   value: number | null;
   gapBefore?: boolean;
+  /** Split the moving average here while retaining the observed line edge. */
+  smoothingBreakBefore?: boolean;
 }
 
 export interface ChartSeries {
@@ -258,11 +260,11 @@ function renderSeries(
     (point) => normalizedValue(point.value, minimum, maximum) !== null,
   ).length;
   const pointMarkup = points
-    .map((point) => {
-      const value = normalizedValue(point.value, minimum, maximum);
+    .map((point, index) => {
+      const value = normalizedValue(series.points[index]?.value ?? null, minimum, maximum);
       if (value === null) return '';
       const x = chartXAt(Date.parse(point.observedAt), domain.fromMs, domain.toMs);
-      const y = chartY(value, minimum, maximum);
+      const y = chartY(normalizedValue(point.value, minimum, maximum) ?? value, minimum, maximum);
       const valueText =
         series.unit === '%' ? formatRatioPercent(value) : `${value}${series.unit ?? ''}`;
       const tooltipTime = formatChartTooltipTime(point.observedAt, domain.timeZone);
@@ -301,7 +303,8 @@ export function averageChartPoints(
         .map((item) => normalizedValue(item.value, minimum, maximum))
         .filter((value): value is number => value !== null);
       const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-      averaged.push({ ...point, value: average });
+      const resetBoundary = point.smoothingBreakBefore || run[index + 1]?.smoothingBreakBefore;
+      averaged.push({ ...point, value: resetBoundary ? point.value : average });
     });
     run = [];
   };
@@ -313,7 +316,7 @@ export function averageChartPoints(
       averaged.push({ ...point, value: null });
       continue;
     }
-    if (point.gapBefore && run.length > 0) finishRun();
+    if ((point.gapBefore || point.smoothingBreakBefore) && run.length > 0) finishRun();
     run.push({ ...point, value });
   }
   finishRun();

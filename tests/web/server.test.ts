@@ -1141,6 +1141,36 @@ describe('web server persisted overview', () => {
     expect(inspected.count).toBe(0);
   });
 
+  it('renders poll-aware Usage segments in every period without provider I/O', async () => {
+    const inspected = { count: 0 };
+    const { app } = createApp(
+      (repositories) => {
+        repositories.providers.upsert(providerRecord({ pollIntervalSeconds: 300 }));
+        seedObservedProvider(repositories);
+        for (const minutesBeforeNow of [60, 50, 20, 15]) {
+          const observedAt = new Date(Date.parse(NOW) - minutesBeforeNow * 60_000).toISOString();
+          const window = observation('fake', observedAt).windows[0];
+          if (!window) throw new Error('missing fixture window');
+          repositories.windowSamples.insert(window);
+        }
+      },
+      inspectionSpy('fake', inspected),
+    );
+
+    for (const range of ['1h', '3h', '6h', '12h', '24h', '7d', '30d']) {
+      const response = await app.inject(
+        `/usage?provider=fake&chartRange=fake%7Cfive_hour%7C${range}`,
+      );
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.body).toContain(`<option value="fake|five_hour|${range}" selected>`);
+      const lines = response.body.match(/class="chart-line chart-series-1"/gu) ?? [];
+      const areas = response.body.match(/class="chart-area chart-series-1"/gu) ?? [];
+      expect(lines).toHaveLength(2);
+      expect(areas).toHaveLength(2);
+    }
+    expect(inspected.count).toBe(0);
+  });
+
   it('serves Logs from persisted events without inspecting a provider', async () => {
     const inspected = { count: 0 };
     const { app, repositories } = createApp(
