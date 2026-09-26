@@ -47,6 +47,15 @@ pnpm validate
 
 `pnpm validate` is the canonical completion gate. It runs format checking, lint, strict typechecking, the coverage-enforced test suite, the build, and Gitleaks. Install Gitleaks before running it locally. `pnpm test:coverage` requires at least 90% global lines, statements, functions, and branches and writes text/LCOV reports under the ignored `coverage/` directory.
 
+Pull requests also run `actionlint` against every workflow. Dependency Review
+runs on pull requests once the repository is public (GitHub restricts this
+feature for private repositories unless Code Security is enabled). Dependabot
+opens weekly grouped update PRs for pnpm dependencies and GitHub Actions; those
+PRs go through the normal CI. Separate weekly/manual workflows audit the full
+pnpm dependency graph and scan a freshly built Docker image for high/critical
+vulnerabilities. These scheduled scans do not add remote-feed availability to
+the ordinary PR gate.
+
 The daemon performs one initial reconcile and then one coalescing global tick.
 FakeProvider is disabled in the checked-in local profile. Codex monitoring uses
 `AWM_CODEX_ENABLED=true`, `AWM_CODEX_HOME=/codex-state` and

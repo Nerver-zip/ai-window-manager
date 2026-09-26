@@ -67,6 +67,33 @@ jobs:
       - name: Run the local secret scan
         run: pnpm secret:scan
 
+  workflow-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.24.4'
+      - name: Install pinned actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Lint GitHub Actions workflows
+        run: '$(go env GOPATH)/bin/actionlint'
+
+  dependency-review:
+    if: github.event_name == 'pull_request' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: high
+
   docker:
     runs-on: ubuntu-latest
     needs: [quality, security]

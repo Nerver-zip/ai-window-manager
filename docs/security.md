@@ -14,6 +14,16 @@
 
 Gitleaks uses its upstream default rules through `.gitleaks.toml`. The local `pnpm secret:scan` command and the GitHub Actions security job scan repository content and available history; a finding fails the gate. Do not add real credentials to source, fixtures, examples, `.env` files, logs, or documentation. Synthetic test values must be unmistakably non-secret.
 
+CI also lints workflow definitions with actionlint. Dependabot proposes weekly
+pnpm and GitHub Actions updates, which are validated by the regular quality,
+security, and Docker jobs. A scheduled `pnpm audit` checks the complete lockfile
+and fails on high or critical advisories; the initial baseline contained two
+moderate advisories and no high/critical findings. A separate weekly/manual
+Trivy scan rebuilds the image from current base images and fails on high or
+critical OS/library vulnerabilities. Dependency Review is configured for PRs
+when the repository is public; GitHub requires public visibility or Code
+Security for this feature on private repositories.
+
 ### Codex
 
 The image packages the official Codex CLI version recorded in
