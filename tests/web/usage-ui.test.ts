@@ -95,6 +95,16 @@ function chartCards(html: string): string[] {
   );
 }
 
+function expectSoftNavigationContract(html: string): void {
+  const regions = [...html.matchAll(/data-awm-region="([^"]+)"/g)].map(([, key]) => key!);
+  expect(new Set(regions).size).toBe(regions.length);
+  for (const [, target] of html.matchAll(/data-awm-target="([^"]+)"/g)) {
+    expect(regions.filter((key) => key === target)).toHaveLength(1);
+  }
+  const enhancedModes = [...html.matchAll(/data-awm-enhance="([^"]+)"/g)].map(([, mode]) => mode);
+  expect(enhancedModes.every((mode) => mode === 'navigation')).toBe(true);
+}
+
 describe('Usage page', () => {
   it('renders an accessible annual heatmap without a global window selector or alternate day list', () => {
     const html = renderUsagePage({
@@ -113,6 +123,16 @@ describe('Usage page', () => {
     expect(gridCells.every(([cell]) => /aria-colindex="\d+"/.test(cell))).toBe(true);
     expect(gridCells.filter(([cell]) => /tabindex="0"/.test(cell))).toHaveLength(1);
     expect(gridCells.filter(([cell]) => /tabindex="-1"/.test(cell))).toHaveLength(364);
+    const selectedCell = gridCells.find(([cell]) => /aria-selected="true"/.test(cell))?.[0];
+    expect(selectedCell).toContain('data-awm-soft-nav');
+    expect(selectedCell).toContain('data-awm-target="usage-heatmap"');
+    expect(selectedCell).toContain('day=2026-09-22');
+    expect(selectedCell).toContain('chartRange=codex%7Cweekly%7C6h');
+    expectSoftNavigationContract(html);
+    expect(html).toContain('data-awm-region="usage-heatmap"');
+    expect(html.indexOf('data-awm-region="usage-heatmap"')).toBeLessThan(
+      html.indexOf('class="usage-day-detail"'),
+    );
     expect(html).not.toMatch(/class="usage-calendar-track"[^>]*style=/);
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain('usage-level-2 usage-partial');
@@ -129,6 +149,8 @@ describe('Usage page', () => {
     expect(html).toContain('aria-label="Period for Codex / Weekly window"');
     expect(html).toContain('<option value="codex|weekly|6h" selected>6h</option>');
     expect(html).toContain('action="/usage"');
+    expect(html).toContain('method="get" action="/usage"');
+    expect(html).toContain('<noscript><button class="button button-secondary chart-range-submit"');
     expect(html).toContain('Approximately 12.5%');
     expect(html).toContain('&gt;0–5 points');
     expect(html).toContain('no increase observed');
@@ -188,6 +210,15 @@ describe('Usage page', () => {
     expect(cards).toHaveLength(4);
     for (const [index, [title, selectedRange]] of expected.entries()) {
       const card = cards[index]!;
+      const windowKind = antigravityWindows[index]!;
+      const regionKey = `usage-chart:antigravity:${windowKind}`;
+      expect(card).toContain(`data-awm-region="${regionKey}"`);
+      expect(card).toContain(`data-awm-enhance="navigation" data-awm-target="${regionKey}"`);
+      for (const [otherIndex, otherRange] of ranges.entries()) {
+        if (otherIndex !== index) {
+          expect(card).toContain(`name="chartRange" value="${otherRange}"`);
+        }
+      }
       expect(card).toContain(
         `<h3 id="chart-${title
           .toLowerCase()
@@ -206,6 +237,7 @@ describe('Usage page', () => {
       ),
     ].map(([, id]) => id);
     expect(new Set(titleIds).size).toBe(4);
+    expectSoftNavigationContract(html);
     const topControls = html.match(/<section class="usage-controls"[^>]*>[\s\S]*?<\/section>/)?.[0];
     expect(topControls).toBeDefined();
     expect(topControls).not.toContain('<select name="window"');
@@ -235,6 +267,10 @@ describe('Usage page', () => {
     expect(section).toContain(`name="chartRange" value="${ranges[0]}"`);
     expect(section).toContain(`name="chartRange" value="${ranges[3]}"`);
     expect(section).toContain('data-usage-grid');
+    expect(section).toContain('data-awm-enhance="navigation" data-awm-target="usage-heatmap"');
+    expect(section).toContain('method="get" action="/usage"');
+    expect(section).toContain('data-awm-focus-key="usage-heatmap-family"');
+    expectSoftNavigationContract(html);
     expect(html.slice(0, html.indexOf(section!))).not.toContain('<select name="window"');
 
     const claudeHtml = renderUsagePage({
@@ -334,6 +370,7 @@ describe('Usage page', () => {
     expect(html).not.toContain('Daily usage family');
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('<option value="codex|five_hour|3h" selected>3h</option>');
+    expectSoftNavigationContract(html);
   });
 
   it('handles an empty weekly history without rendering an empty calendar grid', () => {

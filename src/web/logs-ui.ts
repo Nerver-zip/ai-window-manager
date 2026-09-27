@@ -163,6 +163,7 @@ export interface UsageChartControls {
 const SAFE_CODE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/;
 const SAFE_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SAFE_WINDOW_KIND = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const LOGS_RESULTS_REGION = 'logs-results';
 
 export function normalizeHistoryRange(value: unknown): HistoryRange {
   return isHistoryRange(value) ? value : DEFAULT_HISTORY_RANGE;
@@ -387,10 +388,10 @@ export function renderLogsPage(input: HistoryPageInput): string {
     : '';
   const selectedTag = view.tag ?? 'all';
   const tagFilters = [
-    `<a class="log-tag-filter${selectedTag === 'all' ? ' is-active' : ''}" href="${escapeAttribute(logTagHref('all', view.range, view.providerId))}"${selectedTag === 'all' ? ' aria-current="page"' : ''}>All</a>`,
+    `<a class="log-tag-filter${selectedTag === 'all' ? ' is-active' : ''}" href="${escapeAttribute(logTagHref('all', view.range, view.providerId))}" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-tag-all"${selectedTag === 'all' ? ' aria-current="page"' : ''}>All</a>`,
     ...LOG_TAGS.map(
       (tag) =>
-        `<a class="log-tag-filter${selectedTag === tag.value ? ' is-active' : ''}" href="${escapeAttribute(logTagHref(tag.value, view.range, view.providerId))}"${selectedTag === tag.value ? ' aria-current="page"' : ''}><span aria-hidden="true">${tag.icon}</span> ${tag.label}</a>`,
+        `<a class="log-tag-filter${selectedTag === tag.value ? ' is-active' : ''}" href="${escapeAttribute(logTagHref(tag.value, view.range, view.providerId))}" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-tag-${tag.value}"${selectedTag === tag.value ? ' aria-current="page"' : ''}><span aria-hidden="true">${tag.icon}</span> ${tag.label}</a>`,
     ),
   ].join('');
   const hiddenTag = view.tag
@@ -400,12 +401,12 @@ export function renderLogsPage(input: HistoryPageInput): string {
     ? `<input type="hidden" name="type" value="${escapeAttribute(view.eventType)}">`
     : '';
   const routineToggle = input.routineEventsHref
-    ? `<p class="log-routine-toggle">${view.eventType === 'scheduler_noop' ? 'Routine scheduler checks are included.' : 'Routine scheduler checks are hidden.'} <a href="${escapeAttribute(input.routineEventsHref)}">${view.eventType === 'scheduler_noop' ? 'Hide routine checks' : 'Show routine checks'}</a></p>`
+    ? `<p class="log-routine-toggle">${view.eventType === 'scheduler_noop' ? 'Routine scheduler checks are included.' : 'Routine scheduler checks are hidden.'} <a href="${escapeAttribute(input.routineEventsHref)}" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-routine-toggle">${view.eventType === 'scheduler_noop' ? 'Hide routine checks' : 'Show routine checks'}</a></p>`
     : '';
   const timeZone = input.timeZone ?? 'UTC';
-  const content = `<div class="logs-page">
+  const content = `<div class="logs-page" data-awm-region="${LOGS_RESULTS_REGION}">
     ${usageNotice}
-    <form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters">
+    <form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-awm-enhance="navigation" data-awm-target="${LOGS_RESULTS_REGION}">
       ${hiddenTag}${hiddenType}
       <div class="history-toolbar-summary">
         <span class="eyebrow">Explore</span>
@@ -416,9 +417,9 @@ export function renderLogsPage(input: HistoryPageInput): string {
         ${providerPicker}
         <label class="field">
           <span class="field-label">Timeline range</span>
-          <select name="range">${rangeOptions}</select>
+          <select name="range" data-awm-focus-key="logs-range">${rangeOptions}</select>
         </label>
-        <button class="button button-primary" type="submit">Apply filters</button>
+        <button class="button button-primary" type="submit" data-awm-focus-key="logs-apply-filters">Apply filters</button>
       </div>
     </form>
     <nav class="log-tag-filters" aria-label="Filter logs by category">${tagFilters}</nav>
@@ -528,8 +529,21 @@ export function renderUsageSeries(
   }
 
   const visibleSeries = series.slice(0, MAX_USAGE_SERIES);
+  const regionCounts = new Map<string, number>();
+  for (const item of visibleSeries) {
+    const regionKey = usageChartRegionKey(item.providerId, item.windowKind);
+    if (regionKey) regionCounts.set(regionKey, (regionCounts.get(regionKey) ?? 0) + 1);
+  }
   const charts = visibleSeries
-    .map((item) => renderUsageChart(item, resolvedControls, visibleSeries))
+    .map((item) => {
+      const regionKey = usageChartRegionKey(item.providerId, item.windowKind);
+      return renderUsageChart(
+        item,
+        resolvedControls,
+        visibleSeries,
+        regionKey && regionCounts.get(regionKey) === 1 ? regionKey : null,
+      );
+    })
     .join('');
   return `<section class="history-section" aria-labelledby="usage-title">
     <div class="section-heading">
@@ -544,6 +558,7 @@ function renderUsageChart(
   series: HistoryUsageSeries,
   controls: UsageChartControls,
   allSeries: readonly HistoryUsageSeries[],
+  regionKey: string | null,
 ): string {
   const providerId = safeProviderId(series.providerId) ?? 'unknown';
   const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
@@ -572,11 +587,11 @@ function renderUsageChart(
     controls.chartRanges[chartRangeKey(providerId, windowKind)] ??
     controls.timelineRange;
 
-  return renderTimeSeriesChart({
+  const chartMarkup = renderTimeSeriesChart({
     id: chartTitle,
     title: chartTitle,
     range,
-    controls: renderChartRangeControl(series, range, controls, allSeries, chartTitle),
+    controls: renderChartRangeControl(series, range, controls, allSeries, chartTitle, regionKey),
     summary: [
       { label: 'Latest used', value: latestText },
       { label: 'Remaining', value: remainingText },
@@ -615,6 +630,7 @@ function renderUsageChart(
         }
       : {}),
   });
+  return regionKey ? addUsageChartRegion(chartMarkup, regionKey) : chartMarkup;
 }
 
 function renderChartRangeControl(
@@ -623,6 +639,7 @@ function renderChartRangeControl(
   controls: UsageChartControls,
   allSeries: readonly HistoryUsageSeries[],
   label: string,
+  regionKey: string | null,
 ): string {
   const providerId = safeProviderId(series.providerId) ?? 'unknown';
   const windowKind = safeWindowKind(series.windowKind) ?? 'unknown';
@@ -650,7 +667,28 @@ function renderChartRangeControl(
       `<option value="${escapeAttribute(serializeChartRangeSelection(providerId, windowKind, option.value))}"${option.value === range ? ' selected' : ''}>${option.label}</option>`,
   ).join('');
 
-  return `<form class="chart-range-form" method="get" action="/usage" aria-label="Time range for ${escapeAttribute(label)}">${provider}${selectedWindow}${selectedDay}${preservedSelections}<label class="chart-range-control"><span>Period</span><select name="chartRange" data-chart-range-select aria-label="Period for ${escapeAttribute(label)}">${options}</select></label><noscript><button class="button button-secondary chart-range-submit" type="submit">Apply</button></noscript></form>`;
+  const enhancement = regionKey
+    ? ` data-awm-enhance="navigation" data-awm-target="${escapeAttribute(regionKey)}"`
+    : '';
+  const focusKey = regionKey
+    ? ` data-awm-focus-key="${escapeAttribute(`${regionKey}:period`)}"`
+    : '';
+  return `<form class="chart-range-form" method="get" action="/usage" aria-label="Time range for ${escapeAttribute(label)}"${enhancement}>${provider}${selectedWindow}${selectedDay}${preservedSelections}<label class="chart-range-control"><span>Period</span><select name="chartRange" data-chart-range-select aria-label="Period for ${escapeAttribute(label)}"${focusKey}>${options}</select></label><noscript><button class="button button-secondary chart-range-submit" type="submit">Apply</button></noscript></form>`;
+}
+
+function usageChartRegionKey(providerId: unknown, windowKind: unknown): string | null {
+  const safeProvider = safeProviderId(providerId);
+  const safeWindow = safeWindowKind(windowKind);
+  if (!safeProvider || !safeWindow) return null;
+  return `usage-chart:${safeProvider}:${safeWindow}`;
+}
+
+function addUsageChartRegion(markup: string, regionKey: string): string {
+  // The chart renderer owns its semantic root; attach the stable key at that root.
+  return markup.replace(
+    '<article class="card chart-card"',
+    `<article class="card chart-card" data-awm-region="${escapeAttribute(regionKey)}"`,
+  );
 }
 
 function sanitizeEvent(event: HistoryTimelineEvent): HistoryTimelineItem | null {
@@ -858,10 +896,10 @@ function renderHistoryPagination(
   const last = first > 0 ? first + visibleCount - 1 : 0;
   const range = visibleCount > 0 ? `Showing ${first}–${last}` : 'No events shown';
   const previous = pagination.previousHref
-    ? `<a class="button button-secondary" href="${escapeAttribute(pagination.previousHref)}" rel="prev">Previous</a>`
+    ? `<a class="button button-secondary" href="${escapeAttribute(pagination.previousHref)}" rel="prev" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-page-previous">Previous</a>`
     : `<span class="button button-secondary is-disabled" aria-disabled="true">Previous</span>`;
   const next = pagination.nextHref
-    ? `<a class="button button-secondary" href="${escapeAttribute(pagination.nextHref)}" rel="next">Next</a>`
+    ? `<a class="button button-secondary" href="${escapeAttribute(pagination.nextHref)}" rel="next" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-page-next">Next</a>`
     : `<span class="button button-secondary is-disabled" aria-disabled="true">Next</span>`;
   return `<nav class="history-pagination" aria-label="Log pages">
     <p class="history-pagination-summary">${range} · page ${pagination.page}${pagination.hasNext ? ' · more available' : ''}</p>

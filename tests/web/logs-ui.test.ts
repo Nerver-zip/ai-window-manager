@@ -44,6 +44,16 @@ function sample(overrides: Partial<HistoryUsageSample> = {}): HistoryUsageSample
   };
 }
 
+function expectSoftNavigationContract(html: string): void {
+  const regions = [...html.matchAll(/data-awm-region="([^"]+)"/g)].map(([, key]) => key!);
+  expect(new Set(regions).size).toBe(regions.length);
+  for (const [, target] of html.matchAll(/data-awm-target="([^"]+)"/g)) {
+    expect(regions.filter((key) => key === target)).toHaveLength(1);
+  }
+  const enhancedModes = [...html.matchAll(/data-awm-enhance="([^"]+)"/g)].map(([, mode]) => mode);
+  expect(enhancedModes.every((mode) => mode === 'navigation')).toBe(true);
+}
+
 describe('history UI helpers', () => {
   it('exposes bounded range labels and filters events by range and provider', () => {
     expect(HISTORY_RANGES.map((range) => range.label)).toEqual([
@@ -264,6 +274,21 @@ describe('history UI helpers', () => {
 
     expect(html).toContain('name="window" value="weekly"');
     expect(html).toContain('name="window" value="five_hour"');
+    expect(html).toContain('data-awm-region="usage-chart:codex:weekly"');
+    expect(html).toContain(
+      'data-awm-enhance="navigation" data-awm-target="usage-chart:codex:weekly"',
+    );
+    expectSoftNavigationContract(html);
+  });
+
+  it('leaves duplicate chart identities on native GET navigation instead of emitting ambiguous regions', () => {
+    const duplicate = { providerId: 'codex', windowKind: 'weekly', points: [] };
+    const html = renderUsageSeries([duplicate, duplicate]);
+
+    expect(html).not.toContain('data-awm-region="usage-chart:codex:weekly"');
+    expect(html).not.toContain('data-awm-enhance="navigation"');
+    expect(html.match(/method="get" action="\/usage"/g)).toHaveLength(2);
+    expect(html).toContain('<noscript><button class="button button-secondary chart-range-submit"');
   });
 
   it('omits the heatmap window when an explicit empty selection is passed', () => {
@@ -430,6 +455,49 @@ describe('history UI helpers', () => {
     expect(html).not.toContain(' style=');
     expect(html).not.toContain('{"');
     expect(html).not.toContain('accountId');
+  });
+
+  it('soft-navigates Logs filters, category links, routine toggle, and pagination within one region', () => {
+    const html = renderLogsPage({
+      now: NOW,
+      filter: { range: '12h', providerId: 'codex', tag: 'trigger' },
+      providers: [{ id: 'codex', label: 'Codex' }],
+      events: [event({ providerId: 'codex' })],
+      samples: [],
+      pagination: {
+        page: 2,
+        pageSize: 20,
+        hasNext: true,
+        previousHref: '/logs?range=12h&page=1&provider=codex&tag=trigger',
+        nextHref: '/logs?range=12h&page=3&provider=codex&tag=trigger',
+      },
+      routineEventsHref: '/logs?range=12h&type=scheduler_noop',
+      usageChartsHref: '/usage?provider=codex',
+    });
+
+    expectSoftNavigationContract(html);
+    expect(html.match(/data-awm-region="logs-results"/g)).toHaveLength(1);
+    expect(html).toContain(
+      '<form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-awm-enhance="navigation" data-awm-target="logs-results">',
+    );
+    expect(html).toContain('value="12h" selected');
+    expect(html).toContain('data-awm-focus-key="logs-range"');
+    expect(html).toContain('data-awm-focus-key="logs-apply-filters"');
+    expect(html).toContain(
+      'href="/logs?range=12h&amp;tag=trigger&amp;provider=codex" data-awm-soft-nav data-awm-target="logs-results"',
+    );
+    expect(html).toContain(
+      'href="/logs?range=12h&amp;page=1&amp;provider=codex&amp;tag=trigger" rel="prev" data-awm-soft-nav data-awm-target="logs-results"',
+    );
+    expect(html).toContain(
+      'href="/logs?range=12h&amp;page=3&amp;provider=codex&amp;tag=trigger" rel="next" data-awm-soft-nav data-awm-target="logs-results"',
+    );
+    expect(html).toContain(
+      'href="/logs?range=12h&amp;type=scheduler_noop" data-awm-soft-nav data-awm-target="logs-results"',
+    );
+    expect(html).toContain('href="/usage?provider=codex"');
+    expect(html).not.toContain('href="/usage?provider=codex" data-awm-soft-nav');
+    expect(html).toContain('method="get" action="/logs"');
   });
 
   it('preserves the selected log tag in an escaped hidden form field', () => {

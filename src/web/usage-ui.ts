@@ -32,6 +32,7 @@ const ANTIGRAVITY_CHART_WINDOWS = [
   'antigravity_claude_gpt_five_hour',
   'antigravity_claude_gpt_weekly',
 ] as const;
+const USAGE_HEATMAP_REGION = 'usage-heatmap';
 
 export function renderUsagePage(input: UsagePageInput): string {
   const { data } = input;
@@ -104,6 +105,7 @@ export function renderUsagePage(input: UsagePageInput): string {
         heatmapWindowLabel(providerId!, selectedWeeklyWindow!.windowKind),
       )
     : '';
+  const heatmapWorkspace = `<div class="usage-page usage-heatmap-workspace" data-awm-region="${USAGE_HEATMAP_REGION}">${calendar}${detail}</div>`;
   const seriesTitles = Object.fromEntries(
     chartSeries.map((item) => {
       const windowTitle = windowDisplayName(item.providerId, item.windowKind);
@@ -132,8 +134,7 @@ export function renderUsagePage(input: UsagePageInput): string {
       <div class="usage-filter-panel">${providerPicker}</div>
     </section>
     ${chartMarkup}
-    ${calendar}
-    ${detail}
+    ${heatmapWorkspace}
   </div>`;
 
   return renderAppShell({
@@ -239,7 +240,7 @@ function renderCalendar(
         : 'Choose the weekly usage source to display daily usage.';
     const recoveryLink =
       weeklyWindows.length === 1
-        ? `<a class="button button-secondary" href="${escapeHtml(weeklyWindowHref(providerId, weeklyWindows[0]!.windowKind, data.selectedDay?.localDate, ranges, series))}">Show weekly usage</a>`
+        ? `<a class="button button-secondary" href="${escapeHtml(weeklyWindowHref(providerId, weeklyWindows[0]!.windowKind, data.selectedDay?.localDate, ranges, series))}" data-awm-soft-nav data-awm-target="${USAGE_HEATMAP_REGION}" data-awm-focus-key="usage-show-weekly">Show weekly usage</a>`
         : '';
     return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
       <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">Weekly allowance</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel">${sourceSelector}</div></div>
@@ -285,7 +286,7 @@ function renderCalendar(
         const day = data.days[dayIndex]!;
         const selected = dayIndex === selectedIndex;
         const tabbable = dayIndex === focusIndex;
-        return `<a class="usage-cell usage-level-${intensity(day.usagePercentagePoints)} usage-${day.status}${selected ? ' is-selected' : ''}${date === data.today ? ' is-today' : ''}" href="${escapeHtml(dayHref(date, providerId, windowKind, ranges, series))}" role="gridcell" aria-rowindex="${rowIndex + 1}" aria-colindex="${columnIndex + 1}" aria-selected="${selected}" aria-label="${escapeHtml(cellLabel(day, data.today))}" data-usage-cell data-usage-index="${dayIndex}" tabindex="${tabbable ? '0' : '-1'}"></a>`;
+        return `<a class="usage-cell usage-level-${intensity(day.usagePercentagePoints)} usage-${day.status}${selected ? ' is-selected' : ''}${date === data.today ? ' is-today' : ''}" href="${escapeHtml(dayHref(date, providerId, windowKind, ranges, series))}" role="gridcell" aria-rowindex="${rowIndex + 1}" aria-colindex="${columnIndex + 1}" aria-selected="${selected}" aria-label="${escapeHtml(cellLabel(day, data.today))}" data-usage-cell data-usage-index="${dayIndex}" data-awm-soft-nav data-awm-target="${USAGE_HEATMAP_REGION}" data-awm-focus-key="usage-day-${dayIndex}" tabindex="${tabbable ? '0' : '-1'}"></a>`;
       })
       .join('');
     return `<div class="usage-calendar-row" role="row">${cellsMarkup}</div>`;
@@ -351,7 +352,7 @@ function renderDailyUsageFamilySelector(
   const placeholder = needsChoice
     ? '<option value="" selected disabled>Choose a family</option>'
     : '';
-  return `<form method="get" action="/usage" class="usage-filter-form" aria-label="Daily usage family" data-usage-filter-auto-submit><input type="hidden" name="provider" value="${escapeHtml(providerId)}">${chartRanges}${selectedDay}<label class="field"><span class="field-label">Daily usage family</span><select name="window">${placeholder}${familyOptions}</select></label><noscript><button class="button button-secondary" type="submit">Update view</button></noscript></form>`;
+  return `<form method="get" action="/usage" class="usage-filter-form" aria-label="Daily usage family" data-usage-filter-auto-submit data-awm-enhance="navigation" data-awm-target="${USAGE_HEATMAP_REGION}"><input type="hidden" name="provider" value="${escapeHtml(providerId)}">${chartRanges}${selectedDay}<label class="field"><span class="field-label">Daily usage family</span><select name="window" data-awm-focus-key="usage-heatmap-family">${placeholder}${familyOptions}</select></label><noscript><button class="button button-secondary" type="submit">Update view</button></noscript></form>`;
 }
 
 function weeklyWindowHref(
