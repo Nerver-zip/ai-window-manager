@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v7.0.1
       - name: Build image from current base images
         run: docker build --pull --tag ai-window-manager:security-scan .
       - name: Scan image for OS and library vulnerabilities
