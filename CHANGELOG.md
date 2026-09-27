@@ -1,9 +1,8 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
 
-This section is the proposed first source-release summary. It is not a release
-announcement; no release date or tag has been assigned.
+## [0.1.0] - 2026-09-27
 
 - Added a single-operator authenticated web console for monitoring Codex and
   Antigravity usage, reviewing bounded history, and configuring exact-window
