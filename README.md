@@ -13,6 +13,7 @@
 </p>
 
 <p align="center">
+  <a href="#screenshots">Screenshots</a> ·
   <a href="#features">Features</a> ·
   <a href="#providers">Providers</a> ·
   <a href="#scheduling">Scheduling</a> ·
@@ -28,16 +29,6 @@ private web application.
 
 AWM is a single-operator self-hosted service. It is not an LLM router, prompt
 manager, agent orchestrator, account rotator, or rate-limit circumvention tool.
-
-## Distribution and license
-
-The AWM source is licensed under MIT; see [LICENSE](LICENSE). This project
-distributes source code only: it does not publish an npm package or prebuilt
-Docker image. Operators build the image locally with Docker Compose. That build
-downloads the pinned official Codex and Antigravity clients from their upstream
-release repositories; those clients, provider names, and logos remain subject to
-their respective terms and are not relicensed by AWM. `package.json` stays
-`private: true` because npm distribution is not part of this project.
 
 ## Why AI Window Manager?
 
@@ -234,6 +225,30 @@ for troubleshooting and operational details.
 | **Logs**     | Search and page through persisted activity and decisions.                                         |
 | **Settings** | Provider controls, timezone, authentication-independent preferences, and provider-client updates. |
 
+## Screenshots
+
+The overview is the main entry point. Expand the other screens to see usage,
+scheduling, and activity details.
+
+![AI Window Manager overview showing connected providers, current usage windows, and selected start policies](assets/images/screenshots/overview.png)
+
+<details>
+<summary>More app screens</summary>
+
+**Usage — per-window charts and daily history**
+
+![Usage page showing provider usage charts and the daily heatmap](assets/images/screenshots/usage.png)
+
+**Schedule — provider, model family, target window, and start policy**
+
+![Schedule page showing an activation policy for a selected provider window](assets/images/screenshots/schedule.png)
+
+**Logs — paginated observations and decisions**
+
+![Logs page showing recent provider observations and scheduler decisions](assets/images/screenshots/logs.png)
+
+</details>
+
 ## Operating the container
 
 ```bash
@@ -321,3 +336,13 @@ tests do not require provider credentials or spend real quota. See
 - [API](docs/api.md)
 - [Product boundaries](docs/product-boundaries.md)
 - [Backlog](docs/BACKLOG.md)
+
+## Distribution and license
+
+The AWM source is licensed under MIT; see [LICENSE](LICENSE). This project
+distributes source code only: it does not publish an npm package or prebuilt
+Docker image. Operators build the image locally with Docker Compose. That build
+downloads the pinned official Codex and Antigravity clients from their upstream
+release repositories; those clients, provider names, and logos remain subject to
+their respective terms and are not relicensed by AWM. `package.json` stays
+`private: true` because npm distribution is not part of this project.
