@@ -324,7 +324,11 @@ describe('Usage page', () => {
     expect(html).toContain(
       'href="/usage?provider=codex&amp;chartRange=codex%7Cweekly%7C6h&amp;chartRange=codex%7Cfive_hour%7C3h" data-configured="unknown" aria-current="page"',
     );
-    expect(html).toMatch(/href="\/usage\?provider=antigravity(?:&amp;chartRange=[^"]+)+"/);
+    const antigravityHrefStart = html.indexOf('href="/usage?provider=antigravity');
+    expect(antigravityHrefStart).toBeGreaterThanOrEqual(0);
+    const antigravityHrefEnd = html.indexOf('"', antigravityHrefStart + 'href="'.length);
+    expect(antigravityHrefEnd).toBeGreaterThan(antigravityHrefStart);
+    expect(html.slice(antigravityHrefStart, antigravityHrefEnd)).toContain('&amp;chartRange=');
     expect(html).not.toContain('class="provider-picker-input"');
     expect(html).toContain('class="provider-picker provider-picker-navigation"');
     expect(html).not.toContain('Daily usage family');

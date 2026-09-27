@@ -1,19 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import escapeHtml from 'escape-html';
+
+export { escapeHtml };
 
 export type Page = 'overview' | 'usage' | 'schedule' | 'logs' | 'settings';
 
 // Version shared assets per process so container updates cannot keep serving
 // stale browser-cached interactions or styles from the same stable URL.
 const ASSET_VERSION = randomUUID();
-
-export function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
 
 const NAV_ICONS: Readonly<Record<Page, string>> = {
   overview: `<svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>`,

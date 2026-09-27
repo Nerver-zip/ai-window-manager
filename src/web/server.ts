@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { renderAppShell } from './ui/layout.js';
 import { renderProviderPicker } from './ui/provider-picker.js';
@@ -104,16 +105,25 @@ import {
   windowDisplayName,
 } from './ui/presentation.js';
 
-const STATIC_MIME_TYPES: Readonly<Record<string, string>> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-};
+declare module 'fastify' {
+  interface FastifyContextConfig {
+    awmRateLimit?: { maxRequests: number; timeWindowMs: number };
+  }
+}
 
 const ASSETS_DIR = path.resolve(process.cwd(), 'assets');
+const STATIC_IMAGE_ASSETS = [
+  ['logo.png', 'logo.png'],
+  ['providers/agy.png', 'providers/agy.png'],
+  ['providers/antigravity.png', 'providers/antigravity.png'],
+  ['providers/codex.png', 'providers/codex.png'],
+] as const;
+const DEFAULT_REQUEST_RATE_LIMIT = 300;
+const REQUEST_RATE_LIMIT_WINDOW_MS = 60_000;
+const REQUEST_RATE_LIMIT_CACHE_SIZE = 5_000;
+const PROVIDER_AUTH_OPERATION_RATE_LIMIT = 12;
+const PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS = 5 * 60_000;
+const PROVIDER_CLIENT_OPERATION_RATE_LIMIT = 6;
 const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity'];
 const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}\n${OPERATOR_AUTH_CSS}`;
 const APP_JS_WITH_AUTH = `${APP_JS}\n${AUTH_ONBOARDING_JS}`;
@@ -128,6 +138,8 @@ export interface BuildServerInput {
   operatorAuth: OperatorAuthService;
   requestReconcile?: () => void;
   providerClientUpdates?: ProviderClientUpdateWebControls;
+  /** Test-only override for exercising rate-limit boundaries without waiting a minute. */
+  requestRateLimitForTests?: { maxRequests: number; timeWindowMs: number };
 }
 
 type ProviderHealthRead = ProviderStateRecord['health'] | 'UNKNOWN';
@@ -173,6 +185,42 @@ export function buildServer(input: BuildServerInput) {
     logger: { level: input.config.AWM_LOG_LEVEL },
     bodyLimit: DEFAULT_HTTP_BODY_LIMIT_BYTES,
     trustProxy: input.config.AWM_TRUST_PROXY.length ? input.config.AWM_TRUST_PROXY : false,
+  });
+  let staticImageAssets: ReadonlyMap<string, Buffer> = new Map();
+
+  // IP identity follows Fastify's configured trustProxy list; forwarded headers
+  // are not used unless their exact proxy source was explicitly configured.
+  app.register(rateLimit, {
+    // The app is assembled synchronously, so enforcement uses the plugin's
+    // decorated limiter from one root onRequest hook after Fastify is ready.
+    // Route-specific policies are selected from the private config below.
+    global: false,
+    max: DEFAULT_REQUEST_RATE_LIMIT,
+    timeWindow: REQUEST_RATE_LIMIT_WINDOW_MS,
+    cache: REQUEST_RATE_LIMIT_CACHE_SIZE,
+    errorResponseBuilder: () => ({
+      statusCode: 429,
+      error: { code: 'RATE_LIMITED', message: 'Too many requests. Try again shortly.' },
+    }),
+  });
+
+  const rateLimitHandlers = new Map<string, ReturnType<typeof app.rateLimit>>();
+  app.addHook('onRequest', async (request, reply) => {
+    const policy = request.routeOptions.config.awmRateLimit ?? {
+      maxRequests: input.requestRateLimitForTests?.maxRequests ?? DEFAULT_REQUEST_RATE_LIMIT,
+      timeWindowMs: input.requestRateLimitForTests?.timeWindowMs ?? REQUEST_RATE_LIMIT_WINDOW_MS,
+    };
+    const key = `${policy.maxRequests}:${policy.timeWindowMs}`;
+    let handler = rateLimitHandlers.get(key);
+    if (!handler) {
+      handler = app.rateLimit({ max: policy.maxRequests, timeWindow: policy.timeWindowMs });
+      rateLimitHandlers.set(key, handler);
+    }
+    await handler.call(app, request, reply);
+  });
+
+  app.addHook('onReady', async () => {
+    staticImageAssets = await readStaticImageAssets();
   });
 
   app.addHook('onRequest', async (request, reply) => {
@@ -241,24 +289,14 @@ export function buildServer(input: BuildServerInput) {
   );
   app.get('/assets/images/*', async (request, reply) => {
     const rawPath = (request.params as { '*': string })['*'];
-    const safePath = path.normalize(rawPath).replace(/^(\.\.(\/|\\|$))+/, '');
-    const assetPath = path.join(ASSETS_DIR, 'images', safePath);
-    try {
-      const ext = path.extname(assetPath).toLowerCase();
-      const mime = STATIC_MIME_TYPES[ext];
-      if (!mime) return reply.code(404).send({ error: 'not found' });
-      const stat = await fs.stat(assetPath);
-      if (!stat.isFile()) return reply.code(404).send({ error: 'not found' });
-      const buffer = await fs.readFile(assetPath);
-      reply.header('Cache-Control', 'public, max-age=86400, immutable');
-      return reply.type(mime).send(buffer);
-    } catch {
-      return reply.code(404).send({ error: 'not found' });
-    }
+    const buffer = staticImageAssets.get(rawPath);
+    if (!buffer) return reply.code(404).send({ error: 'not found' });
+    reply.header('Cache-Control', 'public, max-age=86400, immutable');
+    return reply.type('image/png').send(buffer);
   });
   app.get('/favicon.ico', async (_request, reply) => {
-    const faviconPath = path.join(ASSETS_DIR, 'images', 'logo.png');
-    const buffer = await fs.readFile(faviconPath);
+    const buffer = staticImageAssets.get('logo.png');
+    if (!buffer) return reply.code(404).send({ error: 'not found' });
     reply.header('Cache-Control', 'public, max-age=86400');
     return reply.type('image/png').send(buffer);
   });
@@ -373,43 +411,76 @@ export function buildServer(input: BuildServerInput) {
     return readAuthStatus(input, providerId);
   });
 
-  app.post('/api/v1/providers/:id/auth/start', async (request, reply) => {
-    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
-    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
-    if (input.providerClientUpdates?.isRuntimeChanging(providerId)) {
-      return reply.code(409).send({
-        error: {
-          code: 'PROVIDER_CLIENT_UPDATE_IN_PROGRESS',
-          message: 'Wait for the provider app update to finish before signing in.',
+  app.post(
+    '/api/v1/providers/:id/auth/start',
+    {
+      config: {
+        awmRateLimit: {
+          maxRequests: PROVIDER_AUTH_OPERATION_RATE_LIMIT,
+          timeWindowMs: PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS,
         },
-      });
-    }
-    try {
-      return reply.code(202).send(input.authSessions!.start(providerId));
-    } catch (error) {
-      const failure = authSessionFailure(error);
-      return reply.code(failure.statusCode).send({ error: failure.error });
-    }
-  });
+      },
+    },
+    async (request, reply) => {
+      const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+      if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+      if (input.providerClientUpdates?.isRuntimeChanging(providerId)) {
+        return reply.code(409).send({
+          error: {
+            code: 'PROVIDER_CLIENT_UPDATE_IN_PROGRESS',
+            message: 'Wait for the provider app update to finish before signing in.',
+          },
+        });
+      }
+      try {
+        return reply.code(202).send(input.authSessions!.start(providerId));
+      } catch (error) {
+        const failure = authSessionFailure(error);
+        return reply.code(failure.statusCode).send({ error: failure.error });
+      }
+    },
+  );
 
-  app.post('/api/v1/providers/:id/auth/submit', async (request, reply) => {
-    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
-    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
-    try {
-      return reply
-        .code(202)
-        .send(input.authSessions!.submitCode(providerId, asRecord(request.body).code));
-    } catch (error) {
-      const failure = authSessionFailure(error);
-      return reply.code(failure.statusCode).send({ error: failure.error });
-    }
-  });
+  app.post(
+    '/api/v1/providers/:id/auth/submit',
+    {
+      config: {
+        awmRateLimit: {
+          maxRequests: PROVIDER_AUTH_OPERATION_RATE_LIMIT,
+          timeWindowMs: PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS,
+        },
+      },
+    },
+    async (request, reply) => {
+      const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+      if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+      try {
+        return reply
+          .code(202)
+          .send(input.authSessions!.submitCode(providerId, asRecord(request.body).code));
+      } catch (error) {
+        const failure = authSessionFailure(error);
+        return reply.code(failure.statusCode).send({ error: failure.error });
+      }
+    },
+  );
 
-  app.post('/api/v1/providers/:id/auth/cancel', async (request, reply) => {
-    const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
-    if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
-    return reply.code(200).send(input.authSessions!.cancel(providerId));
-  });
+  app.post(
+    '/api/v1/providers/:id/auth/cancel',
+    {
+      config: {
+        awmRateLimit: {
+          maxRequests: PROVIDER_AUTH_OPERATION_RATE_LIMIT,
+          timeWindowMs: PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS,
+        },
+      },
+    },
+    async (request, reply) => {
+      const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
+      if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
+      return reply.code(200).send(input.authSessions!.cancel(providerId));
+    },
+  );
 
   app.get('/api/v1/providers/:id', async (request, reply) => {
     const result = readApi.getProvider((request.params as { id?: unknown }).id);
@@ -472,23 +543,34 @@ export function buildServer(input: BuildServerInput) {
       .send(result.ok ? result.value : { error: { code: result.code, message: result.message } });
   });
 
-  app.post('/api/v1/provider-clients/:id/:operation', async (request, reply) => {
-    const controls = input.providerClientUpdates;
-    if (!controls) return reply.code(503).send({ error: 'PROVIDER_CLIENT_UPDATES_UNAVAILABLE' });
-    const providerId = parseProviderClientId((request.params as { id?: unknown }).id);
-    if (!providerId) return reply.code(404).send({ error: 'PROVIDER_CLIENT_NOT_FOUND' });
-    const operation = stringValue((request.params as { operation?: unknown }).operation);
-    if (operation !== 'check' && operation !== 'update' && operation !== 'rollback') {
-      return reply.code(404).send({ error: 'PROVIDER_CLIENT_OPERATION_NOT_FOUND' });
-    }
-    const accepted = startProviderClientOperation(controls, providerId, operation);
-    return accepted
-      ? reply.code(202).send({ accepted: true, providerId, operation })
-      : reply.code(409).send({
-          accepted: false,
-          error: { code: 'PROVIDER_CLIENT_OPERATION_RUNNING' },
-        });
-  });
+  app.post(
+    '/api/v1/provider-clients/:id/:operation',
+    {
+      config: {
+        awmRateLimit: {
+          maxRequests: PROVIDER_CLIENT_OPERATION_RATE_LIMIT,
+          timeWindowMs: REQUEST_RATE_LIMIT_WINDOW_MS,
+        },
+      },
+    },
+    async (request, reply) => {
+      const controls = input.providerClientUpdates;
+      if (!controls) return reply.code(503).send({ error: 'PROVIDER_CLIENT_UPDATES_UNAVAILABLE' });
+      const providerId = parseProviderClientId((request.params as { id?: unknown }).id);
+      if (!providerId) return reply.code(404).send({ error: 'PROVIDER_CLIENT_NOT_FOUND' });
+      const operation = stringValue((request.params as { operation?: unknown }).operation);
+      if (operation !== 'check' && operation !== 'update' && operation !== 'rollback') {
+        return reply.code(404).send({ error: 'PROVIDER_CLIENT_OPERATION_NOT_FOUND' });
+      }
+      const accepted = startProviderClientOperation(controls, providerId, operation);
+      return accepted
+        ? reply.code(202).send({ accepted: true, providerId, operation })
+        : reply.code(409).send({
+            accepted: false,
+            error: { code: 'PROVIDER_CLIENT_OPERATION_RUNNING' },
+          });
+    },
+  );
 
   app.post('/api/v1/scheduling', async (request, reply) => {
     const result = updateActivationPolicy(settingsInput, request.body);
@@ -898,6 +980,16 @@ export function buildServer(input: BuildServerInput) {
   });
 
   return app;
+}
+
+async function readStaticImageAssets(): Promise<ReadonlyMap<string, Buffer>> {
+  const loaded = await Promise.all(
+    STATIC_IMAGE_ASSETS.map(async ([requestPath, filePath]) => {
+      const buffer = await fs.readFile(path.join(ASSETS_DIR, 'images', filePath));
+      return [requestPath, buffer] as const;
+    }),
+  );
+  return new Map(loaded);
 }
 
 function expectedOrigin(

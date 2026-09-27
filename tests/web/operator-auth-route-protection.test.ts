@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OperatorAuthService } from '../../src/auth/operator-auth.js';
+import { OPERATOR_SESSION_COOKIE_NAME, OperatorAuthService } from '../../src/auth/operator-auth.js';
 import { loadConfig } from '../../src/config.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { openDatabase, type SqliteDatabase } from '../../src/storage/database.js';
 import { createRepositories } from '../../src/storage/repositories.js';
-import { CSRF_COOKIE_NAME } from '../../src/web/security.js';
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/web/security.js';
 import { buildServer } from '../../src/web/server.js';
 
 const NOW = '2026-09-25T12:00:00.000Z';
@@ -27,7 +27,10 @@ const resources: Array<{
   directory: string;
 }> = [];
 
-function createContext(trustedProxy = '') {
+function createContext(
+  trustedProxy = '',
+  requestRateLimitForTests?: { maxRequests: number; timeWindowMs: number },
+) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-operator-auth-routes-'));
   const db = openDatabase(path.join(directory, 'window-manager.db'));
   const repositories = createRepositories(db);
@@ -57,6 +60,7 @@ function createContext(trustedProxy = '') {
     adapters: new Map(),
     clock,
     operatorAuth,
+    ...(requestRateLimitForTests ? { requestRateLimitForTests } : {}),
   });
   resources.push({ app, db, directory });
   return { app, db, directory, operatorAuth, verifyPassword, clock };
@@ -97,12 +101,18 @@ describe('operator authentication route protection', () => {
       '/assets/app.css',
       '/assets/app.js',
       '/assets/images/logo.png',
+      '/assets/images/providers/codex.png',
       '/favicon.ico',
       '/login',
     ]) {
       const response = await app.inject({ url: route, headers: { host: HOST } });
       expect(response.statusCode, route).toBe(200);
     }
+    const unknownAsset = await app.inject({
+      url: '/assets/images/not-bundled.svg',
+      headers: { host: HOST },
+    });
+    expect(unknownAsset.statusCode).toBe(404);
 
     for (const route of [
       '/',
@@ -156,6 +166,88 @@ describe('operator authentication route protection', () => {
       expect(response.statusCode, route).toBe(401);
       expect(response.json()).toMatchObject({ error: { code: 'AUTH_REQUIRED' } });
     }
+  });
+
+  it('limits requests per resolved client, expires the window, and leaves health polling usable', async () => {
+    const start = new Date();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(start);
+    try {
+      const { app } = createContext('', { maxRequests: 2, timeWindowMs: 60_000 });
+      const health = (remoteAddress: string, forwardedFor?: string) =>
+        app.inject({
+          url: '/healthz',
+          remoteAddress,
+          headers: {
+            host: HOST,
+            ...(forwardedFor ? { 'x-forwarded-for': forwardedFor } : {}),
+          },
+        });
+
+      expect((await health('192.0.2.41')).statusCode).toBe(200);
+      expect((await health('192.0.2.41', '198.51.100.81')).statusCode).toBe(200);
+      const blocked = await health('192.0.2.41');
+      expect(blocked.statusCode).toBe(429);
+      expect(blocked.headers['retry-after']).toBeDefined();
+      expect(blocked.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
+
+      expect((await health('192.0.2.42')).statusCode).toBe(200);
+
+      vi.setSystemTime(new Date(start.getTime() + 60_001));
+      expect((await health('192.0.2.41')).statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('applies the stricter provider-client operation limit', async () => {
+    const { app, operatorAuth } = createContext();
+    const token = operatorAuth.sessions.create().token;
+    const csrfToken = 'a'.repeat(43);
+    const request = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/provider-clients/codex/check',
+        headers: {
+          host: HOST,
+          origin: ORIGIN,
+          cookie: `${OPERATOR_SESSION_COOKIE_NAME}=${token}; ${CSRF_COOKIE_NAME}=${csrfToken}`,
+          [CSRF_HEADER_NAME]: csrfToken,
+        },
+      });
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await request();
+      expect(response.statusCode, response.body).toBe(503);
+    }
+    const blocked = await request();
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
+  });
+
+  it('bounds provider sign-in operations separately from ordinary requests', async () => {
+    const { app, operatorAuth } = createContext();
+    const token = operatorAuth.sessions.create().token;
+    const csrfToken = 'b'.repeat(43);
+    const request = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/providers/codex/auth/submit',
+        headers: {
+          host: HOST,
+          origin: ORIGIN,
+          cookie: `${OPERATOR_SESSION_COOKIE_NAME}=${token}; ${CSRF_COOKIE_NAME}=${csrfToken}`,
+          [CSRF_HEADER_NAME]: csrfToken,
+        },
+        payload: { code: 'synthetic-code' },
+      });
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      expect((await request()).statusCode).toBe(404);
+    }
+    const blocked = await request();
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json()).toMatchObject({ error: { code: 'RATE_LIMITED' } });
   });
 
   it('authenticates a same-origin form and grants private reads', async () => {
@@ -377,6 +469,45 @@ describe('operator authentication route protection', () => {
     expect(wrongUsername.body).not.toContain('unknown-operator');
     expect(wrongUsername.body).not.toContain(OPERATOR_PASSWORD);
     expect(wrongPassword.body).not.toContain('synthetic-wrong-password');
+  });
+
+  it('keeps attacker-controlled login redirect and reason values inert in HTML', async () => {
+    const { app } = createContext();
+    const target = '/?notice="%3E%3Csvg/onload=alert(1)%3E';
+    const reason = '<img src=x onerror=awm_xss_probe>';
+    const loginPage = await app.inject({
+      url: `/login?next=${encodeURIComponent(target)}&reason=${encodeURIComponent(reason)}`,
+      headers: { host: HOST },
+    });
+    const csrfToken = readCookieValue(
+      cookieHeaders(loginPage.headers['set-cookie']),
+      CSRF_COOKIE_NAME,
+    );
+    const failedLogin = await app.inject({
+      method: 'POST',
+      url: '/login',
+      headers: {
+        host: HOST,
+        origin: ORIGIN,
+        cookie: `${CSRF_COOKIE_NAME}=${csrfToken}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: formPayload({
+        username: 'unknown-operator',
+        password: 'synthetic-invalid-password',
+        csrfToken: csrfToken!,
+        next: target,
+      }),
+    });
+
+    expect(loginPage.statusCode).toBe(200);
+    expect(failedLogin.statusCode).toBe(401);
+    for (const response of [loginPage, failedLogin]) {
+      expect(response.body.toLowerCase()).not.toContain('<svg');
+      expect(response.body.toLowerCase()).not.toContain('<img src=x onerror=awm_xss_probe>');
+      expect(response.body).not.toContain('awm_xss_probe');
+    }
+    expect(failedLogin.body).toContain('Invalid username or password.');
   });
 
   it('returns a bounded 429 with Retry-After after five failures from one source', async () => {

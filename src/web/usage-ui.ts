@@ -9,7 +9,8 @@ import {
   type HistoryUsageSeries,
   type HistoryRange,
 } from './logs-ui.js';
-import { escapeHtml, renderAppShell } from './ui/layout.js';
+import escapeHtml from 'escape-html';
+import { renderAppShell } from './ui/layout.js';
 import {
   providerDisplayName,
   timeZoneDisplayName,
@@ -248,7 +249,7 @@ function renderCalendar(
   const firstDate = data.days[0]?.localDate;
   if (!firstDate || data.days.length === 0) {
     return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
-      <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel!)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel">${sourceSelector}</div></div>
+      <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel">${sourceSelector}</div></div>
       <div class="usage-empty" role="status"><h3>No saved usage yet</h3><p>New observations will be shown here after the provider is checked.</p></div>
     </section>`;
   }
@@ -290,7 +291,7 @@ function renderCalendar(
     return `<div class="usage-calendar-row" role="row">${cellsMarkup}</div>`;
   }).join('');
   return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
-    <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel!)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel"><span class="section-count">${escapeHtml(data.fromDate)} – ${escapeHtml(data.today)}</span>${sourceSelector}</div></div>
+    <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel"><span class="section-count">${escapeHtml(data.fromDate)} – ${escapeHtml(data.today)}</span>${sourceSelector}</div></div>
     <div class="usage-calendar-layout">
       <div class="usage-weekdays" aria-hidden="true"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
       <div class="usage-calendar-scroll" tabindex="0" aria-label="Scrollable usage calendar">

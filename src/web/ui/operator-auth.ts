@@ -1,4 +1,4 @@
-import { escapeHtml } from './layout.js';
+import escapeHtml from 'escape-html';
 
 export type OperatorLoginError = 'invalid_credentials' | 'too_many_attempts' | 'session_expired';
 

@@ -19,7 +19,10 @@ describe('shared application shell', () => {
       expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
       expect(html).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
       expect(html).toContain('Skip to content');
-      expect(html).not.toMatch(/<style|<script>|style=/);
+      const normalizedHtml = html.toLowerCase();
+      expect(normalizedHtml).not.toContain('<style');
+      expect(normalizedHtml).not.toContain('<script>');
+      expect(normalizedHtml).not.toContain('style=');
     },
   );
   it('uses one process-scoped cache key for both local asset bundles', () => {

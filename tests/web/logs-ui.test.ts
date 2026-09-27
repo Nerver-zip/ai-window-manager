@@ -432,6 +432,18 @@ describe('history UI helpers', () => {
     expect(html).not.toContain('accountId');
   });
 
+  it('preserves the selected log tag in an escaped hidden form field', () => {
+    const html = renderLogsPage({
+      now: NOW,
+      filter: { range: '24h', tag: 'trigger' },
+      providers: [],
+      events: [],
+      samples: [],
+    });
+
+    expect(html).toContain('<input type="hidden" name="tag" value="trigger">');
+  });
+
   it('shows event times in the saved timezone without milliseconds or ISO jargon', () => {
     const html = renderLogsPage({
       now: NOW,

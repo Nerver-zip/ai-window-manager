@@ -283,7 +283,10 @@ describe('web server persisted overview', () => {
     expect(response.headers['content-type']).toContain('text/html');
     expect(response.body).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
     expect(response.body).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
-    expect(response.body).not.toMatch(/<style|style=|<script>/);
+    const normalizedHtml = response.body.toLowerCase();
+    expect(normalizedHtml).not.toContain('<style');
+    expect(normalizedHtml).not.toContain('style=');
+    expect(normalizedHtml).not.toContain('<script>');
     expect(response.body).toContain('aria-current="page"');
   });
 
@@ -818,7 +821,10 @@ describe('web server persisted overview', () => {
     expect(page.headers['content-type']).toContain('text/html');
     expect(page.body).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
     expect(page.body).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
-    expect(page.body).not.toMatch(/<style|style=|<script>/);
+    const normalizedHtml = page.body.toLowerCase();
+    expect(normalizedHtml).not.toContain('<style');
+    expect(normalizedHtml).not.toContain('style=');
+    expect(normalizedHtml).not.toContain('<script>');
     expect(page.body).toContain('value="25"');
     expect(page.body).toContain('<progress');
     expect(page.body).toContain('No start policy selected');
@@ -842,6 +848,23 @@ describe('web server persisted overview', () => {
     expect(page.body).not.toContain('five_hour');
     expect(page.body).not.toContain('<script>persisted text</script>');
     expect(inspected.count).toBe(0);
+  });
+
+  it('does not reflect untrusted log or usage filters into HTML', async () => {
+    const { app } = createApp((repositories) => seedObservedProvider(repositories));
+    const probe = encodeURIComponent('<img src=x onerror=awm_xss_probe>');
+    const logs = await app.inject(
+      `/logs?provider=fake&range=${probe}&tag=${probe}&type=${probe}&chartRange=${probe}`,
+    );
+    const usage = await app.inject(
+      `/usage?provider=fake&window=${probe}&day=${probe}&chartRange=${probe}`,
+    );
+
+    expect(logs.statusCode).toBe(200);
+    expect(usage.statusCode).toBe(200);
+    for (const response of [logs, usage]) {
+      expect(response.body.toLowerCase()).not.toContain('<img src=x onerror=');
+    }
   });
 
   it('omits inferred window phase labels from the overview', async () => {

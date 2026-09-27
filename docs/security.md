@@ -213,6 +213,21 @@ cannot mark cookies secure or influence source-based throttling.
   session.
 - API errors are sanitized; detailed provider errors stay in structured logs/events.
 
+Registered HTTP routes use an in-memory per-client limit of 300 requests per
+minute, with an LRU cache capped at 5,000 client keys. The IP key is Fastify's
+resolved `request.ip`; forwarded headers affect it only through explicitly
+configured `AWM_TRUST_PROXY` sources. Provider sign-in start, code submission,
+and cancellation are further limited to 12 requests per client in five
+minutes; provider-client check, update, and rollback operations are limited to
+six per minute. These limits return HTTP 429 with `Retry-After`. The normal
+Compose health probe runs once every 30 seconds, well below the general
+ceiling. Login failures retain their stricter existing per-source and global
+authentication throttles.
+
+Public image routes serve only the fixed logo files bundled with the app. They
+are loaded into memory at server readiness, so requests do not perform
+filesystem lookups or reads.
+
 The login mutation at `POST /login` is Origin + CSRF protected; `POST /logout`
 is also protected and invalidates the presented session. The current product
 mutation surface is `/settings/providers/:id`, `/schedule`,

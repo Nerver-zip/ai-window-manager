@@ -7,7 +7,8 @@
  * payloads.
  */
 
-import { escapeHtml, renderAppShell } from './ui/layout.js';
+import escapeHtml from 'escape-html';
+import { renderAppShell } from './ui/layout.js';
 import {
   eventLabel,
   eventReasonLabel,
@@ -392,7 +393,9 @@ export function renderLogsPage(input: HistoryPageInput): string {
         `<a class="log-tag-filter${selectedTag === tag.value ? ' is-active' : ''}" href="${escapeAttribute(logTagHref(tag.value, view.range, view.providerId))}"${selectedTag === tag.value ? ' aria-current="page"' : ''}><span aria-hidden="true">${tag.icon}</span> ${tag.label}</a>`,
     ),
   ].join('');
-  const hiddenTag = view.tag ? `<input type="hidden" name="tag" value="${view.tag}">` : '';
+  const hiddenTag = view.tag
+    ? `<input type="hidden" name="tag" value="${escapeAttribute(view.tag)}">`
+    : '';
   const hiddenType = view.eventType
     ? `<input type="hidden" name="type" value="${escapeAttribute(view.eventType)}">`
     : '';
