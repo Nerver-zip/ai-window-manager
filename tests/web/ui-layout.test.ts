@@ -19,6 +19,10 @@ describe('shared application shell', () => {
       expect(html).toMatch(/href="\/assets\/app\.css\?v=[a-f0-9-]+"/);
       expect(html).toMatch(/<script defer src="\/assets\/app\.js\?v=[a-f0-9-]+"><\/script>/);
       expect(html).toContain('Skip to content');
+      expect(html).toContain('<main id="main" data-awm-region="app-content" tabindex="-1">');
+      expect(html).toContain(
+        '<div class="visually-hidden" data-awm-interaction-status role="status" aria-live="polite" aria-atomic="true"></div>',
+      );
       const normalizedHtml = html.toLowerCase();
       expect(normalizedHtml).not.toContain('<style');
       expect(normalizedHtml).not.toContain('<script>');

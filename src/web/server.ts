@@ -8,6 +8,7 @@ import { APP_CSS } from './ui/styles.js';
 import { APP_JS } from './ui/chart-interactions.js';
 import { AUTH_ONBOARDING_CSS } from './ui/auth-onboarding-styles.js';
 import { AUTH_ONBOARDING_JS } from './ui/auth-onboarding-interactions.js';
+import { PROGRESSIVE_INTERACTIONS_JS } from './ui/progressive-interactions.js';
 import { OPERATOR_AUTH_CSS } from './ui/operator-auth-styles.js';
 import { renderOperatorLoginPage, renderOperatorLogoutPage } from './ui/operator-auth.js';
 import {
@@ -126,7 +127,7 @@ const PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS = 5 * 60_000;
 const PROVIDER_CLIENT_OPERATION_RATE_LIMIT = 6;
 const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity'];
 const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}\n${OPERATOR_AUTH_CSS}`;
-const APP_JS_WITH_AUTH = `${APP_JS}\n${AUTH_ONBOARDING_JS}`;
+const APP_JS_WITH_ENHANCEMENTS = `${APP_JS}\n${AUTH_ONBOARDING_JS}\n${PROGRESSIVE_INTERACTIONS_JS}`;
 
 export interface BuildServerInput {
   config: AppConfig;
@@ -285,7 +286,7 @@ export function buildServer(input: BuildServerInput) {
     reply.type('text/css; charset=utf-8').send(APP_CSS_WITH_AUTH),
   );
   app.get('/assets/app.js', async (_request, reply) =>
-    reply.type('application/javascript; charset=utf-8').send(APP_JS_WITH_AUTH),
+    reply.type('application/javascript; charset=utf-8').send(APP_JS_WITH_ENHANCEMENTS),
   );
   app.get('/assets/images/*', async (request, reply) => {
     const rawPath = (request.params as { '*': string })['*'];

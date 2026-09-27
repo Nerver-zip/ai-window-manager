@@ -27,8 +27,10 @@ class AuthUiNode {
   value = '';
   classList = { toggle: () => undefined };
   private readonly listeners = new Map<string, () => unknown>();
+  registrationCount = 0;
 
   addEventListener(event: string, listener: () => unknown): void {
+    this.registrationCount += 1;
     this.listeners.set(event, listener);
   }
 
@@ -96,6 +98,7 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     toString: () => selectedNode?.textContent ?? '',
   };
   const fetchRequests: Array<{ url: string; method: string; body: string | undefined }> = [];
+  const documentListeners = new Map<string, (event: { detail?: { root?: unknown } }) => void>();
   const clipboardWrites: string[] = [];
   const legacyCopies: string[] = [];
   let legacyTextarea: { value: string } | null = null;
@@ -107,6 +110,10 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
 
   const document = {
     cookie: '',
+    addEventListener: (event: string, listener: (event: { detail?: { root?: unknown } }) => void) =>
+      documentListeners.set(event, listener),
+    dispatchEvent: (event: { type: string; detail?: { root?: unknown } }) =>
+      documentListeners.get(event.type)?.(event),
     querySelectorAll: (selector: string) => (selector === '[data-auth-onboarding]' ? [panel] : []),
     createRange: () => {
       const range: { node: AuthUiNode | null; selectNodeContents: (node: AuthUiNode) => void } = {
@@ -138,10 +145,13 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
       return true;
     },
   };
+  let clearTimeoutCalls = 0;
   const window = {
     location: { origin: 'http://awm.test' },
     getSelection: () => (options.selectionAvailable === false ? null : selection),
-    clearTimeout: () => undefined,
+    clearTimeout: () => {
+      clearTimeoutCalls += 1;
+    },
     setTimeout: () => 1,
   };
   const clipboard = options.clipboard
@@ -173,6 +183,13 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     clipboardWrites,
     legacyCopies,
     fetchRequests,
+    rehydrate: () => document.dispatchEvent({ type: 'awm:enhance', detail: { root: document } }),
+    dispose: () => document.dispatchEvent({ type: 'awm:dispose', detail: { root: document } }),
+    getListenerRegistrationCount: () =>
+      [...nodes.values()].reduce((count, node) => count + node.registrationCount, 0),
+    get clearTimeoutCalls() {
+      return clearTimeoutCalls;
+    },
     selection,
     get selectedText() {
       return selection.toString();
@@ -185,6 +202,20 @@ async function waitForAuthRefresh(): Promise<void> {
 }
 
 describe('auth onboarding UI', () => {
+  it('rehydrates without duplicate listeners and disposes polling when its region is replaced', async () => {
+    const harness = createAuthUiHarness({ initialCode: 'ABCD-EFGHI', refreshedCode: 'JKLM-NOPQR' });
+    const registrations = harness.getListenerRegistrationCount();
+
+    harness.rehydrate();
+    harness.rehydrate();
+    await waitForAuthRefresh();
+    await waitForAuthRefresh();
+    harness.dispose();
+
+    expect(harness.getListenerRegistrationCount()).toBe(registrations);
+    expect(harness.clearTimeoutCalls).toBeGreaterThan(0);
+  });
+
   it('renders a loading state without exposing implementation details', () => {
     const html = renderAuthOnboarding({ providerId: 'codex' });
 

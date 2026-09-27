@@ -69,6 +69,17 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     return panel.querySelector(selector);
   }
 
+  const enhancedPanels = new WeakSet();
+  const panelCleanup = new WeakMap();
+
+  function queryAll(root, selector) {
+    if (!root || typeof root.querySelectorAll !== 'function') return [];
+    const results = [];
+    if (typeof root.matches === 'function' && root.matches(selector)) results.push(root);
+    results.push(...root.querySelectorAll(selector));
+    return results;
+  }
+
   function setHidden(node, hidden) {
     if (node) node.hidden = hidden;
   }
@@ -199,7 +210,10 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     return readStatus(payload, panel.dataset.authProviderId);
   }
 
-  for (const panel of document.querySelectorAll('[data-auth-onboarding]')) {
+  function enhance(root) {
+  for (const panel of queryAll(root, '[data-auth-onboarding]')) {
+    if (enhancedPanels.has(panel)) continue;
+    enhancedPanels.add(panel);
     let pollTimer = null;
     let busy = false;
 
@@ -207,16 +221,19 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       if (pollTimer !== null) window.clearTimeout(pollTimer);
       pollTimer = null;
     };
+    panelCleanup.set(panel, stopPolling);
 
     const poll = async () => {
       stopPolling();
-      if (!ACTIVE_STATES.has(panel.dataset.authState || '')) return;
+      if (panel.isConnected === false || !ACTIVE_STATES.has(panel.dataset.authState || '')) return;
       try {
         const status = await request(panel, panel.dataset.authStatusUrl, 'GET');
+        if (panel.isConnected === false) return;
         if (!status) throw new Error('invalid_status');
         render(panel, status);
         if (ACTIVE_STATES.has(status.state)) pollTimer = window.setTimeout(poll, 2000);
       } catch {
+        if (panel.isConnected === false) return;
         const error = element(panel, '[data-auth-error]');
         if (error) {
           error.textContent = 'The provider connection status could not be refreshed.';
@@ -231,10 +248,12 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       busy = true;
       try {
         const status = await request(panel, url, 'POST', body);
+        if (panel.isConnected === false) return;
         if (!status) throw new Error('invalid_status');
         render(panel, status);
         if (ACTIVE_STATES.has(status.state)) pollTimer = window.setTimeout(poll, 2000);
       } catch {
+        if (panel.isConnected === false) return;
         const error = element(panel, '[data-auth-error]');
         if (error) {
           error.textContent = 'The provider sign-in request could not be completed. Try again.';
@@ -371,4 +390,15 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
 
     if (ACTIVE_STATES.has(panel.dataset.authState || '')) poll();
   }
+  }
+
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('awm:enhance', (event) => enhance(event.detail?.root));
+    document.addEventListener('awm:dispose', (event) => {
+      for (const panel of queryAll(event.detail?.root, '[data-auth-onboarding]')) {
+        panelCleanup.get(panel)?.();
+      }
+    });
+  }
+  enhance(document);
 })();`;

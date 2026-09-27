@@ -309,9 +309,13 @@ describe('schedule provider switching', () => {
     let providerChange: (() => void) | undefined;
     let windowChange: (() => void) | undefined;
     let submitted = 0;
+    let providerListenerCount = 0;
     const providerChoice = {
       addEventListener: (event: string, listener: () => void) => {
-        if (event === 'change') providerChange = listener;
+        if (event === 'change') {
+          providerChange = listener;
+          providerListenerCount += 1;
+        }
       },
     };
     const windowChoice = {
@@ -326,16 +330,23 @@ describe('schedule provider switching', () => {
         submitted += 1;
       },
     };
+    const documentListeners = new Map<string, (event: { detail?: { root?: unknown } }) => void>();
     const document = {
       querySelectorAll: (selector: string) =>
         selector === '[data-provider-picker-auto-submit]' ? [form] : [],
+      addEventListener: (
+        event: string,
+        listener: (event: { detail?: { root?: unknown } }) => void,
+      ) => documentListeners.set(event, listener),
     };
 
     new Script(APP_JS).runInNewContext({ document, window: {} });
+    documentListeners.get('awm:enhance')?.({ detail: { root: document } });
     providerChange?.();
     windowChange?.();
 
     expect(submitted).toBe(1);
+    expect(providerListenerCount).toBe(1);
   });
 
   it('automatically applies usage-window changes on the Usage page', () => {

@@ -837,6 +837,11 @@ describe('web server persisted overview', () => {
     expect(javascript.statusCode).toBe(200);
     expect(javascript.headers['content-type']).toContain('application/javascript');
     expect(javascript.body).toContain('data-chart-point');
+    expect(javascript.body).toContain('awm:enhance');
+    expect(javascript.body).toContain('awm:dispose');
+    // The served bundle intentionally combines chart, auth and region-refresh
+    // enhancements while remaining a small, dependency-free browser layer.
+    expect(new TextEncoder().encode(javascript.body).length).toBeLessThan(48 * 1024);
     expect(page.body).toContain('Connection</dt><dd>Connected');
     expect(page.body).toContain('left');
     expect(page.body).toContain('75%');

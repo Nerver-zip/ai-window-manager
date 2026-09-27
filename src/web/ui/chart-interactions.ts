@@ -1,8 +1,31 @@
 /** Small progressive enhancement for the server-rendered chart primitives. */
 export const APP_JS = `(() => {
-  const roots = document.querySelectorAll('[data-chart-root]');
+  const initialized = new WeakMap();
 
-  for (const form of document.querySelectorAll('form[action^="/settings/providers/"]')) {
+  function queryAll(root, selector) {
+    if (!root || typeof root.querySelectorAll !== 'function') return [];
+    const results = [];
+    if (typeof root.matches === 'function' && root.matches(selector)) results.push(root);
+    results.push(...root.querySelectorAll(selector));
+    return results;
+  }
+
+  function initializeOnce(element, key) {
+    let initializedFeatures = initialized.get(element);
+    if (!initializedFeatures) {
+      initializedFeatures = new Set();
+      initialized.set(element, initializedFeatures);
+    }
+    if (initializedFeatures.has(key)) return false;
+    initializedFeatures.add(key);
+    return true;
+  }
+
+  function enhance(root) {
+    if (!root) return;
+
+  for (const form of queryAll(root, 'form[action^="/settings/providers/"]')) {
+    if (!initializeOnce(form, 'refresh-preset')) continue;
     const preset = form.querySelector('[data-refresh-preset]');
     const custom = form.querySelector('[data-refresh-custom]');
     const customInput = custom?.querySelector('input');
@@ -18,14 +41,16 @@ export const APP_JS = `(() => {
     syncCustomInterval();
   }
 
-  for (const select of document.querySelectorAll('[data-chart-range-select]')) {
+  for (const select of queryAll(root, '[data-chart-range-select]')) {
+    if (!initializeOnce(select, 'chart-range')) continue;
     select.addEventListener('change', () => {
       const form = select.closest('form');
       if (form?.requestSubmit) form.requestSubmit();
     });
   }
 
-  for (const form of document.querySelectorAll('[data-provider-picker-auto-submit]')) {
+  for (const form of queryAll(root, '[data-provider-picker-auto-submit]')) {
+    if (!initializeOnce(form, 'provider-picker')) continue;
     for (const input of form.querySelectorAll('.provider-picker-input')) {
       input.addEventListener('change', () => {
         if (form?.requestSubmit) form.requestSubmit();
@@ -33,7 +58,8 @@ export const APP_JS = `(() => {
     }
   }
 
-  for (const form of document.querySelectorAll('[data-usage-filter-auto-submit]')) {
+  for (const form of queryAll(root, '[data-usage-filter-auto-submit]')) {
+    if (!initializeOnce(form, 'usage-filter')) continue;
     form.addEventListener('change', (event) => {
       const target = event.target;
       if (target?.matches?.('select[name="window"]')) {
@@ -51,7 +77,8 @@ export const APP_JS = `(() => {
     }
   }
 
-  for (const form of document.querySelectorAll('[data-policy-form]')) {
+  for (const form of queryAll(root, '[data-policy-form]')) {
+    if (!initializeOnce(form, 'policy-form')) continue;
     const choices = Array.from(form.querySelectorAll('[name="policyKind"]'));
     const sections = Array.from(form.querySelectorAll('[data-policy-fields]'));
     if (choices.length === 0) continue;
@@ -182,7 +209,8 @@ export const APP_JS = `(() => {
     return item;
   }
 
-  for (const list of document.querySelectorAll('[data-schedule-list]')) {
+  for (const list of queryAll(root, '[data-schedule-list]')) {
+    if (!initializeOnce(list, 'schedule-list')) continue;
     const add = list.querySelector('[data-list-add]');
     add?.addEventListener('click', () => {
       const item = addScheduleItem(list);
@@ -229,7 +257,8 @@ export const APP_JS = `(() => {
     renumberList(list);
   }
 
-  for (const select of document.querySelectorAll('[data-timezone-select]')) {
+  for (const select of queryAll(root, '[data-timezone-select]')) {
+    if (!initializeOnce(select, 'timezone-select')) continue;
     const form = select.closest('form');
     const source = form?.querySelector('[name="source"]');
     const status = form?.querySelector('[data-timezone-status]');
@@ -306,22 +335,24 @@ export const APP_JS = `(() => {
     tooltip.dataset.visible = 'true';
   }
 
-  for (const root of roots) {
-    root.addEventListener('pointerover', (event) => {
+  for (const chartRoot of queryAll(root, '[data-chart-root]')) {
+    if (!initializeOnce(chartRoot, 'chart-tooltip')) continue;
+    chartRoot.addEventListener('pointerover', (event) => {
       const point = event.target.closest?.('[data-chart-point]');
-      if (point && root.contains(point)) show(root, point);
+      if (point && chartRoot.contains(point)) show(chartRoot, point);
     });
-    root.addEventListener('pointerleave', () => hide(root));
-    root.addEventListener('focusin', (event) => {
+    chartRoot.addEventListener('pointerleave', () => hide(chartRoot));
+    chartRoot.addEventListener('focusin', (event) => {
       const point = event.target.closest?.('[data-chart-point]');
-      if (point && root.contains(point)) show(root, point);
+      if (point && chartRoot.contains(point)) show(chartRoot, point);
     });
-    root.addEventListener('focusout', (event) => {
-      if (!root.contains(event.relatedTarget)) hide(root);
+    chartRoot.addEventListener('focusout', (event) => {
+      if (!chartRoot.contains(event.relatedTarget)) hide(chartRoot);
     });
   }
 
-  for (const grid of document.querySelectorAll('[data-usage-grid]')) {
+  for (const grid of queryAll(root, '[data-usage-grid]')) {
+    if (!initializeOnce(grid, 'usage-grid')) continue;
     const cells = Array.from(grid.querySelectorAll('[data-usage-cell]'));
     const cellsByDay = new Map(cells.map((cell) => [Number(cell.dataset.usageIndex), cell]));
     const selected = cells.find((cell) => cell.getAttribute('aria-selected') === 'true');
@@ -349,4 +380,10 @@ export const APP_JS = `(() => {
       }
     });
   }
+  }
+
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('awm:enhance', (event) => enhance(event.detail?.root));
+  }
+  enhance(document);
 })();`;

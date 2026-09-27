@@ -165,6 +165,10 @@ progress::-moz-progress-bar { background: var(--accent); }
 .policy-fields[aria-hidden="true"] { display: none; }
 .policy-fields > .field-help { margin-top: 14px; }
 .visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+.awm-is-loading { opacity: .78; transition: opacity .14s ease; }
+.awm-interaction-error { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; border: 1px solid rgba(239, 200, 120, .45); border-radius: var(--radius-sm); background: rgba(239, 200, 120, .08); padding: 12px 14px; }
+.awm-interaction-error p { margin: 0; color: var(--text-soft); }
+.awm-interaction-error .button { flex: 0 0 auto; }
 .schedule-primary-fields { margin-bottom: 22px; }
 .policy-choice-group { border: 0; margin: 0; padding: 0; }
 .policy-choice-group > legend { margin: 0 0 6px; padding: 0; color: var(--text); font-size: 14px; font-weight: 650; }
@@ -580,6 +584,7 @@ h1, h2, h3, h4, span { overflow-wrap: anywhere; }
   main { padding: 24px 16px; }
   h1 { font-size: 28px; }
   .page-header { margin-bottom: 26px; }
+  .awm-interaction-error { align-items: flex-start; flex-direction: column; gap: 10px; }
   .page-description { font-size: 14px; }
   .card, .provider, .usage-card { padding: 18px; }
   .card-header, .provider-header { display: block; }

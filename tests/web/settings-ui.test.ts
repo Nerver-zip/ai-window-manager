@@ -698,7 +698,9 @@ describe('settings UI helpers', () => {
     expect(APP_JS).toContain('form.requestSubmit()');
     expect(APP_JS).toContain('[data-refresh-preset]');
     expect(() => new Script(APP_JS)).not.toThrow();
-    expect(new TextEncoder().encode(APP_JS).length).toBeLessThan(15 * 1024);
+    // Keep the existing chart/schedule enhancer bounded; the combined served
+    // chart, auth and interaction bundle has its own 48 KiB ceiling.
+    expect(new TextEncoder().encode(APP_JS).length).toBeLessThan(18 * 1024);
 
     const manualSettings = renderSettingsPage({
       csrfToken,
