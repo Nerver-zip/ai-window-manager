@@ -54,10 +54,12 @@ deployment remains operator acceptance; no quota-consuming action was run.
 - **WEB-004 / TEST-004**: Settings onboarding UI and offline lifecycle/runtime
   test coverage.
 
-Antigravity quota actions are a separate, experimental, quota-consuming
-capability. Their environment gate defaults on for configured providers and
-can be explicitly set to false; provider automation mode, a saved target and
-all normal preflight checks are still required.
+Antigravity quota actions are a separate, owner-confirmed but
+`observed_undocumented` quota-consuming capability. Their environment gate
+defaults on for configured providers and can be explicitly set to false;
+provider automation mode, a saved target and all normal preflight checks are
+still required. The tested effect is not guaranteed for every account, plan or
+future CLI release.
 
 ## Native operator access milestone — complete
 
@@ -114,8 +116,8 @@ flows and ordinary provider tests are offline and do not consume quota.
   uses only explicitly authorized per-ID local file deletion under the isolated
   AWM home, not a supported delete API; its storage layout is a remaining risk.
 - **RUNTIME-CLIENT-001 — Provider client lifecycle**: one manifest pins Codex
-  `0.157.0` and Antigravity `1.2.11` (official stable release check on
-  2026-09-25) with architecture digests; manual update/rollback, optional
+  `0.157.1` (official stable release on 2026-09-26) and Antigravity `1.2.12`
+  with architecture digests; manual update/rollback, optional
   off-by-default daily automatic updates, bounded staging and read-only
   compatibility checks are implemented. A scheduled workflow proposes
   validated pin changes by review-only PR.
@@ -127,10 +129,11 @@ flows and ordinary provider tests are offline and do not consume quota.
   configuration remains separate; SQLite claim rules and the executor serialize
   open quota-consuming actions provider-wide until confirmation/safe resolution.
 
-No live provider inspection, sign-in, trigger, or production container was used
-to validate these implementation changes. Existing operator-provided account
-evidence remains documented separately in `docs/research/spikes/SPIKE-004*`
-and `SPIKE-005*`.
+The implementation changes above were validated offline and did not themselves
+exercise a provider or production container. Separately, operator-authorized
+Codex evidence is in `SPIKE-004`; the owner confirms end-to-end Antigravity
+action validation for both model families (recorded in `SPIKE-005`). This
+release-preparation run did not repeat any provider request or spend quota.
 
 ## CORE-001 — Finalize evidence/window domain types
 
@@ -180,7 +183,7 @@ and `SPIKE-005*`.
 
 ## SCHED-003 — Implement action-intent execution/recovery
 
-**Status: complete for generic execution/recovery; provider-wide atomic claim protection additionally serializes quota triggers across policy scopes. Antigravity's official-CLI action remains tracked under AGY-TRIGGER-001.**
+**Status: complete for generic execution/recovery; provider-wide atomic claim protection additionally serializes quota triggers across policy scopes. Codex and Antigravity integrations use this executor; Antigravity live acceptance is owner-confirmed under AGY-TRIGGER-001.**
 
 **Scope**: claim, dispatch, confirm, uncertain recovery, retry classes, missed-action skip.  
 **Acceptance**: DB unique dedupe protects duplicate trigger; crash-at-each-stage integration tests.  
@@ -207,7 +210,7 @@ requires review of both new policies before any migrated automatic action.
 
 ## AGY-TRIGGER-001 — Implement durable target-specific Antigravity actions
 
-**Status: implemented with offline tests; integrated live action acceptance is pending.**
+**Status: implemented with offline tests and owner-confirmed end-to-end live acceptance for both model families (2026-09-27).**
 
 Use the pinned official `agy` CLI stream-JSON protocol with one fixed `Hi!`,
 the model mapped to the exact selected quota family, a durable intent and a
@@ -263,12 +266,13 @@ HTTP handler never inspects or dispatches a provider action.
 
 ## ANT-002 — Reassess Antigravity trigger semantics
 
-**Status: complete with account-specific operator evidence; not a universal provider guarantee.**
+**Status: complete; account-specific CLI and end-to-end AWM evidence is owner-confirmed, not a universal provider guarantee.**
 
-An operator observed that one official `agy -p "Hi!"` turn with each family’s
-configured model anchored that family’s five-hour reset. See
+The owner confirms the integrated AWM trigger has been validated end-to-end for
+both families. Earlier evidence showed that one official `agy -p "Hi!"` turn
+with each family’s configured model anchored that family’s five-hour reset. See
 [`SPIKE-005`](research/spikes/SPIKE-005-antigravity-window-trigger.md). This
-supports an experimental implementation, but does not establish a
+supports the implemented integration, but does not establish a
 dedicated start API or generalize to all accounts/versions. The capability is
 `observed_undocumented` and quota-consuming; its runtime gate defaults on for
 configured providers and can be explicitly disabled.

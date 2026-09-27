@@ -2,11 +2,14 @@ import { mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
 const executable = process.env.AWM_CODEX_EXECUTABLE;
-const expectedVersion = process.env.CODEX_VERSION ?? '0.155.1';
+const expectedVersion = process.env.CODEX_VERSION;
 const home = process.env.CODEX_HOME ?? '/tmp/awm-ops-002-codex-home';
 const timeoutMs = 10_000;
 
 if (!executable) throw new Error('AWM_CODEX_EXECUTABLE is required');
+if (!expectedVersion || !/^\d+\.\d+\.\d+$/.test(expectedVersion)) {
+  throw new Error('CODEX_VERSION must be set from provider-clients.lock.json');
+}
 await mkdir(home, { recursive: true, mode: 0o700 });
 
 const version = await new Promise((resolve, reject) => {

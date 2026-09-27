@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ProviderObservation, WindowSnapshot } from '../../src/domain/types.js';
 import {
   InspectionResult,
+  clearActionIntentMetrics,
+  clearProviderObservationMetrics,
   recordInspection,
   recordObservation,
   recordProviderHealth,
@@ -141,6 +143,53 @@ describe('prometheus metrics', () => {
     ]);
   });
 
+  it('clears removed providers and empty intent-count snapshots without retaining stale series', async () => {
+    recordObservation(
+      makeObservation([makeWindow('five_hour', { usageRatio: fact(0.3) })]),
+      Date.parse('2026-09-19T13:00:00.000Z'),
+    );
+    setActionIntentCounts('fake', { planned: 1, executing: 1 });
+
+    clearProviderObservationMetrics('fake');
+    clearProviderObservationMetrics('not-yet-observed');
+    clearActionIntentMetrics('fake');
+    clearActionIntentMetrics('not-yet-observed');
+    setActionIntentCounts('fake', {});
+    refreshObservationMetrics(Date.parse('2026-09-19T14:00:00.000Z'));
+
+    expect(await valuesFor('ai_window_usage_ratio')).toEqual([]);
+    expect(await valuesFor('ai_window_age_seconds')).toEqual([]);
+    expect(await valuesFor('ai_window_action_intents')).toEqual([]);
+  });
+
+  it('skips undefined intent-count fields and rejects non-finite observation values', () => {
+    const sparseCounts = {
+      planned: undefined,
+    } as unknown as Parameters<typeof setActionIntentCounts>[1];
+    expect(() => setActionIntentCounts('fake', sparseCounts)).not.toThrow();
+
+    expect(() => recordObservation(makeObservation([]), { nowMs: Number.NaN })).toThrow(
+      'nowMs must be finite',
+    );
+    expect(() =>
+      recordObservation(makeObservation([]), { nowMs: 1, successfulInspectionAtMs: Infinity }),
+    ).toThrow('successfulInspectionAtMs must be finite');
+    expect(() =>
+      recordObservation(makeObservation([makeWindow('five_hour')]), {
+        nowMs: Date.parse('2026-09-19T13:00:00.000Z'),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      recordObservation(
+        {
+          ...makeObservation([makeWindow('five_hour')]),
+          windows: [{ ...makeWindow('five_hour'), observedAt: 'not-an-instant' }],
+        },
+        Date.parse('2026-09-19T13:00:00.000Z'),
+      ),
+    ).toThrow('window observedAt must be a valid instant');
+  });
+
   it('marks non-UP health as down without deleting the last observed window gauges', async () => {
     recordObservation(
       makeObservation([makeWindow('five_hour', { usageRatio: fact(0.4) })]),
@@ -164,6 +213,12 @@ describe('prometheus metrics', () => {
       'trigger result label is not supported',
     );
     expect(() => setActionIntentCount('fake', 'planned', -1)).toThrow(
+      'action intent count must be a finite non-negative number',
+    );
+    expect(() => setActionIntentCounts('fake', { planned: -1 })).toThrow(
+      'action intent count must be a finite non-negative number',
+    );
+    expect(() => setActionIntentCount('fake', 'planned', Number.POSITIVE_INFINITY)).toThrow(
       'action intent count must be a finite non-negative number',
     );
   });

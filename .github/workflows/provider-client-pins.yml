@@ -70,14 +70,14 @@ jobs:
             for provider in codex antigravity; do
               old_version="$(jq -r ".providers.${provider}.version" "${before}")"
               new_version="$(jq -r ".providers.${provider}.version" provider-clients.lock.json)"
-              old_amd64="$(jq -r ".providers.${provider}.assets.amd64.sha256" "${before}")"
               new_amd64="$(jq -r ".providers.${provider}.assets.amd64.sha256" provider-clients.lock.json)"
-              old_arm64="$(jq -r ".providers.${provider}.assets.arm64.sha256" "${before}")"
               new_arm64="$(jq -r ".providers.${provider}.assets.arm64.sha256" provider-clients.lock.json)"
+              old_amd64="$(jq -r ".providers.${provider}.assets.amd64.sha256" "${before}")"
+              old_arm64="$(jq -r ".providers.${provider}.assets.arm64.sha256" "${before}")"
               if [[ "${old_version}" != "${new_version}" ]]; then
                 printf -- '- %s: %s -> %s\n' "${provider}" "${old_version}" "${new_version}"
-                printf -- '  amd64 SHA-256: %s\n' "${new_amd64}"
-                printf -- '  arm64 SHA-256: %s\n' "${new_arm64}"
+                printf -- '  amd64 SHA-256: %s -> %s\n' "${old_amd64}" "${new_amd64}"
+                printf -- '  arm64 SHA-256: %s -> %s\n' "${old_arm64}" "${new_arm64}"
               fi
             done
             echo 'PROVIDER_CLIENT_SUMMARY'
@@ -134,11 +134,12 @@ jobs:
           set -euo pipefail
           readonly branch='automation/provider-client-pins'
           readonly candidate_file="${RUNNER_TEMP}/provider-clients.lock.json"
-          readonly pr_body="$(printf '%s\n\n%s\n%s\n\n%s\n' \
-            'This PR updates the canonical provider-client manifest from published stable releases in the official `openai/codex` and `google-antigravity/antigravity-cli` repositories.' \
+          pr_body="$(printf '%s\n\n%s\n%s\n\n%s\n' \
+            "This PR updates the canonical provider-client manifest from published stable releases in the official \`openai/codex\` and \`google-antigravity/antigravity-cli\` repositories." \
             'Pinned versions and architecture-specific release digests:' \
             "${PROVIDER_CLIENT_SUMMARY}" \
-            'The candidate passed `pnpm validate`, `docker build`, and unauthenticated read-only runtime probes. SHA-256 is verified during image build; no provider credentials or quota-consuming request is used. This PR is never auto-merged.')"
+            "The candidate passed \`pnpm validate\`, \`docker build\`, and unauthenticated read-only runtime probes. SHA-256 is verified during image build; no provider credentials or quota-consuming request is used. This PR is never auto-merged.")"
+          readonly pr_body
           cp provider-clients.lock.json "${candidate_file}"
           gh auth setup-git
           git config user.name 'github-actions[bot]'

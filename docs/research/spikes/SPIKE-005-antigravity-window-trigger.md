@@ -1,7 +1,10 @@
 # SPIKE-005 — Antigravity quota-window activation through the official CLI
 
-**Status:** Completed using operator-provided account evidence. The experiment
-was not reproduced by the implementation agent during this sprint.
+**Status:** The CLI experiment is recorded from operator-provided account
+evidence. On 2026-09-27 the owner also confirmed end-to-end AWM trigger
+acceptance for both model families, bringing the integrated action flow to
+parity with Codex. This release-preparation run did not repeat a provider
+request or consume quota.
 
 **Observed:** 2026-09-24, UTC. One ordinary `Hi!` sent with the official
 Antigravity CLI anchored the five-hour window for the selected quota family.
@@ -41,8 +44,10 @@ explicit feature gate plus provider automation mode, and lets the user choose
 one exact quota target. The other model family is never selected by that
 request.
 
-The application must use only the official `agy -p` interface, persist an
+The application uses only the official `agy` interface, persists an
 intent before dispatch, confirm the exact selected target from a fresh usage
 observation, and leave post-dispatch ambiguity `uncertain` without retry.
-Normal CI uses fake processes and sanitized fixtures. No quota-consuming
-request was made by the implementation agent for this spike.
+Normal CI uses fake processes and sanitized fixtures. The integrated acceptance
+is owner-confirmed evidence for the tested setup; it is not a guarantee across
+accounts, plans, or future CLI versions. No quota-consuming request was made by
+the implementation agent during this release-preparation run.

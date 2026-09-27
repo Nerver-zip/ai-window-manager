@@ -7,6 +7,7 @@ import {
   captureAuthCommandWithRuntime,
   PtyAuthProcess,
   providerProcessEnvironment,
+  spawnAuthProcess,
 } from '../../src/auth/process.js';
 
 afterEach(() => vi.unstubAllEnvs());
@@ -44,6 +45,8 @@ function fakeChild(): StubChild {
 function fakePty() {
   const outputListeners = new Set<(chunk: string) => void>();
   const exitListeners = new Set<(event: { exitCode: number }) => void>();
+  const write = vi.fn();
+  const kill = vi.fn();
   const child = {
     onData(listener: (chunk: string) => void) {
       outputListeners.add(listener);
@@ -53,11 +56,13 @@ function fakePty() {
       exitListeners.add(listener);
       return { dispose: () => exitListeners.delete(listener) };
     },
-    write: vi.fn(),
-    kill: vi.fn(),
+    write,
+    kill,
   } as unknown as IPty;
   return {
     child,
+    write,
+    kill,
     output(chunk: string) {
       for (const listener of outputListeners) listener(chunk);
     },
@@ -207,6 +212,104 @@ describe('provider auth process helpers', () => {
     expect(result).toEqual({ code: null, output: '', overflow: false });
   });
 
+  it('supervises a piped provider child and forwards input, both output streams and exit', async () => {
+    const managed = spawnAuthProcess(
+      process.execPath,
+      [
+        '-e',
+        'process.stdin.once("data", (input) => { process.stdout.write(input); process.stderr.write("synthetic stderr"); process.exit(7); });',
+      ],
+      { cwd: process.cwd(), env: process.env },
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const unsubscribe = managed.onOutput((stream, chunk) => {
+      (stream === 'stdout' ? stdout : stderr).push(chunk.toString());
+    });
+    const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+      managed.onExit((code, signal) => resolve({ code, signal }));
+    });
+    const wait = managed.waitForExit(2_000);
+
+    managed.writeInput('synthetic input');
+
+    await expect(wait).resolves.toBe(true);
+    await expect(exited).resolves.toEqual({ code: 7, signal: null });
+    expect(stdout.join('')).toBe('synthetic input');
+    expect(stderr.join('')).toBe('synthetic stderr');
+    unsubscribe();
+    managed.signal('SIGTERM');
+    await expect(managed.waitForExit(1)).resolves.toBe(true);
+  });
+
+  it('reports a provider child spawn error once and waits for its close event', async () => {
+    const managed = spawnAuthProcess('/tmp/awm-test-executable-that-does-not-exist', [], {
+      cwd: process.cwd(),
+      env: process.env,
+    });
+    const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+      managed.onExit((code, signal) => resolve({ code, signal }));
+    });
+
+    await expect(exited).resolves.toEqual({ code: null, signal: null });
+    await expect(managed.waitForExit(2_000)).resolves.toBe(true);
+  });
+
+  it('starts the interactive provider client behind a PTY and filters undefined environment values', async () => {
+    const managed = spawnAuthProcess(
+      process.execPath,
+      ['-e', 'process.stdout.write("synthetic interactive login"); process.exit(0)'],
+      {
+        cwd: process.cwd(),
+        env: { HOME: process.env.HOME, PATH: process.env.PATH, OMIT_ME: undefined },
+        interactive: true,
+      },
+    );
+    const output: string[] = [];
+    managed.onOutput((_stream, chunk) => output.push(chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => managed.onExit(resolve));
+
+    await expect(managed.waitForExit(5_000)).resolves.toBe(true);
+    await expect(exited).resolves.toBe(0);
+    expect(output.join('')).toContain('synthetic interactive login');
+  });
+
+  it('streams PTY output to the current listener and cleans up subscriptions on exit', async () => {
+    const pty = fakePty();
+    const managed = new PtyAuthProcess(pty.child);
+    const previous: string[] = [];
+    const current: string[] = [];
+    const unsubscribePrevious = managed.onOutput((_stream, chunk) =>
+      previous.push(chunk.toString()),
+    );
+    const unsubscribeCurrent = managed.onOutput((_stream, chunk) => current.push(chunk.toString()));
+
+    unsubscribePrevious();
+    managed.writeInput('select login');
+    managed.signal('SIGTERM');
+    pty.output('browser URL');
+
+    expect(previous).toEqual([]);
+    expect(current).toEqual(['browser URL']);
+    expect(pty.write).toHaveBeenCalledWith('select login');
+    expect(pty.kill).toHaveBeenCalledWith('SIGTERM');
+
+    let exitCode: number | null = null;
+    managed.onExit((code) => {
+      exitCode = code;
+    });
+    const waitingForExit = managed.waitForExit(2_000);
+    await expect(managed.waitForExit(5)).resolves.toBe(false);
+    pty.exit(4);
+
+    await expect(waitingForExit).resolves.toBe(true);
+    expect(exitCode).toBe(4);
+    unsubscribeCurrent();
+    managed.signal('SIGTERM');
+    expect(pty.kill).toHaveBeenCalledTimes(1);
+    await expect(managed.waitForExit(1)).resolves.toBe(true);
+  });
+
   it('captures both text and Buffer chunks and ignores a second completion event', async () => {
     const child = fakeChild();
     const resultPromise = captureAuthCommandWithRuntime(
@@ -226,6 +329,27 @@ describe('provider auth process helpers', () => {
       output: 'first second',
       overflow: false,
     });
+  });
+
+  it('cancels an active status process on operator abort and waits for its close', async () => {
+    const child = fakeChild();
+    const controller = new AbortController();
+    const resultPromise = captureAuthCommandWithRuntime(
+      'synthetic-executable',
+      [],
+      { cwd: '/tmp', env: {} },
+      controller.signal,
+      {
+        killGraceMs: 500,
+        stopDeadlineMs: 1_000,
+        spawnProcess: () => child as unknown as ChildProcessWithoutNullStreams,
+      },
+    );
+
+    controller.abort();
+    expect(child.signals).toEqual(['SIGTERM']);
+    child.close(null, 'SIGTERM');
+    await expect(resultPromise).resolves.toEqual({ code: null, output: '', overflow: false });
   });
 
   it('sends SIGTERM then SIGKILL on output overflow and bounds the stop wait', async () => {

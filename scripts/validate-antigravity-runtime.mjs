@@ -2,11 +2,15 @@ import { accessSync, constants, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const executable = process.env.AWM_ANTIGRAVITY_EXECUTABLE ?? '/opt/antigravity/bin/agy';
-const expectedVersion = process.env.AGY_EXPECTED_VERSION ?? '1.2.9';
+const expectedVersion = process.env.AGY_EXPECTED_VERSION;
 
 function fail(message) {
   console.error(`antigravity runtime check failed: ${message}`);
   process.exit(1);
+}
+
+if (!expectedVersion || !/^\d+\.\d+\.\d+$/.test(expectedVersion)) {
+  fail('AGY_EXPECTED_VERSION must be set from provider-clients.lock.json');
 }
 
 function run(command, args, options = {}) {

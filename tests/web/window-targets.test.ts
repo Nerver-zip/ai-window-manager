@@ -23,6 +23,18 @@ function windowSnapshot(windowKind: string, durationSeconds?: number): WindowSna
 }
 
 describe('observed Schedule window targets', () => {
+  it('treats missing observations and missing durations as unknown instead of inventing targets', () => {
+    expect(observedWindowTargets('codex', undefined)).toEqual([]);
+
+    const [target] = observedWindowTargets('codex', [windowSnapshot('codex_custom')]);
+    expect(target).toMatchObject({
+      windowKind: 'codex_custom',
+      cadence: 'other',
+      groupLabel: null,
+    });
+    expect(target).not.toHaveProperty('durationSeconds');
+  });
+
   it('uses only distinct, non-empty provider-reported target keys', () => {
     const targets = observedWindowTargets('codex', [
       windowSnapshot('codex_primary', 18_000),
@@ -60,6 +72,19 @@ describe('observed Schedule window targets', () => {
     expect(resolveWindowTarget('five_hour', targets)).toMatchObject({
       status: 'ambiguous',
       matches: [{ windowKind: 'codex_primary' }, { windowKind: 'codex_additional' }],
+    });
+  });
+
+  it('labels ambiguous weekly legacy choices with their matching cadence', () => {
+    const targets = observedWindowTargets('codex', [
+      windowSnapshot('codex_weekly', 604_800),
+      windowSnapshot('codex_extra_weekly', 604_800),
+    ]);
+
+    expect(resolveWindowTarget('weekly', targets)).toMatchObject({
+      status: 'ambiguous',
+      legacyCadence: 'weekly',
+      matches: [{ windowKind: 'codex_weekly' }, { windowKind: 'codex_extra_weekly' }],
     });
   });
 

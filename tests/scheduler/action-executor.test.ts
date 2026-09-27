@@ -410,6 +410,25 @@ describe('ActionExecutor', () => {
     );
   });
 
+  it('dispatches at most one trigger per provider during a single execution tick', async () => {
+    const context = setup();
+    const policy = context.repositories.schedulePolicies.get('policy-1');
+    if (!policy) throw new Error('test policy missing');
+    context.repositories.schedulePolicies.upsert({ ...policy, id: 'policy-2' });
+    context.repositories.actionIntents.createIfAbsent({
+      ...context.intent,
+      id: 'intent-2',
+      policyId: 'policy-2',
+      dedupeKey: 'fake:trigger_window:policy-2:2026-09-14T08:00:00.000Z',
+    });
+
+    await context.executor().executeDue();
+
+    expect(context.triggerCount).toBe(1);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+    expect(context.repositories.actionIntents.get('intent-2')?.state).toBe('planned');
+  });
+
   it('skips an intent with no exact target rather than defaulting to the first window', async () => {
     const context = setup({ targetWindowKind: null });
 
@@ -420,6 +439,49 @@ describe('ActionExecutor', () => {
       lastErrorCode: 'ACTION_TARGET_WINDOW_MISSING',
     });
     expect(context.triggerCount).toBe(0);
+  });
+
+  it('does not inspect or dispatch an intent before its not-before time', async () => {
+    const context = setup();
+    const inspect = vi.spyOn(context.adapter, 'inspect');
+    context.db
+      .prepare('UPDATE action_intents SET not_before_ms = ? WHERE id = ?')
+      .run(context.clock.now().getTime() + 60_000, context.intent.id);
+
+    const report = await context.executor().executeDue();
+
+    expect(report.processedIntentIds).toEqual([]);
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('planned');
+    expect(inspect).not.toHaveBeenCalled();
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('requires an enabled automation provider and a registered runtime adapter', async () => {
+    const disabled = setup();
+    const disabledProvider = disabled.repositories.providers.get(disabled.providerId);
+    if (!disabledProvider) throw new Error('provider missing');
+    disabled.repositories.providers.upsert({ ...disabledProvider, enabled: false });
+    await disabled.executor().executeDue();
+    expect(disabled.repositories.actionIntents.get(disabled.intent.id)).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_PROVIDER_UNAVAILABLE',
+    });
+    expect(disabled.triggerCount).toBe(0);
+
+    const manualOnly = setup();
+    const manualProvider = manualOnly.repositories.providers.get(manualOnly.providerId);
+    if (!manualProvider) throw new Error('provider missing');
+    manualOnly.repositories.providers.upsert({ ...manualProvider, mode: 'monitor_only' });
+    await manualOnly.executor().executeDue();
+    expect(manualOnly.repositories.actionIntents.get(manualOnly.intent.id)?.state).toBe('skipped');
+    expect(manualOnly.triggerCount).toBe(0);
+
+    const missingAdapter = setup();
+    await missingAdapter.executor({ adapters: new Map() }).executeDue();
+    expect(missingAdapter.repositories.actionIntents.get(missingAdapter.intent.id)?.state).toBe(
+      'skipped',
+    );
+    expect(missingAdapter.triggerCount).toBe(0);
   });
 
   it('invalidates an intent when the policy target changes even at the same timestamp', async () => {
@@ -435,6 +497,64 @@ describe('ActionExecutor', () => {
       lastErrorCode: 'ACTION_POLICY_CHANGED',
     });
     expect(context.triggerCount).toBe(0);
+  });
+
+  it('rechecks policy after fresh inspection before crossing the dispatch boundary', async () => {
+    const context = setup();
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: async (ctx) => {
+        const observation = await context.fake.inspect(ctx);
+        const policy = context.repositories.schedulePolicies.get('policy-1');
+        if (!policy) throw new Error('policy missing');
+        context.repositories.schedulePolicies.upsert({
+          ...policy,
+          config: { windowKind: 'weekly' },
+        });
+        return observation;
+      },
+    };
+
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_POLICY_CHANGED',
+    });
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('skips disabled or malformed saved policy targets instead of reinterpreting an intent', async () => {
+    const disabled = setup();
+    const disabledPolicy = disabled.repositories.schedulePolicies.get('policy-1');
+    if (!disabledPolicy) throw new Error('policy missing');
+    disabled.repositories.schedulePolicies.upsert({ ...disabledPolicy, enabled: false });
+    await disabled.executor().executeDue();
+    expect(disabled.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_POLICY_CHANGED',
+    });
+
+    const malformedTarget = setup();
+    const policy = malformedTarget.repositories.schedulePolicies.get('policy-1');
+    if (!policy) throw new Error('policy missing');
+    malformedTarget.repositories.schedulePolicies.upsert({ ...policy, config: {} });
+    await malformedTarget.executor().executeDue();
+    expect(malformedTarget.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_POLICY_CHANGED',
+    });
+    expect(disabled.triggerCount + malformedTarget.triggerCount).toBe(0);
+  });
+
+  it('allows an exact-target manual intent without a schedule policy', async () => {
+    const context = setup();
+    context.db.prepare('UPDATE action_intents SET policy_id = NULL WHERE id = ?').run('intent-1');
+
+    await context.executor().executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+    expect(context.triggerCount).toBe(1);
   });
 
   it('skips expired, already-satisfied, and unsupported intents without dispatch', async () => {
@@ -502,6 +622,71 @@ describe('ActionExecutor', () => {
       .executeDue();
     expect(missingMethod.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
     expect(missingMethod.triggerCount).toBe(0);
+
+    const wrongWindow = setup();
+    const wrongWindowAdapter: ProviderAdapter = {
+      ...wrongWindow.adapter,
+      capabilities: () => ({
+        ...wrongWindow.fake.capabilities(),
+        windowTrigger: {
+          supported: true,
+          supportedWindowKinds: ['weekly'],
+          contract: 'official_client_internal',
+          consumesQuota: true,
+        },
+      }),
+    };
+    await wrongWindow.executor({ adapters: new Map([['fake', wrongWindowAdapter]]) }).executeDue();
+    expect(wrongWindow.repositories.actionIntents.get('intent-1')?.state).toBe('skipped');
+    expect(wrongWindow.triggerCount).toBe(0);
+  });
+
+  it('classifies authentication, provider identity and malformed preflight failures safely', async () => {
+    const authRequired = setup();
+    const authAdapter: ProviderAdapter = {
+      ...authRequired.adapter,
+      inspect: async () => {
+        const observation = await authRequired.fake.inspect({});
+        return { ...observation, health: 'AUTH_REQUIRED' };
+      },
+    };
+    await authRequired.executor({ adapters: new Map([['fake', authAdapter]]) }).executeDue();
+    expect(authRequired.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_retryable',
+      lastErrorCode: 'AUTH_REQUIRED',
+    });
+
+    const wrongIdentity = setup();
+    const identityAdapter: ProviderAdapter = {
+      ...wrongIdentity.adapter,
+      inspect: async () => {
+        const observation = await wrongIdentity.fake.inspect({});
+        return {
+          ...observation,
+          providerId: 'unexpected-provider',
+          windows: observation.windows.map((window) => ({
+            ...window,
+            providerId: 'unexpected-provider',
+          })),
+        };
+      },
+    };
+    await wrongIdentity.executor({ adapters: new Map([['fake', identityAdapter]]) }).executeDue();
+    expect(wrongIdentity.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_retryable',
+      lastErrorCode: 'PROVIDER_UNAVAILABLE',
+    });
+
+    const malformed = setup();
+    const malformedAdapter: ProviderAdapter = {
+      ...malformed.adapter,
+      inspect: () => Promise.reject(new Error('synthetic malformed response')),
+    };
+    await malformed.executor({ adapters: new Map([['fake', malformedAdapter]]) }).executeDue();
+    expect(malformed.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_retryable',
+      lastErrorCode: 'INSPECTION_FAILED',
+    });
   });
 
   it('keeps uncertain outcomes uncertain and never blindly retries', async () => {
@@ -521,6 +706,85 @@ describe('ActionExecutor', () => {
 
     expect(triggerCalls).toBe(1);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
+  it('does not resolve a persisted uncertain result when its provider adapter is unavailable', async () => {
+    const context = setup();
+    context.repositories.actionIntents.setState(
+      'intent-1',
+      'uncertain',
+      context.clock.now().getTime(),
+    );
+
+    await context.executor({ adapters: new Map() }).executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('uses a bounded uncertain state for a failed dispatch without a trustworthy error code', async () => {
+    const context = setup();
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: () =>
+        Promise.resolve({
+          status: 'failed',
+          occurredAt: context.clock.now().toISOString(),
+        }),
+    };
+
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      lastErrorCode: 'ACTION_DISPATCH_UNCERTAIN',
+    });
+  });
+
+  it('keeps rejected dispatch terminal and ambiguous failed dispatch uncertain', async () => {
+    const rejected = setup();
+    let rejectedMetric: string | undefined;
+    const rejectingAdapter: ProviderAdapter = {
+      ...rejected.adapter,
+      triggerWindow: () =>
+        Promise.resolve({
+          status: 'rejected',
+          occurredAt: rejected.clock.now().toISOString(),
+        }),
+    };
+    await rejected
+      .executor({
+        adapters: new Map([['fake', rejectingAdapter]]),
+        onTrigger: (_providerId, result) => {
+          rejectedMetric = result;
+        },
+      })
+      .executeDue();
+    expect(rejected.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_terminal',
+      lastErrorCode: 'ACTION_DISPATCH_REJECTED',
+    });
+    expect(rejectedMetric).toBe('rejected');
+    expect(rejected.triggerCount).toBe(0);
+
+    const ambiguous = setup();
+    const failedAfterPossibleDispatch: ProviderAdapter = {
+      ...ambiguous.adapter,
+      triggerWindow: () =>
+        Promise.resolve({
+          status: 'failed',
+          occurredAt: ambiguous.clock.now().toISOString(),
+          errorCode: 'REMOTE_RESPONSE_LOST',
+        }),
+    };
+    await ambiguous
+      .executor({ adapters: new Map([['fake', failedAfterPossibleDispatch]]) })
+      .executeDue();
+    expect(ambiguous.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      lastErrorCode: 'REMOTE_RESPONSE_LOST',
+    });
+    expect(ambiguous.triggerCount).toBe(0);
   });
 
   it('moves a claimed intent to failed_retryable for a definitely pre-dispatch result', async () => {
@@ -548,6 +812,63 @@ describe('ActionExecutor', () => {
       notBeforeMs: context.clock.now().getTime() + 5_000,
       lastErrorCode: 'PROCESS_START_FAILED',
     });
+  });
+
+  it('suppresses duplicate claim history when a retryable pre-dispatch action is retried', async () => {
+    const context = setup();
+    let dispatches = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: () => {
+        dispatches += 1;
+        return Promise.resolve({
+          status: 'failed',
+          occurredAt: context.clock.now().toISOString(),
+          errorCode: 'PROCESS_START_FAILED',
+        });
+      },
+    };
+    const executor = context.executor({ adapters: new Map([['fake', adapter]]) });
+
+    await executor.executeDue();
+    context.clock.advanceMs(5_000);
+    await executor.executeDue();
+
+    expect(dispatches).toBe(2);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'failed_retryable',
+      attemptCount: 2,
+    });
+    expect(
+      context.repositories.events
+        .list('fake', { limit: 200 })
+        .filter((event) => event.type === 'action_intent_claimed'),
+    ).toHaveLength(1);
+  });
+
+  it('treats an unclassified dispatch exception as uncertain rather than retryable', async () => {
+    const context = setup();
+    let triggerMetric: string | undefined;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: () => Promise.reject(new Error('synthetic transport failure')),
+    };
+
+    await context
+      .executor({
+        adapters: new Map([['fake', adapter]]),
+        onTrigger: (_providerId, result) => {
+          triggerMetric = result;
+        },
+      })
+      .executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      lastErrorCode: 'ACTION_DISPATCH_UNCERTAIN',
+    });
+    expect(triggerMetric).toBe('uncertain');
+    expect(context.triggerCount).toBe(0);
   });
 
   it('maps a known pre-dispatch exception to retryable after claim', async () => {

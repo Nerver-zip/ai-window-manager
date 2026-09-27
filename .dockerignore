@@ -1,4 +1,5 @@
 .git
+.ai-jail
 node_modules
 dist
 coverage

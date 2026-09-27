@@ -122,6 +122,10 @@ blindly retried.
   URL. AWM advances only when the official screen explicitly marks option 1
   (Google OAuth) as selected, then exposes the complete URL and forwards only
   the operator-entered browser code to the waiting CLI.
+- The currently packaged Antigravity CLI pin is `1.2.12` (2026-09-27), with
+  official architecture-specific SHA-256 digests. Its release-preparation
+  compatibility probes were unauthenticated and did not consume quota; the
+  sign-in transcript above remains evidence specific to the earlier CLI.
 - An operator-provided experiment on 2026-09-24 used one ordinary `Hi!` via
   official headless `agy` with `gemini-3.8-flash-low` and
   `claude-sonnet-4-6`. In each selected family, the five-hour reset changed
@@ -192,6 +196,17 @@ These phases are inferred with high confidence, not lifecycle fields supplied
 by Google. `INACTIVE` means full unused allowance for the selected target and
 eligibility for the project's safety checks; a `99.95%` remaining observation
 still counts as active.
+
+The owner confirms end-to-end AWM trigger acceptance for both quota families.
+This live evidence is for the tested account, pinned client and models only;
+it does not establish behavior for every account, plan or future CLI version.
+The release-preparation agent did not repeat a quota-consuming request.
+
+The official Antigravity CLI README states that Google may collect and use
+interaction data under its Terms of Service and Privacy Policy, with an opt-out
+available in CLI settings. AWM does not manage that preference. Operators
+should review it before connecting an account; AWM does not retain trigger
+response text or transcripts.
 
 The monitor continues to use the documented headless
 `agy -p /usage --output-format json` read path. Triggering uses the official

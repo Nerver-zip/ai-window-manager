@@ -1,6 +1,6 @@
 # AI Window Manager — implementation plan
 
-Prepared: **2026-09-25**
+Prepared: **2026-09-27**
 Scope: self-hosted Codex + Antigravity usage-window monitoring, bounded history, explicit scheduling, safe minimal triggers, provider lifecycle/update management and a private operator UI. Quota-consuming provider actions default on for configured providers and remain explicitly disableable.
 
 ## A. Executive summary
@@ -9,7 +9,7 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an enabled adapter capability; Codex and Antigravity have separate configurable quota-consuming paths, enabled by default for configured providers and explicitly disableable, with Antigravity's window-positioning effect still experimental.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an enabled adapter capability; Codex and Antigravity have separate configurable quota-consuming paths, enabled by default for configured providers and explicitly disableable. The owner has confirmed the integrated Antigravity action for both model families; its observed effect remains account/client-specific, not a universal provider guarantee.
 
 ## Current milestone status
 
@@ -30,8 +30,7 @@ filesystem cleanup, not an official Antigravity delete API, and remains coupled
 to the observed storage layout.
 
 Provider clients are pinned in `provider-clients.lock.json` with per-architecture
-SHA-256 digests (Codex `0.157.0`, Antigravity `1.2.11` at the 2026-09-25 release
-check). The image retains immutable fallback executables; a separate volume
+SHA-256 digests (Codex `0.157.1`; Antigravity `1.2.12`). The image retains immutable fallback executables; a separate volume
 supports bounded staging, read-only compatibility checks, atomic activation and
 one-version rollback. Manual check/update/rollback are available in Settings;
 optional daily automatic updates default off. A scheduled workflow validates
@@ -43,11 +42,12 @@ global selector and alternate day list. Antigravity schedules persist
 independently for Gemini and Claude/GPT; provider-wide trigger serialization
 still blocks a second open action through confirmation. Codex retains one policy.
 
-Codex's one ordinary `Hi!` action has operator-authorized live heartbeat
-evidence. Antigravity's window-start effect has account/CLI/model-specific
-operator evidence in `SPIKE-005`, not a universal guarantee. No provider login,
-inspection, quota-consuming trigger, or production container was exercised in
-this implementation run. Fresh Web-assisted login and live cleanup remain
+Codex's ordinary `Hi!` action has operator-authorized live heartbeat evidence.
+The owner also confirms end-to-end Antigravity action acceptance for both model
+families, bringing the integrated path to parity with Codex; this agent did not
+repeat a quota-consuming test. See `SPIKE-005`. This evidence is specific to
+the tested account/client/model setup, not a universal provider guarantee.
+Fresh Web-assisted sign-in and keyring setup remain deployment-specific
 operator acceptance activities. Work-window recommendations and richer
 analytics remain deferred.
 
@@ -522,12 +522,13 @@ request when `AWM_CODEX_TRIGGER_ENABLED=true` (the default) and provider mode
 is `automation`. The action sends only `Hi!`; set the environment gate to
 `false` or choose monitoring-only/manual in Settings to opt out.
 
-### Phase 6 — Antigravity monitor and experimental action
+### Phase 6 — Antigravity monitor and target-specific action
 
 **Status**: official monitor and gated action implementation have offline
-coverage. SPIKE-005 has account-specific operator evidence. Existing
-authenticated state survived recreation/restart in the local operator
-deployment on 2026-09-24; live AWM action acceptance remains pending.
+coverage. The owner confirms end-to-end live AWM action acceptance for both
+model families; the implementation agent did not spend quota during this
+release-preparation run. Existing authenticated state also survived
+recreation/restart in the local operator deployment on 2026-09-24.
 **Goal**: official-CLI-only read path and one target-specific `Hi!` action.
 **Acceptance**: safe auth persistence, strict parser, exact target confirmation,
 durable intent and no retry after an uncertain result.
@@ -551,8 +552,9 @@ provider I/O.
 ### Phase 8 — Hardening, provider lifecycle and acceptance
 
 **Status: complete for bounded lifecycle, disposable trigger-artifact cleanup,
-provider-client update/rollback and review-only source-pin workflow. Live
-provider behavior acceptance remains operator-run.**
+provider-client update/rollback and review-only source-pin workflow. Live Codex
+and Antigravity trigger acceptance is recorded in SPIKE-004/SPIKE-005; fresh
+sign-in remains deployment-specific operator acceptance.**
 
 **Goal**: CI, Docker security, retention, docs/skills, clean install/upgrade.  
 **Acceptance**: global DoD below.
@@ -561,22 +563,24 @@ Vertical-slice ordering is intentional: FakeProvider proves architecture before 
 
 ## W. GitHub-style backlog
 
-Canonical implementable issue bodies are in `docs/BACKLOG.md`. High-level dependency graph:
+Canonical implementable issue bodies and current statuses are in
+`docs/BACKLOG.md`. The delivered implementation graph and current evidence
+state is:
 
 ```text
-CORE-001 ─┬─ CORE-002 ─┐
-          ├─ SCHED-001 ├─ SCHED-002 ─ SCHED-003 ─ CODEX-002
-          └─ provider adapters        │
-STORAGE-001 ──────────────────────────┘
-
-SPIKE-001 ─ CODEX-001 ─ CODEX-002
-SPIKE-002 ─┐
-SPIKE-003 ─┴─ ANT-001 (official CLI monitor) ─ ANT-002 (account-specific evidence)
-                                             └─ SCHED-003 + AGY-TRIGGER-001 (experimental opt-in)
-WINDOW-001 ─ WEB-005 (exact-target manual controls)
-
-CORE/STORAGE/OPS/research spikes can start in parallel.
+CORE-001 + CORE-002 + STORAGE-001 → SCHED-001 → TIME-001 → SCHED-002 → SCHED-003 [complete]
+SPIKE-001 → CODEX-001 → CODEX-002 [complete; Codex heartbeat owner-confirmed]
+SPIKE-002 + SPIKE-003 → ANT-001 → ANT-002 → AGY-TRIGGER-001 [complete; both families owner-confirmed]
+WINDOW-001 → independent Antigravity family policies → WEB-005 [complete]
 ```
+
+The Antigravity trigger remains observed, account/client/model-specific
+quota-consuming behavior, not a universal provider guarantee. See the canonical
+statuses and caveats in `docs/BACKLOG.md` and the linked spike.
+
+Distribution is source-only under MIT with operator-built local containers; no
+npm package or prebuilt image is published. Release-readiness notes remain in
+the maintainer's local workspace rather than the repository.
 
 ## X. MVP Definition of Done
 
@@ -589,7 +593,11 @@ CORE/STORAGE/OPS/research spikes can start in parallel.
 - [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
 - [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service and optional mounted unlock file. For configured providers, automatic starts default on with explicit settings/environment opt-out; migrated family policies require review.
 - [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; trigger support is independently gated, exact-target allowlisted, on by default for configured providers, and explicitly disableable.
-- [ ] Fresh Web-assisted Codex and Antigravity sign-in is verified by an operator in each intended deployment. Existing sessions in the current local deployment survived recreation/restart and resumed provider reads on 2026-09-24.
+- [x] The owner has validated provider sign-in and operational use in the
+      configured deployment, including the integrated Antigravity trigger for both
+      model families. Each new deployment still needs operator-owned account
+      connection and read-only/restart verification; that is post-install
+      acceptance, not a source-release gate.
 - [x] Antigravity trigger semantics have account-specific operator evidence and are explicitly classified experimental; no universal guarantee is claimed.
 - [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
 - [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.

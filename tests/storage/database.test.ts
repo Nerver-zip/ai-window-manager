@@ -11,6 +11,14 @@ afterEach(() => {
 });
 
 describe('openDatabase', () => {
+  it('opens an in-memory database without creating a filesystem directory', () => {
+    const db = openDatabase(':memory:');
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
+      version: 7,
+    });
+    db.close();
+  });
+
   it('migrates a blank database with SQLite safety pragmas and can reopen it', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-'));
     dirs.push(dir);
@@ -61,6 +69,52 @@ describe('openDatabase', () => {
       (db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
     ).toBe(0);
     db.close();
+  });
+
+  it('fails clearly for missing, unsafe, duplicate or unknown migration versions', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-invalid-migrations-'));
+    dirs.push(dir);
+    const missing = path.join(dir, 'does-not-exist');
+    expect(() => openDatabase(path.join(dir, 'missing.db'), { migrationsDir: missing })).toThrow(
+      'migration directory not found',
+    );
+
+    const unsafeVersionDir = path.join(dir, 'unsafe-version');
+    fs.mkdirSync(unsafeVersionDir);
+    fs.writeFileSync(
+      path.join(unsafeVersionDir, '999999999999999999999_bad.sql'),
+      'CREATE TABLE bad (id INTEGER);',
+    );
+    expect(() =>
+      openDatabase(path.join(dir, 'unsafe.db'), { migrationsDir: unsafeVersionDir }),
+    ).toThrow('invalid migration version');
+
+    const duplicateVersionDir = path.join(dir, 'duplicate-version');
+    fs.mkdirSync(duplicateVersionDir);
+    fs.writeFileSync(
+      path.join(duplicateVersionDir, '001_first.sql'),
+      'CREATE TABLE first (id INTEGER);',
+    );
+    fs.writeFileSync(
+      path.join(duplicateVersionDir, '001_second.sql'),
+      'CREATE TABLE second (id INTEGER);',
+    );
+    expect(() =>
+      openDatabase(path.join(dir, 'duplicate.db'), { migrationsDir: duplicateVersionDir }),
+    ).toThrow('duplicate migration version 1');
+
+    const futureDb = new Database(path.join(dir, 'future.db'));
+    futureDb.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at_ms INTEGER NOT NULL
+      );
+      INSERT INTO schema_migrations(version, applied_at_ms) VALUES (999, 1700000000000);
+    `);
+    futureDb.close();
+    expect(() => openDatabase(path.join(dir, 'future.db'))).toThrow(
+      'database migration 999 is not available',
+    );
   });
 
   it('applies migration files by numeric version and rolls back a failed migration', () => {

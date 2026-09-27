@@ -29,6 +29,16 @@ private web application.
 AWM is a single-operator self-hosted service. It is not an LLM router, prompt
 manager, agent orchestrator, account rotator, or rate-limit circumvention tool.
 
+## Distribution and license
+
+The AWM source is licensed under MIT; see [LICENSE](LICENSE). This project
+distributes source code only: it does not publish an npm package or prebuilt
+Docker image. Operators build the image locally with Docker Compose. That build
+downloads the pinned official Codex and Antigravity clients from their upstream
+release repositories; those clients, provider names, and logos remain subject to
+their respective terms and are not relicensed by AWM. `package.json` stays
+`private: true` because npm distribution is not part of this project.
+
 ## Why AI Window Manager?
 
 Some provider usage windows begin when you make a request, rather than at a
@@ -72,6 +82,12 @@ use persisted state; opening a dashboard does not itself inspect a provider.
 > not blindly retry an uncertain result. Trigger conversations created for
 > this purpose are disposable and cleaned up separately. See the
 > [scheduling safety model](docs/scheduling.md).
+>
+> Antigravity's official CLI states that Google may collect and use interaction
+> data under its terms and privacy policy; its settings provide an opt-out.
+> Review that setting before connecting an account. AWM does not manage the
+> provider's collection preference and does not retain the trigger response or
+> conversation transcript. See [Security](docs/security.md#antigravity).
 
 ## Providers
 
@@ -84,8 +100,10 @@ Codex policies target one exact reported window at a time. Antigravity has
 independent policies for **Gemini Models** and **Claude and GPT Models**; each
 targets one exact five-hour or weekly window. Actions for the two Antigravity
 families are serialized. Antigravity's trigger behavior is based on observed
-CLI behavior and may evolve with provider releases; review the current
-[provider notes](docs/providers.md) before enabling it.
+CLI behavior, and the owner has confirmed the integrated flow for both
+families on the tested setup. It is not a universal provider guarantee and may
+evolve with releases; review the current [provider notes](docs/providers.md)
+before enabling it.
 
 ## Scheduling
 
@@ -114,7 +132,10 @@ blindly after downtime. For the detailed rules, see
 - Docker Engine and Docker Compose.
 - Node.js 24+ and pnpm 10+ on the setup host to install dependencies and run
   the password-hash helper.
-- A supported `amd64` or `arm64` host.
+- A Linux Docker host. The current candidate has been built and smoke-tested on
+  `linux/amd64`. The Dockerfile and CI also target `linux/arm64`, but arm64 is
+  still unverified; do not treat it as release-supported until the candidate's
+  cross-architecture CI build passes.
 
 ### 1. Clone and prepare the setup tools
 
@@ -239,11 +260,11 @@ including application history and provider sign-ins.
 ## Provider client updates
 
 The image packages fixed official client versions from
-[`provider-clients.lock.json`](provider-clients.lock.json) (currently Codex
-`0.157.0` and Antigravity `1.2.11`). Settings can check for a stable release,
-validate its published digest and read-only compatibility, activate it
-atomically, or roll back to the packaged/previous version. Automatic client
-updates are a separate setting from automatic window starts. See
+[`provider-clients.lock.json`](provider-clients.lock.json). Settings can check
+for a stable release, validate its published digest and read-only
+compatibility, activate it atomically, or roll back to the packaged/previous
+version. Automatic client updates are a separate setting from automatic
+window starts. See
 [Provider client operations](docs/deployment.md#provider-client-updates).
 
 ## Architecture and security
@@ -293,20 +314,10 @@ tests do not require provider credentials or spend real quota. See
 - [Scheduling](docs/scheduling.md)
 - [Providers and evidence](docs/providers.md)
 - [Security](docs/security.md)
+- [Security reporting policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 - [Persistence and retention](docs/persistence.md)
 - [UI](docs/ui.md)
 - [API](docs/api.md)
 - [Product boundaries](docs/product-boundaries.md)
 - [Backlog](docs/BACKLOG.md)
-
-## Current limitations
-
-- Provider clients and their output can change; the project pins and validates
-  supported releases, but compatibility still depends on those upstream
-  clients.
-- Initial provider authentication requires the operator to complete the
-  provider's official sign-in flow in a browser.
-- Antigravity start behavior is based on the official CLI surface and observed
-  behavior; review its provider notes and accept the quota implications before
-  enabling it.
-- AWM is for one trusted operator, not multi-user or public deployment.

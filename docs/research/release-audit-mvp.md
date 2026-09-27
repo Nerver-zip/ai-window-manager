@@ -1,5 +1,10 @@
 # MVP release audit
 
+> Historical snapshot dated 2026-09-20, superseded by the current source-release
+> preparation. Preserve this report as evidence of the earlier MVP baseline;
+> its versions, advisories, schema and default-action statements are not current.
+> See the current provider and deployment documentation for present status.
+
 **Audit date:** 2026-09-20
 **Scope:** Docker/runtime, CI, documentation, API contract, backup/restore,
 dependency/security posture and release evidence for the monitor MVP with an

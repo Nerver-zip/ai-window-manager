@@ -16,13 +16,14 @@ Gitleaks uses its upstream default rules through `.gitleaks.toml`. The local `pn
 
 CI also lints workflow definitions with actionlint. Dependabot proposes weekly
 pnpm and GitHub Actions updates, which are validated by the regular quality,
-security, and Docker jobs. A scheduled `pnpm audit` checks the complete lockfile
-and fails on high or critical advisories; the initial baseline contained two
-moderate advisories and no high/critical findings. A separate weekly/manual
-Trivy scan rebuilds the image from current base images and fails on high or
-critical OS/library vulnerabilities. Dependency Review is configured for PRs
-when the repository is public; GitHub requires public visibility or Code
-Security for this feature on private repositories.
+security, and Docker jobs. `pnpm audit --audit-level moderate` checks the full
+lockfile in CI and in the weekly/manual audit workflow. Vitest and its coverage
+provider are pinned together at the patched `4.1.11` release. A separate
+weekly/manual Trivy scan rebuilds the image from current base images and fails
+on high or critical OS/library vulnerabilities. Dependency Review is configured
+for PRs when the repository is public. A CodeQL workflow is also prepared but
+skips analysis while this repository is private; enable it after opening the
+repository unless an eligible private-repository Code Security plan is used.
 
 ### Codex
 
@@ -74,10 +75,19 @@ before sending the prompt, discards response text, and never stores a
 transcript. This is a normal provider request, not a start-only API; the
 Overview start button is explicit and does not display an additional quota
 warning.
-Operator-provided observations support the reset-anchoring effect for one
-account and pinned client, but this is not a universal provider guarantee.
+The owner has confirmed end-to-end AWM trigger acceptance for both Antigravity
+model families and parity of the integrated action flow with Codex. The action
+uses one exact selected family/target. The reset-anchoring effect remains
+account-, model-, plan-, and client-version-specific evidence, not a universal
+provider guarantee.
 Timeout, EOF, malformed output or other ambiguity after spawn becomes
 `uncertain`; it is never blindly retried.
+
+The official [Antigravity CLI terms and data-use notice](https://github.com/google-antigravity/antigravity-cli)
+states that Google may collect and use interaction data, subject to its Terms
+of Service and Privacy Policy, and that users can opt out in CLI settings. AWM
+does not control that preference. Operators should review it before enabling
+the integration. AWM does not persist trigger response text or transcripts.
 
 Antigravity has no machine-usable conversation deletion command in this
 integration. With the operator's explicit exact-ID authorization, cleanup

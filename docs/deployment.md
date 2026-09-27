@@ -60,8 +60,8 @@ with a trigger gate enabled, upgrades only legacy automation defaults that were
 never explicitly saved. It performs one reconcile, then uses one coalescing
 global reconcile interval. Runtime provider state and planned intents remain in SQLite;
 the overview/API only reads that persisted state. The image packages the official
-Codex CLI version pinned in `provider-clients.lock.json` (currently `0.157.0` as
-of 2026-09-25) at `/opt/codex/bin/codex`, verified by architecture-specific
+Codex CLI version pinned in `provider-clients.lock.json` (currently `0.157.1` as
+of 2026-09-27) at `/opt/codex/bin/codex`, verified by architecture-specific
 release SHA-256 digests. The runtime image includes the
 system CA bundle required for official Codex HTTPS login and app-server
 connections. Codex monitoring uses the dedicated
@@ -75,7 +75,7 @@ app-server stage of the quota-consuming heartbeat and defaults to 30 seconds;
 it does not turn an ambiguous outcome into a retryable failure.
 
 The image also packages the official Antigravity CLI version pinned in
-`provider-clients.lock.json` (currently `1.2.11` as of 2026-09-25), with
+`provider-clients.lock.json` (currently `1.2.12`), with
 architecture-specific SHA-256 verification. `AWM_ANTIGRAVITY_ENABLED` defaults
 to false when unset. When enabled, the entrypoint starts a private D-Bus session and
 GNOME Secret Service as UID 10001, with `XDG_*` paths rooted in the dedicated
@@ -93,6 +93,12 @@ targets and uses the configured family model. One `Hi!` is a quota-consuming
 normal prompt, not a provider start-only operation. A request aimed at one
 family may also affect that family's other allowance window. A timeout or other
 ambiguous result after spawn must not be retried blindly.
+
+The runtime uses Ubuntu 24.04 LTS for its security-maintained D-Bus and keyring
+packages, with the Node 24 binary copied from the official `node:24-trixie-slim`
+build stage. Only production Node dependencies enter the runtime. Provider
+client archives are downloaded and verified during the operator's local image
+build; no prebuilt image is distributed.
 
 ## Provider-client updates
 
@@ -186,7 +192,10 @@ clients.
 
 Do not mount `$HOME`. Each provider gets only the exact official-client state
 it needs. Codex and Antigravity runtime state volumes are isolated from the
-SQLite volume; Antigravity remains disabled by default.
+SQLite volume. With `AWM_ANTIGRAVITY_ENABLED` unset, the base Compose default is
+disabled; the checked-in `.env.example` explicitly enables Antigravity for its
+local `awm` profile. The same distinction applies to Codex. Review the
+configuration table near the top of this guide before first startup.
 
 For Codex, an explicitly authorized operator may authenticate the official CLI
 into the dedicated `awm-codex-state` volume. AWM does not copy `auth.json`,
@@ -204,6 +213,11 @@ home/keyring/D-Bus mount. If no unlock file is provided, the keyring must be
 available unlocked through the isolated runtime; otherwise the provider safely
 reports unavailable/auth-required. Authenticated login and reuse after restart
 must be verified by an operator before relying on the integration.
+
+Antigravity's official CLI may send interaction data to Google under Google's
+Terms of Service and Privacy Policy. Review the CLI's settings for its opt-out;
+AWM does not configure or override that preference. Trigger prompts are normal
+provider interactions and may consume quota.
 
 ## Smoke test checklist
 
@@ -224,8 +238,10 @@ dashboard/API/metrics requests require signing in.
 The focused Codex runtime check, without credentials or a turn, is:
 
 ```bash
+codex_version="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("provider-clients.lock.json", "utf8")).providers.codex.version)')"
 docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
   --user 10001:10001 --entrypoint node \
+  -e "CODEX_VERSION=$codex_version" \
   -e AWM_CODEX_EXECUTABLE=/opt/codex/bin/codex \
   -e CODEX_HOME=/tmp/awm-ops-002-codex-home \
   -e AWM_DB_PATH=/tmp/awm.db \
@@ -240,8 +256,11 @@ deliberately does not log in or call `account/rateLimits/read`.
 The Antigravity image check, without credentials or a provider request, is:
 
 ```bash
+agy_version="$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("provider-clients.lock.json", "utf8")).providers.antigravity.version)')"
 docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
   --user 10001:10001 --entrypoint node \
+  -e "AGY_EXPECTED_VERSION=$agy_version" \
+  -e AWM_ANTIGRAVITY_EXECUTABLE=/opt/antigravity/bin/agy \
   -v "$PWD/scripts/validate-antigravity-runtime.mjs:/tmp/validate.mjs:ro" \
   ai-window-manager:dev /tmp/validate.mjs
 ```

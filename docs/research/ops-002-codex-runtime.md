@@ -1,5 +1,9 @@
 # OPS-002 — Codex runtime packaging
 
+> Historical runtime investigation for Codex 0.155.1. The current source pin is
+> recorded in `provider-clients.lock.json`; retain this report for its original
+> evidence rather than treating its version/default statements as current.
+
 ## Scope
 
 This report validates the official Codex executable in the Linux container

@@ -79,6 +79,9 @@ describe('loadConfig', () => {
     expect(() => loadTestConfig({ AWM_TRUST_PROXY: '*' })).toThrow(
       /AWM_TRUST_PROXY must contain valid IP/,
     );
+    expect(() => loadTestConfig({ AWM_TRUST_PROXY: '/24' })).toThrow(
+      /AWM_TRUST_PROXY must contain valid IP/,
+    );
   });
 
   it('accepts a bounded Codex action timeout independently from the read path', () => {

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24-bookworm-slim AS deps
+FROM node:24-trixie-slim AS deps
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
@@ -8,6 +8,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=awm-pnpm,target=/pnpm/store \
     pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile
+
+FROM deps AS prod-deps
+# Do not ship build, test, or lint tooling in the runtime image.
+RUN pnpm prune --prod
 
 FROM deps AS build
 COPY tsconfig.json vitest.config.ts eslint.config.js .prettierrc.json ./
@@ -18,7 +22,7 @@ COPY migrations ./migrations
 COPY assets ./assets
 RUN pnpm build
 
-FROM node:24-bookworm-slim AS codex
+FROM node:24-trixie-slim AS codex
 ARG TARGETARCH
 COPY provider-clients.lock.json /tmp/provider-clients.lock.json
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,7 +57,7 @@ RUN set -eux; \
     test "$(/opt/codex/bin/codex --version)" = "codex-cli ${codex_version}"; \
     chmod -R a-w /opt/codex
 
-FROM node:24-bookworm-slim AS antigravity
+FROM node:24-trixie-slim AS antigravity
 ARG TARGETARCH
 COPY provider-clients.lock.json /tmp/provider-clients.lock.json
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -90,7 +94,10 @@ RUN set -eux; \
     test "$(/opt/antigravity/bin/agy --version)" = "${agy_version}"; \
     chmod -R a-w /opt/antigravity
 
-FROM node:24-bookworm-slim AS runtime
+# Use Ubuntu LTS for the security-maintained D-Bus/keyring runtime packages;
+# retain the official Node 24 binary built in the dependency stage.
+FROM ubuntu:24.04 AS runtime
+COPY --from=deps /usr/local/bin/node /usr/local/bin/node
 ENV NODE_ENV=production \
     PATH=/opt/antigravity/bin:/opt/codex/bin:$PATH \
     AWM_BIND=0.0.0.0 \
@@ -108,14 +115,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates dbus-daemon gnome-keyring libsecret-1-0 tini \
     && rm -rf /var/lib/apt/lists/* \
-    && corepack enable \
     && useradd --system --uid 10001 --create-home --home-dir /home/awm awm \
     && mkdir -p /data /codex-state /antigravity-state /antigravity-keyring /provider-clients /home/awm \
       /antigravity-state/.local/share/keyrings \
     && chown -R awm:awm /data /codex-state /antigravity-state /antigravity-keyring /provider-clients /home/awm \
     && chmod 0755 /data \
     && chmod 0700 /codex-state /antigravity-state /antigravity-keyring /provider-clients /home/awm
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
 COPY --from=build /app/assets ./assets
