@@ -73,6 +73,13 @@ function createApp(
   return { app, clock, repositories };
 }
 
+function duplicateAttributeNames(openingTag: string): string[] {
+  const names = [...openingTag.matchAll(/\s([^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/g)]
+    .map(([, name]) => name)
+    .filter((name): name is string => typeof name === 'string');
+  return names.filter((name, index) => names.indexOf(name) !== index);
+}
+
 function providerRecord(overrides: Partial<ProviderRecord> = {}): ProviderRecord {
   return {
     id: 'fake',
@@ -340,7 +347,17 @@ describe('web server persisted overview', () => {
     });
     const defaultPage = await app.inject('/');
     expect(defaultPage.statusCode).toBe(200);
+    expect(defaultPage.body.match(/data-awm-region="overview-workspace"/g)).toHaveLength(1);
+    expect(defaultPage.body.match(/data-awm-region="overview-provider:[^"]+"/g)).toHaveLength(1);
     expect(defaultPage.body).toContain('data-provider-picker-auto-submit');
+    const defaultSwitcher = defaultPage.body.match(
+      /<form class="overview-provider-switcher"[^>]*>/,
+    )?.[0];
+    expect(defaultSwitcher).toContain('method="get"');
+    expect(defaultSwitcher).toContain('action="/"');
+    expect(defaultSwitcher).toContain('data-awm-enhance="navigation"');
+    expect(defaultSwitcher).toContain('data-awm-target="overview-workspace"');
+    expect(duplicateAttributeNames(defaultSwitcher ?? '')).toEqual([]);
     expect(defaultPage.body.match(/<article class="provider(?: stale)?">/g)).toHaveLength(1);
     expect(defaultPage.body.match(/name="provider" value="[^"]+" checked/g)).toHaveLength(1);
 
@@ -351,6 +368,7 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Codex');
     expect(page.body).toContain('data-provider-picker-auto-submit');
     expect(page.body).toContain('name="provider" value="codex" checked');
+    expect(page.body.match(/data-awm-region="overview-provider:codex"/g)).toHaveLength(1);
     expect(page.body.match(/<article class="provider(?: stale)?">/g)).toHaveLength(1);
     const selectedCard = page.body.match(
       /<article class="provider(?: stale)?">[\s\S]*?<\/article>/,
@@ -839,9 +857,9 @@ describe('web server persisted overview', () => {
     expect(javascript.body).toContain('data-chart-point');
     expect(javascript.body).toContain('awm:enhance');
     expect(javascript.body).toContain('awm:dispose');
-    // The served bundle intentionally combines chart, auth and region-refresh
-    // enhancements while remaining a small, dependency-free browser layer.
-    expect(new TextEncoder().encode(javascript.body).length).toBeLessThan(48 * 1024);
+    // The served bundle combines three separately maintained, dependency-free
+    // SSR enhancers. Keep measured growth bounded below a small 64 KiB budget.
+    expect(new TextEncoder().encode(javascript.body).length).toBeLessThan(64 * 1024);
     expect(page.body).toContain('Connection</dt><dd>Connected');
     expect(page.body).toContain('left');
     expect(page.body).toContain('75%');
@@ -1349,6 +1367,22 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('action="/providers/fake/trigger"');
     expect(page.body).toContain('name="windowKind" value="five_hour"');
     expect(page.body).toContain('Start this window now');
+    expect(page.body.match(/data-awm-region="overview-workspace"/g)).toHaveLength(1);
+    expect(page.body.match(/data-awm-region="overview-provider:fake"/g)).toHaveLength(1);
+    const manualStartForm = page.body.match(/<form class="manual-start-form"[^>]*>/)?.[0];
+    expect(manualStartForm).toContain('method="post"');
+    expect(manualStartForm).toContain('action="/providers/fake/trigger"');
+    expect(manualStartForm).toContain('data-awm-enhance="mutation"');
+    expect(manualStartForm).toContain('data-awm-target="overview-provider:fake"');
+    expect(manualStartForm).toContain(
+      'data-awm-uncertain-message="The start request may have been accepted. Refresh provider status; do not repeat the request until its result is clear."',
+    );
+    expect(duplicateAttributeNames(manualStartForm ?? '')).toEqual([]);
+    const pendingButton = page.body.match(
+      /<button class="button button-secondary" type="submit"[^>]*>/,
+    )?.[0];
+    expect(pendingButton).toContain('data-awm-pending-label="Queueing start…"');
+    expect(duplicateAttributeNames(pendingButton ?? '')).toEqual([]);
     expect(page.body).not.toContain('data-quota-confirm');
     expect(page.body).not.toContain('normal provider quota');
     expect(page.body).not.toContain('Starting a window sends one');
@@ -1359,6 +1393,37 @@ describe('web server persisted overview', () => {
     const token = cookie?.split('=')[1];
     expect(cookie).toContain('awm_csrf=');
     expect(token).toBeTruthy();
+
+    const anonymousOverview = await app.inject({ url: '/', headers: { cookie: '' } });
+    expect(anonymousOverview.statusCode).toBe(303);
+    expect(anonymousOverview.headers.location).toMatch(/^\/login\?/);
+
+    const anonymousTrigger = await app.inject({
+      method: 'POST',
+      url: '/providers/fake/trigger',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie: '',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: new URLSearchParams({ csrfToken: token ?? '', windowKind: 'five_hour' }).toString(),
+    });
+    expect(anonymousTrigger.statusCode).toBe(401);
+
+    const rejectedTriggerOrigin = await app.inject({
+      method: 'POST',
+      url: '/providers/fake/trigger',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'https://evil.example',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: new URLSearchParams({ csrfToken: token ?? '', windowKind: 'five_hour' }).toString(),
+    });
+    expect(rejectedTriggerOrigin.statusCode).toBe(403);
+    expect(rejectedTriggerOrigin.body).toContain('ORIGIN_REJECTED');
 
     const missing = await app.inject({
       method: 'POST',
@@ -1432,6 +1497,7 @@ describe('web server persisted overview', () => {
     expect(confirmation.body).toContain(
       'Start request queued. A fresh provider check will run before any message is sent.',
     );
+    expect(confirmation.body).toContain('data-awm-region="overview-provider:fake"');
     expect(triggered.count).toBe(0);
     expect(inspected.count).toBe(0);
     expect(reconcileRequested).toBe(3);

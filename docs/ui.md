@@ -212,8 +212,25 @@ No enterprise dashboard, no Grafana clone.
 
 Server-rendered HTML with a shared dark operations shell, one same-origin
 stylesheet at `/assets/app.css` and a small progressive-enhancement script at
-`/assets/app.js`. Chart markup is produced by the shared `ui/charts.ts` layer:
-it owns dimensions, axes, grid treatment, labels, colors, null gaps, legends and
-accessible point metadata. The script only reveals the tooltip for the point
-being inspected; the server remains the owner of data and page state. No React,
-client router or large component framework is used.
+`/assets/app.js`. Interactive controls may opt in to fetching their existing
+HTML route and replacing one uniquely keyed `data-awm-region` from its
+server-rendered response. This keeps the shell, scroll and unrelated form state
+in place while Fastify remains the sole owner of validation, notices and
+application state. Enhanced GETs update browser history and discard stale
+responses; enhanced POSTs follow the existing PRG redirect and are never
+automatically retried after an uncertain response. Login/logout, provider
+authorization and primary page navigation remain ordinary navigations.
+
+The enhancement lifecycle is re-run after a region replacement so existing
+chart, schedule-preview and provider-auth interactions remain available. A
+shared live region announces concise outcomes; target regions expose pending
+state and restore a stable focus target where possible. Enhancements are
+explicitly marked on server-rendered forms and links; unmarked controls are not
+intercepted. Without JavaScript, the same native forms, links, validation and
+redirects remain usable.
+
+Chart markup is produced by the shared `ui/charts.ts` layer: it owns dimensions,
+axes, grid treatment, labels, colors, null gaps, legends and accessible point
+metadata. The script only reveals the tooltip for the point being inspected;
+the server remains the owner of data and page state. No React, client router or
+large component framework is used.

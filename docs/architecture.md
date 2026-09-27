@@ -39,6 +39,17 @@ Both are viable given the existing repositories. C++ would produce a lean runtim
 
 It would add a build/application boundary with little user value. Server-rendered HTML and a tiny browser script are enough for a private status page and settings forms.
 
+### Progressive HTML interactions
+
+The browser may enhance explicitly marked same-origin forms and links by
+fetching their existing HTML routes and replacing a server-marked region. This
+does not create a second rendering or validation path: Fastify still owns state,
+notices, authorization and form validation, while native forms and links remain
+the no-JavaScript fallback. GET interactions may update history and supersede
+stale reads. Mutations keep their current same-origin/CSRF checks and PRG
+redirects; a failed client response is never an automatic reason to resend a
+POST. Authentication and primary page navigation remain full navigations.
+
 ### One process or multiple?
 
 One deployable service and one owning Node daemon process. When integration requires an official provider executable, the daemon may spawn/supervise a narrowly scoped child process (for example Codex app-server or a one-shot CLI command). These are not separately deployed services and own no scheduling state.

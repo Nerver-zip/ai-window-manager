@@ -97,6 +97,13 @@ POST /schedule
 POST /providers/:id/trigger
 ```
 
+The browser may progressively enhance explicitly marked HTML forms and links
+by fetching these same routes and extracting a uniquely identified
+server-rendered region. This adds no fragment or JSON API and does not bypass
+session, Origin, CSRF, validation or PRG behavior. Native navigation remains
+the fallback when JavaScript is unavailable; enhanced mutations are not
+automatically retried if their outcome cannot be confirmed.
+
 The JSON settings routes accept only validated non-secret timezone and
 activation-policy fields. They use the same SQLite services as the HTML forms.
 An Antigravity activation-policy write includes `scope=gemini` or

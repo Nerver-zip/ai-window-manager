@@ -1748,7 +1748,7 @@ function renderOverview(
   const selectedProvider = providers.find((provider) => provider.id === selectedProviderId);
   const selector =
     providers.length > 1
-      ? `<form class="overview-provider-switcher" method="get" action="/" data-provider-picker-auto-submit aria-label="Choose provider">${renderProviderPicker(
+      ? `<form class="overview-provider-switcher" method="get" action="/" data-awm-enhance="navigation" data-awm-target="overview-workspace" data-provider-picker-auto-submit aria-label="Choose provider">${renderProviderPicker(
           {
             name: 'provider',
             legend: 'Provider',
@@ -1771,13 +1771,15 @@ function renderOverview(
         authConnections.get(selectedProvider.id),
       )
     : '';
+  const workspace =
+    card && selectedProvider
+      ? `${selector}<div data-awm-region="overview-provider:${escapeHtml(selectedProvider.id)}">${notice ? `<div class="notice" role="status">${escapeHtml(notice)}</div>` : ''}${card}</div>`
+      : '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>';
   return renderAppShell({
     page: 'overview',
     title: 'Overview',
     description: 'Your usage windows, remaining allowance, and selected start policies.',
-    content: card
-      ? `${notice ? `<div class="notice" role="status">${escapeHtml(notice)}</div>` : ''}${selector}${card}`
-      : '<section class="empty-state"><h2>No providers are set up</h2><p>Ask your administrator to connect a provider before usage appears here.</p></section>',
+    content: `<div data-awm-region="overview-workspace">${workspace}</div>`,
   });
 }
 
@@ -2093,7 +2095,7 @@ function renderWindow(
   const targetLabel = windowGroupDisplayName(window.windowKind);
   const actionLabel = targetLabel ? `${targetLabel}, ${label}` : label;
   const startAction = canManuallyTrigger(provider, window)
-    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
+    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-awm-enhance="mutation" data-awm-target="overview-provider:${escapeHtml(provider.id)}" data-awm-uncertain-message="The start request may have been accepted. Refresh provider status; do not repeat the request until its result is clear."><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" data-awm-pending-label="Queueing start…" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
     : '';
   return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction}</section>`;
 }

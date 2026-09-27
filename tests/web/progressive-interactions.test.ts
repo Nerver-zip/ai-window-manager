@@ -346,8 +346,17 @@ class FakeParsedDocument {
     document: FakeDocument,
     title: string,
     focusId?: string,
+    polling?: { pollState?: string; pollHref?: string; announcement?: string },
   ) {
     this.region = new FakeRegion(target, document, text);
+    if (polling?.pollState) this.region.dataset.awmPollState = polling.pollState;
+    if (polling?.pollHref) this.region.dataset.awmPollHref = polling.pollHref;
+    if (polling?.announcement) {
+      const announcement = new FakeElement('p', document);
+      announcement.dataset.awmAnnouncement = 'true';
+      announcement.textContent = polling.announcement;
+      this.region.append(announcement);
+    }
     if (focusId) {
       const control = new FakeElement('select', document);
       control.id = focusId;
@@ -405,10 +414,25 @@ async function flushPromises(): Promise<void> {
 
 function createRuntime(input: {
   target: string;
+  pollState?: string;
+  pollHref?: string;
   fetch: (url: string, options: Record<string, unknown>) => Promise<ReturnType<typeof response>>;
-  pages?: Map<string, { target: string; text: string; title?: string; focusId?: string }>;
+  pages?: Map<
+    string,
+    {
+      target: string;
+      text: string;
+      title?: string;
+      focusId?: string;
+      pollState?: string;
+      pollHref?: string;
+      announcement?: string;
+    }
+  >;
 }) {
   const region = new FakeRegion(input.target, null, 'Initial state');
+  if (input.pollState) region.dataset.awmPollState = input.pollState;
+  if (input.pollHref) region.dataset.awmPollHref = input.pollHref;
   const document = new FakeDocument([region]);
   const location = {
     origin: 'http://awm.test',
@@ -435,7 +459,18 @@ function createRuntime(input: {
   };
   const pages =
     input.pages ??
-    new Map<string, { target: string; text: string; title?: string; focusId?: string }>();
+    new Map<
+      string,
+      {
+        target: string;
+        text: string;
+        title?: string;
+        focusId?: string;
+        pollState?: string;
+        pollHref?: string;
+        announcement?: string;
+      }
+    >();
   class TestParser {
     parseFromString(token: string) {
       const page = pages.get(token);
@@ -446,6 +481,7 @@ function createRuntime(input: {
         document,
         page.title ?? 'Updated page',
         page.focusId,
+        page,
       );
     }
   }
@@ -475,6 +511,14 @@ function createRuntime(input: {
     CustomEvent: FakeCustomEvent,
   });
   return { document, history, location, region, timers };
+}
+
+async function runNextTimer(timers: Map<number, () => void>): Promise<void> {
+  const next = timers.entries().next().value as [number, () => void] | undefined;
+  if (!next) throw new Error('No timer is scheduled');
+  timers.delete(next[0]);
+  next[1]();
+  await flushPromises();
 }
 
 describe('progressive SSR interaction runtime', () => {
@@ -585,6 +629,47 @@ describe('progressive SSR interaction runtime', () => {
     expect(runtime.region.getAttribute('aria-busy')).toBeNull();
   });
 
+  it('renders a server-returned validation region without treating it as a successful save', async () => {
+    const calls: string[] = [];
+    const runtime = createRuntime({
+      target: 'schedule-workspace',
+      pages: new Map([
+        [
+          'invalid',
+          {
+            target: 'schedule-workspace',
+            text: 'The selected usage window is unavailable.',
+            announcement: 'Review the schedule fields.',
+          },
+        ],
+      ]),
+      fetch: (url) => {
+        calls.push(url);
+        return Promise.resolve(
+          response({ token: 'invalid', url: 'http://awm.test/schedule', status: 422 }),
+        );
+      },
+    });
+    const form = new FakeForm(runtime.document, {
+      mode: 'mutation',
+      target: 'schedule-workspace',
+      method: 'post',
+      action: 'http://awm.test/schedule',
+      entries: [['csrfToken', 'synthetic-csrf']],
+    });
+
+    submit(runtime.document, form);
+    await flushPromises();
+
+    expect(calls).toEqual(['http://awm.test/schedule']);
+    expect(runtime.document.regions[0]?.textContent).toContain(
+      'The selected usage window is unavailable.',
+    );
+    expect(runtime.document.status.textContent).toBe('Review the schedule fields.');
+    expect(runtime.history.replaced).toEqual(['http://awm.test/schedule']);
+    expect(runtime.region.querySelector('[data-awm-interaction-error]')).toBeNull();
+  });
+
   it('only lets the newest GET response replace a region and pushes the resulting URL', async () => {
     const older = deferred<ReturnType<typeof response>>();
     let calls = 0;
@@ -620,6 +705,99 @@ describe('progressive SSR interaction runtime', () => {
     expect(calls).toBe(2);
     expect(runtime.document.regions[0]?.textContent).toBe('Newer range');
     expect(runtime.history.pushed).toEqual(['http://awm.test/usage?chartRange=24h']);
+  });
+
+  it('polls provider-client SSR status until the operation reaches a terminal state', async () => {
+    const fetchCalls: Array<{ url: string; options: Record<string, unknown> }> = [];
+    const target = 'provider-client:codex';
+    const runtime = createRuntime({
+      target,
+      pollState: 'checking',
+      pollHref: '/settings',
+      pages: new Map([
+        [
+          'updated',
+          {
+            target,
+            text: 'Updated version 1.2.3',
+            pollState: 'updated',
+            pollHref: '/settings',
+            announcement: 'Provider app updated.',
+          },
+        ],
+      ]),
+      fetch: (url, options) => {
+        fetchCalls.push({ url, options });
+        return Promise.resolve(response({ token: 'updated', url: 'http://awm.test/settings' }));
+      },
+    });
+
+    expect(runtime.timers).toHaveProperty('size', 1);
+    await runNextTimer(runtime.timers);
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]?.options.method).toBe('GET');
+    expect(fetchCalls[0]?.options.credentials).toBe('same-origin');
+    expect(fetchCalls[0]?.url).toBe('http://awm.test/settings');
+    expect(runtime.document.regions[0]?.textContent).toContain('Updated version 1.2.3');
+    expect(runtime.document.status.textContent).toBe('Provider app updated.');
+    expect(runtime.timers.size).toBe(0);
+    expect(runtime.document.regions[0]?.getAttribute('aria-busy')).toBeNull();
+  });
+
+  it('stops provider-client polling on read failure and offers a manual status refresh', async () => {
+    const runtime = createRuntime({
+      target: 'provider-client:codex',
+      pollState: 'updating',
+      pollHref: '/settings',
+      fetch: () => Promise.reject(new Error('connection reset')),
+    });
+
+    await runNextTimer(runtime.timers);
+
+    const alert = runtime.document.regions[0]?.querySelector('[data-awm-interaction-error]');
+    expect(alert?.textContent).toContain('The operation may still be running');
+    expect(alert?.querySelector('a')?.textContent).toBe('Refresh status');
+    expect(alert?.querySelector('a')?.href).toBe('http://awm.test/settings');
+    expect(runtime.document.status.textContent).toContain(
+      'Provider app status could not be refreshed',
+    );
+    expect(runtime.timers.size).toBe(0);
+  });
+
+  it('bounds provider-client polling and never cancels the server operation on timeout', async () => {
+    let calls = 0;
+    const target = 'provider-client:codex';
+    const runtime = createRuntime({
+      target,
+      pollState: 'rolling_back',
+      pollHref: '/settings',
+      pages: new Map([
+        [
+          'active',
+          {
+            target,
+            text: 'Restore still running',
+            pollState: 'rolling_back',
+            pollHref: '/settings',
+          },
+        ],
+      ]),
+      fetch: () => {
+        calls += 1;
+        return Promise.resolve(response({ token: 'active', url: 'http://awm.test/settings' }));
+      },
+    });
+
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await runNextTimer(runtime.timers);
+    }
+
+    const alert = runtime.document.regions[0]?.querySelector('[data-awm-interaction-error]');
+    expect(calls).toBe(120);
+    expect(alert?.textContent).toContain('it has not been cancelled');
+    expect(alert?.querySelector('a')?.textContent).toBe('Refresh status');
+    expect(runtime.timers.size).toBe(0);
   });
 
   it('navigates to the real login page when an enhanced request redirects after session expiry', async () => {

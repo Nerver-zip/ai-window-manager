@@ -248,21 +248,21 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
     page: 'schedule',
     title: 'Schedule',
     description: 'Choose when a new usage window should start.',
-    content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
+    content: `<div class="settings-page" data-awm-region="schedule-workspace">${input.notice ? renderNotice(input.notice) : ''}
       <section class="card current-window-summary" aria-labelledby="current-window-title">
         <div class="card-header"><div class="heading-copy"><p class="eyebrow">Usage right now</p><h2 id="current-window-title">Current window</h2><p class="muted">This is the latest saved usage information from your provider.</p></div></div>
         ${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}
       </section>
       <section class="card" aria-labelledby="activation-policy-title">
         <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">Choose a pattern. We only start when fresh usage information and provider safety checks allow it.</p></div></div>
-        <form class="schedule-provider-selection" method="get" action="/schedule" data-provider-picker-auto-submit>
+        <form class="schedule-provider-selection" method="get" action="/schedule" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="schedule-workspace">
           ${providerPicker}
           <input type="hidden" name="scope" value="${escapeAttribute(policyScope)}">
           <noscript><div class="form-actions"><button type="submit">View provider schedule</button></div></noscript>
         </form>
         ${selectedProvider?.kind === 'antigravity' ? renderPolicyScopeNavigation(providerId, policyScope) : ''}
         ${input.policyNeedsReview ? '<p class="notice" role="status">Review and save this family schedule before automatic starts can resume. No action will run until you save it.</p>' : ''}
-        <form method="post" action="/schedule" data-policy-form data-schedule-preview-form>
+        <form method="post" action="/schedule" data-policy-form data-schedule-preview-form data-awm-enhance="mutation" data-awm-target="schedule-workspace">
           ${csrfInput(csrfToken)}
           <input type="hidden" name="providerId" value="${escapeAttribute(providerId)}">
           <input type="hidden" name="scope" value="${escapeAttribute(policyScope)}">
@@ -276,7 +276,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
           ${renderPolicyFields('fixed', kind === 'fixed' && !noObservedTargets, `<div class="policy-controls-grid">${renderField('fixed-anchor', 'Cycle start time', `<div class="time-input-group"><input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required><div class="time-stepper" aria-label="Adjust start time"><button type="button" class="button button-secondary button-step" data-time-step="-60" aria-label="Subtract 1 hour" title="1 hour earlier">−1h</button><button type="button" class="button button-secondary button-step" data-time-step="60" aria-label="Add 1 hour" title="1 hour later">+1h</button></div></div><div class="schedule-presets" aria-label="Suggested cycle start times"><button type="button" class="button button-secondary" data-anchor-preset="08:00">Morning <span>08:00</span></button><button type="button" class="button button-secondary" data-anchor-preset="13:00">Afternoon <span>13:00</span></button><button type="button" class="button button-secondary" data-anchor-preset="18:00">Evening <span>18:00</span></button></div>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
           ${renderPolicyFields('active_hours', kind === 'active_hours' && !noObservedTargets, `<div class="policy-controls-grid">${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
           ${renderPolicyFields('manual', kind === 'manual', '<p class="policy-guidance">Monitoring continues. The service will not start a window automatically.</p>')}
-          <div class="form-actions"><button type="submit"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div>
+          <div class="form-actions"><button type="submit" data-awm-pending-label="Saving schedule…"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div>
         </form>
       </section>
       <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
@@ -296,7 +296,7 @@ function renderPolicyScopeNavigation(
   return `<nav class="policy-scope-navigation" aria-label="Antigravity quota family">${options
     .map(
       ([scope, label]) =>
-        `<a class="button${selectedScope === scope ? ' button-primary' : ' button-secondary'}" href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}"${selectedScope === scope ? ' aria-current="page"' : ''}>${label}</a>`,
+        `<a class="button${selectedScope === scope ? ' button-primary' : ' button-secondary'}" href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}" data-awm-soft-nav data-awm-target="schedule-workspace"${selectedScope === scope ? ' aria-current="page"' : ''}>${label}</a>`,
     )
     .join('')}</nav>`;
 }
@@ -911,6 +911,7 @@ export function renderSettingsPage(input: SettingsPageInput): string {
             csrfToken,
             authProviders.get(provider.id),
             provider.id === connectProviderId,
+            input.notice,
           ),
         )
         .join('\n')
@@ -924,7 +925,7 @@ export function renderSettingsPage(input: SettingsPageInput): string {
     title: 'Settings',
     description: 'Choose what to monitor, when to check, and your local time zone.',
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
-      <section class="card timezone-settings" aria-labelledby="timezone-settings-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time Zone</h2><p class="muted">Schedules and window resets are displayed in this time zone.</p></div></div><form method="post" action="/settings/timezone" data-timezone-settings><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit">Save time zone</button></div></form></section>
+      <section class="card timezone-settings" aria-labelledby="timezone-settings-title" data-awm-region="settings-timezone"${input.notice ? ` data-awm-announcement="${escapeAttribute(input.notice)}"` : ''}><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time Zone</h2><p class="muted">Schedules and window resets are displayed in this time zone.</p></div></div>${input.notice ? `<span hidden data-awm-announcement="${escapeAttribute(input.notice)}">${escapeHtml(input.notice)}</span>` : ''}<form method="post" action="/settings/timezone" data-timezone-settings data-awm-enhance="mutation" data-awm-target="settings-timezone"><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit" data-awm-pending-label="Saving time zone…">Save time zone</button></div></form></section>
       <section aria-labelledby="provider-settings-title">
         <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Accounts</p><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>
         <div class="settings-stack">${providerSections}</div>
@@ -1029,6 +1030,7 @@ function renderProviderCard(
   csrfToken: string,
   authProvider?: AuthOnboardingInput,
   connectTarget = false,
+  announcement?: string,
 ): string {
   const id = safeId(provider.id);
   const connection = providerConnectionState(provider, authProvider);
@@ -1063,26 +1065,41 @@ function renderProviderCard(
     ? String(provider.pollIntervalSeconds)
     : 'custom';
   const customIntervalDisabled = pollPreset !== 'custom' ? ' disabled' : '';
+  const announcementAttribute = announcement
+    ? ` data-awm-announcement="${escapeAttribute(announcement)}"`
+    : '';
+  const announcementMarkup = announcement
+    ? `<span hidden data-awm-announcement="${escapeAttribute(announcement)}">${escapeHtml(announcement)}</span>`
+    : '';
 
-  return `<article id="provider-${id}" class="card provider-settings${connectTargetClass}" aria-labelledby="provider-${id}-title" data-provider-connected="${connected ? 'true' : 'false'}"${connectTargetAttributes}>
+  return `<article id="provider-${id}" class="card provider-settings${connectTargetClass}" aria-labelledby="provider-${id}-title" data-awm-region="settings-provider:${id}"${announcementAttribute} data-provider-connected="${connected ? 'true' : 'false'}"${connectTargetAttributes}>
     <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><span class="badge provider-connection-badge" data-provider-connection-status data-connection-state="${connection.state}" aria-label="${escapeHtml(displayName)} account status"><span class="online-indicator" aria-hidden="true"></span><span data-provider-connection-label>${escapeHtml(connection.label)}</span></span></header>
+    ${announcementMarkup}
     ${authArea}
     <p class="provider-monitoring-note" data-provider-monitoring-note${controlsLocked ? '' : ' hidden'}>Connect your account to customize monitoring settings.</p>
-    <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}" data-provider-settings-form${controlsLocked ? ' hidden' : ''}>
+    <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}" data-provider-settings-form data-awm-enhance="mutation" data-awm-target="settings-provider:${id}"${controlsLocked ? ' hidden' : ''}>
       ${csrfInput(csrfToken)}
       <fieldset><legend>Monitoring settings</legend><div class="form-grid">
         ${renderField(`provider-${id}-enabled`, 'Monitoring', `<select id="provider-${id}-enabled" name="enabled" aria-describedby="provider-${id}-enabled-help">${booleanOptions(provider.enabled, 'On', 'Paused')}</select>`, 'Turn off monitoring to pause new usage checks.', `provider-${id}-enabled-help`)}
         ${renderField(`provider-${id}-mode`, 'Automatic window start', `<select id="provider-${id}-mode" name="mode" aria-describedby="provider-${id}-mode-help"><option value="monitor_only"${provider.mode === 'monitor_only' ? ' selected' : ''}>Off (monitoring only)</option>${automationOption}</select>`, automationHelp, `provider-${id}-mode-help`)}
         ${renderPollIntervalField(provider, id, pollPreset, customIntervalDisabled)}
       </div></fieldset>
-      <div class="form-actions"><button type="submit">Save settings</button></div>
+      <div class="form-actions"><button type="submit" data-awm-pending-label="Saving settings…">Save settings</button></div>
     </form>
-    ${renderProviderClientUpdates(provider, csrfToken)}
+    ${renderProviderClientUpdates(
+      provider,
+      csrfToken,
+      announcement === 'Provider app update preference saved.' ? announcement : undefined,
+    )}
     <details class="capability-details"><summary>What this provider can do</summary>${renderCapabilitySummary(provider.capabilities)}</details>
   </article>`;
 }
 
-function renderProviderClientUpdates(provider: SettingsProviderView, csrfToken: string): string {
+function renderProviderClientUpdates(
+  provider: SettingsProviderView,
+  csrfToken: string,
+  announcement?: string,
+): string {
   const update = provider.providerClientUpdate;
   if (!update) return '';
 
@@ -1091,8 +1108,16 @@ function renderProviderClientUpdates(provider: SettingsProviderView, csrfToken: 
   const latestVersion = update.availableVersion ?? 'Not checked';
   const lastChecked = renderProviderClientTimestamp('Last checked', update.lastCheckedAt);
   const lastUpdated = renderProviderClientTimestamp('Last changed', update.lastUpdatedAt);
+  const region = `provider-client:${safeId(provider.id)}`;
+  const preferenceRegion = `provider-client-preference:${safeId(provider.id)}`;
+  const preferenceAnnouncement = announcement
+    ? ` data-awm-announcement="${escapeAttribute(announcement)}"`
+    : '';
+  const preferenceAnnouncementMarkup = announcement
+    ? `<span hidden data-awm-announcement="${escapeAttribute(announcement)}">${escapeHtml(announcement)}</span>`
+    : '';
 
-  return `<section class="provider-client-updates" aria-labelledby="provider-${safeId(provider.id)}-updates-title">
+  return `<section class="provider-client-updates" aria-labelledby="provider-${safeId(provider.id)}-updates-title" data-awm-region="${escapeAttribute(region)}" data-awm-poll-state="${escapeAttribute(update.status)}" data-awm-poll-href="/settings" data-awm-announcement="${escapeAttribute(updateStatus.label)}">
     <h4 id="provider-${safeId(provider.id)}-updates-title">Provider app updates</h4>
     <p class="field-help">The service can use a newer official provider app without rebuilding the image. The image version remains available as a fallback.</p>
     <dl class="provider-client-versions">
@@ -1100,31 +1125,34 @@ function renderProviderClientUpdates(provider: SettingsProviderView, csrfToken: 
       <div><dt>Image version</dt><dd>${escapeHtml(update.packagedVersion ?? 'Unknown')}</dd></div>
       <div><dt>Latest stable</dt><dd>${escapeHtml(latestVersion)}</dd></div>
     </dl>
-    <p class="provider-client-update-status" role="status"><strong>Status:</strong> ${escapeHtml(updateStatus.label)}${updateStatus.detail ? ` <span class="field-help">${escapeHtml(updateStatus.detail)}</span>` : ''}</p>
+    <p class="provider-client-update-status" role="status" data-awm-announcement="${escapeAttribute(updateStatus.label)}"><strong>Status:</strong> ${escapeHtml(updateStatus.label)}${updateStatus.detail ? ` <span class="field-help">${escapeHtml(updateStatus.detail)}</span>` : ''}</p>
     ${lastChecked}${lastUpdated}
     <div class="provider-client-update-actions" aria-label="Provider app update actions">
-      ${renderProviderClientAction(`${actionBase}/check`, csrfToken, 'Check for updates', false, 'secondary')}
-      ${renderProviderClientAction(`${actionBase}/update`, csrfToken, 'Install update', !update.updateAvailable, update.updateAvailable ? 'primary' : 'secondary')}
-      ${renderProviderClientAction(`${actionBase}/rollback`, csrfToken, 'Restore previous version', !update.previousVersion, 'secondary')}
+      ${renderProviderClientAction(`${actionBase}/check`, csrfToken, region, 'Check for updates', 'Checking for updates…', false, 'secondary')}
+      ${renderProviderClientAction(`${actionBase}/update`, csrfToken, region, 'Install update', 'Installing update…', !update.updateAvailable, update.updateAvailable ? 'primary' : 'secondary')}
+      ${renderProviderClientAction(`${actionBase}/rollback`, csrfToken, region, 'Restore previous version', 'Restoring previous version…', !update.previousVersion, 'secondary')}
     </div>
-    <form method="post" action="${escapeAttribute(`${actionBase}/auto-update`)}" class="provider-client-auto-update">
+  </section>
+  <form method="post" action="${escapeAttribute(`${actionBase}/auto-update`)}" class="provider-client-auto-update" data-awm-region="${escapeAttribute(preferenceRegion)}"${preferenceAnnouncement} data-awm-enhance="mutation" data-awm-target="${escapeAttribute(preferenceRegion)}">
+      ${preferenceAnnouncementMarkup}
       ${csrfInput(csrfToken)}
       <label class="checkbox-label"><input type="checkbox" name="autoUpdate" value="true"${update.autoUpdate ? ' checked' : ''}> Automatically install stable updates</label>
       <p class="field-help">When enabled, the service checks for and installs stable releases while this provider is idle.</p>
-      <div class="form-actions"><button type="submit">Save update preference</button></div>
-    </form>
-  </section>`;
+      <div class="form-actions"><button type="submit" data-awm-pending-label="Saving update preference…">Save update preference</button></div>
+  </form>`;
 }
 
 function renderProviderClientAction(
   action: string,
   csrfToken: string,
+  target: string,
   label: string,
+  pendingLabel: string,
   disabled = false,
   variant: 'primary' | 'secondary' = 'secondary',
 ): string {
   const buttonClass = variant === 'primary' ? 'button button-primary' : 'button button-secondary';
-  return `<form method="post" action="${escapeAttribute(action)}">${csrfInput(csrfToken)}<button class="${buttonClass}" type="submit"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button></form>`;
+  return `<form method="post" action="${escapeAttribute(action)}" data-awm-enhance="mutation" data-awm-target="${escapeAttribute(target)}">${csrfInput(csrfToken)}<button class="${buttonClass}" type="submit" data-awm-pending-label="${escapeAttribute(pendingLabel)}"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button></form>`;
 }
 
 function providerClientUpdateStatus(
@@ -1381,7 +1409,7 @@ function renderField(
 }
 
 function renderNotice(notice: string): string {
-  return `<div class="notice" role="status">${escapeHtml(notice)}</div>`;
+  return `<div class="notice" role="status" data-awm-announcement="${escapeAttribute(notice)}">${escapeHtml(notice)}</div>`;
 }
 function renderEmptyState(title: string, message: string): string {
   return `<div class="empty-state"><h3>${escapeHtml(title)}</h3><p>${escapeHtml(message)}</p></div>`;

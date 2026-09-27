@@ -28,6 +28,22 @@ const supportedCapabilities: ProviderCapabilities = {
   windowTrigger: { supported: true, contract: 'official_supported', consumesQuota: true },
 };
 
+function regionValues(html: string): string[] {
+  return [...html.matchAll(/data-awm-region="([^"]+)"/g)].map((match) => match[1] ?? '');
+}
+
+function formsForTarget(html: string, target: string): string[] {
+  const forms: string[] = [];
+  for (const match of html.matchAll(/<form\b[^>]*>/g)) {
+    const openingTag = match[0];
+    if (!openingTag.includes(`data-awm-target="${target}"`)) continue;
+    const start = match.index ?? 0;
+    const closingIndex = html.indexOf('</form>', start + openingTag.length);
+    if (closingIndex >= 0) forms.push(html.slice(start, closingIndex + '</form>'.length));
+  }
+  return forms;
+}
+
 function windowWithDuration(
   confidence: NonNullable<WindowSnapshot['durationSeconds']>['confidence'],
 ): WindowSnapshot {
@@ -129,6 +145,7 @@ describe('settings UI helpers', () => {
       ],
     });
     const section = html.match(/<section class="provider-client-updates"[\s\S]*?<\/section>/)?.[0];
+    const preferenceForm = formsForTarget(html, 'provider-client-preference:codex')[0];
 
     expect(section).toContain('<h4 id="provider-codex-updates-title">Provider app updates</h4>');
     expect(section).toContain('<dt>Active version</dt><dd>0.156.0</dd>');
@@ -138,17 +155,167 @@ describe('settings UI helpers', () => {
     expect(section).toContain('action="/settings/provider-clients/codex/check"');
     expect(section).toContain('action="/settings/provider-clients/codex/update"');
     expect(section).toContain('action="/settings/provider-clients/codex/rollback"');
-    expect(section).toContain('action="/settings/provider-clients/codex/auto-update"');
+    expect(section).toContain('data-awm-region="provider-client:codex"');
+    expect(section).toContain('data-awm-poll-state="update_available"');
+    expect(section).toContain('data-awm-poll-href="/settings"');
+    expect(section).toContain('data-awm-announcement="Update available"');
     expect(section).toContain('name="csrfToken" value="csrf-token-for-test"');
-    expect(section).toContain('name="autoUpdate" value="true" checked');
     expect(section).toContain('Check for updates');
     expect(section).toContain('Install update</button>');
     expect(section).toContain('Restore previous version</button>');
-    expect(section).toContain('class="checkbox-label"');
-    expect(section).toContain('Automatically install stable updates');
+    expect(section).toContain('data-awm-pending-label="Checking for updates…"');
+    expect(section).toContain('data-awm-pending-label="Installing update…"');
+    expect(section).toContain('data-awm-pending-label="Restoring previous version…"');
+    expect(section).not.toContain('name="autoUpdate"');
+    expect(preferenceForm).toContain('data-awm-region="provider-client-preference:codex"');
+    expect(preferenceForm).toContain('data-awm-target="provider-client-preference:codex"');
+    expect(preferenceForm).toContain('method="post"');
+    expect(preferenceForm).toContain('action="/settings/provider-clients/codex/auto-update"');
+    expect(preferenceForm).toContain('name="csrfToken" value="csrf-token-for-test"');
+    expect(preferenceForm).toContain('name="autoUpdate" value="true" checked');
+    expect(preferenceForm).toContain('data-awm-pending-label="Saving update preference…"');
+    expect(preferenceForm).toContain('class="checkbox-label"');
+    expect(preferenceForm).toContain('Automatically install stable updates');
     expect(section).toContain('Last checked:');
     expect(section).toContain('Last changed:');
     expect(section).not.toContain('UPDATE_INSTALL_FAILED');
+  });
+
+  it('renders unique Settings regions with targeted native forms and preserved CSRF fields', () => {
+    const update = (status: 'checking' | 'rolling_back') => ({
+      packagedVersion: '1.0.0',
+      activeVersion: '1.0.0',
+      previousVersion: null,
+      availableVersion: null,
+      updateAvailable: false,
+      status,
+      lastCheckedAt: null,
+      lastUpdatedAt: null,
+      lastErrorCode: null,
+      autoUpdate: false,
+    });
+    const html = renderSettingsPage({
+      csrfToken,
+      timezone: { timezone: 'America/Sao_Paulo', source: 'manual' },
+      providers: [
+        { ...provider, id: 'codex', kind: 'codex', providerClientUpdate: update('checking') },
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          providerClientUpdate: update('rolling_back'),
+        },
+      ],
+    });
+    const regions = regionValues(html);
+
+    expect(regions).toEqual([
+      'app-content',
+      'settings-timezone',
+      'settings-provider:codex',
+      'provider-client:codex',
+      'provider-client-preference:codex',
+      'settings-provider:antigravity',
+      'provider-client:antigravity',
+      'provider-client-preference:antigravity',
+    ]);
+    expect(new Set(regions).size).toBe(regions.length);
+
+    const timezoneForm = formsForTarget(html, 'settings-timezone');
+    expect(timezoneForm).toHaveLength(1);
+    expect(timezoneForm[0]).toContain('method="post" action="/settings/timezone"');
+    expect(timezoneForm[0]).toContain('name="csrfToken" value="csrf-token-for-test"');
+
+    for (const providerId of ['codex', 'antigravity']) {
+      const providerForm = formsForTarget(html, `settings-provider:${providerId}`);
+      expect(providerForm).toHaveLength(1);
+      expect(providerForm[0]).toContain(`action="/settings/providers/${providerId}"`);
+      expect(providerForm[0]).toContain('method="post"');
+      expect(providerForm[0]).toContain('name="csrfToken" value="csrf-token-for-test"');
+
+      const clientForms = formsForTarget(html, `provider-client:${providerId}`);
+      expect(clientForms).toHaveLength(3);
+      expect(clientForms.every((form) => form.includes('method="post"'))).toBe(true);
+      expect(
+        clientForms.every((form) => form.includes('name="csrfToken" value="csrf-token-for-test"')),
+      ).toBe(true);
+      expect(clientForms.map((form) => form.match(/action="([^"]+)"/)?.[1])).toEqual([
+        `/settings/provider-clients/${providerId}/check`,
+        `/settings/provider-clients/${providerId}/update`,
+        `/settings/provider-clients/${providerId}/rollback`,
+      ]);
+
+      const preferenceForms = formsForTarget(html, `provider-client-preference:${providerId}`);
+      expect(preferenceForms).toHaveLength(1);
+      expect(preferenceForms[0]).toContain('method="post"');
+      expect(preferenceForms[0]).toContain(
+        `action="/settings/provider-clients/${providerId}/auto-update"`,
+      );
+      expect(preferenceForms[0]).toContain('name="csrfToken" value="csrf-token-for-test"');
+    }
+
+    const codexRegion = html.match(
+      /<section class="provider-client-updates"[^>]*data-awm-region="provider-client:codex"[^>]*>/,
+    )?.[0];
+    const antigravityRegion = html.match(
+      /<section class="provider-client-updates"[^>]*data-awm-region="provider-client:antigravity"[^>]*>/,
+    )?.[0];
+    expect(codexRegion).toContain('data-awm-poll-state="checking"');
+    expect(antigravityRegion).toContain('data-awm-poll-state="rolling_back"');
+    expect(codexRegion).toContain('data-awm-announcement="Checking for updates…"');
+    expect(antigravityRegion).toContain('data-awm-announcement="Restoring previous version…"');
+  });
+
+  it('places canonical save announcements inside the matching replaceable Settings regions', () => {
+    const providerSaved = renderSettingsPage({
+      csrfToken,
+      providers: [{ ...provider, id: 'codex', kind: 'codex' }],
+      notice: 'Provider settings saved.',
+    });
+    expect(providerSaved).toContain('data-awm-announcement="Provider settings saved."');
+    expect(providerSaved).toContain(
+      '<span hidden data-awm-announcement="Provider settings saved.">Provider settings saved.</span>',
+    );
+
+    const timezoneSaved = renderSettingsPage({
+      csrfToken,
+      providers: [],
+      notice: 'Time zone saved.',
+    });
+    expect(timezoneSaved).toContain('data-awm-region="settings-timezone"');
+    expect(timezoneSaved).toContain(
+      '<span hidden data-awm-announcement="Time zone saved.">Time zone saved.</span>',
+    );
+
+    const preferenceSaved = renderSettingsPage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'codex',
+          kind: 'codex',
+          providerClientUpdate: {
+            packagedVersion: '1.0.0',
+            activeVersion: '1.0.0',
+            previousVersion: null,
+            availableVersion: null,
+            updateAvailable: false,
+            status: 'idle',
+            lastCheckedAt: null,
+            lastUpdatedAt: null,
+            lastErrorCode: null,
+            autoUpdate: true,
+          },
+        },
+      ],
+      notice: 'Provider app update preference saved.',
+    });
+    expect(preferenceSaved).toContain(
+      '<span hidden data-awm-announcement="Provider app update preference saved.">Provider app update preference saved.</span>',
+    );
+    expect(preferenceSaved).toContain(
+      'data-awm-region="provider-client-preference:codex" data-awm-announcement="Provider app update preference saved."',
+    );
   });
 
   it('escapes provider-client values and disables unavailable update and rollback actions', () => {
@@ -174,6 +341,9 @@ describe('settings UI helpers', () => {
       ],
     });
     const section = html.match(/<section class="provider-client-updates"[\s\S]*?<\/section>/)?.[0];
+    const preferenceForm = html.match(
+      /<form[^>]*class="provider-client-auto-update"[\s\S]*?<\/form>/,
+    )?.[0];
 
     expect(section).toContain('action="/settings/provider-clients/co&#39;dex%3C%26/check"');
     expect(section).toContain('Unknown</dd>');
@@ -185,8 +355,9 @@ describe('settings UI helpers', () => {
     expect(section).toMatch(
       /<button[^>]*type="submit"[^>]*disabled>Restore previous version<\/button>/,
     );
-    expect(section).toContain('name="autoUpdate" value="true">');
-    expect(section).not.toContain('name="autoUpdate" value="true" checked');
+    expect(section).not.toContain('name="autoUpdate"');
+    expect(preferenceForm).toContain('name="autoUpdate" value="true">');
+    expect(preferenceForm).not.toContain('name="autoUpdate" value="true" checked');
     expect(section).not.toContain('<script>');
     expect(section).not.toContain('UPDATE_BLOCKED_PROVIDER_BUSY');
   });
@@ -236,6 +407,15 @@ describe('settings UI helpers', () => {
       });
 
       expect(html).toContain(message);
+      const clientRegion = html.match(
+        /<section class="provider-client-updates"[^>]*data-awm-region="provider-client:fake"[^>]*>/,
+      )?.[0];
+      expect(clientRegion).toContain(`data-awm-poll-state="${status}"`);
+      expect(clientRegion).toContain('data-awm-poll-href="/settings"');
+      expect(clientRegion).toContain('data-awm-announcement=');
+      expect(html).toContain(
+        'class="provider-client-update-status" role="status" data-awm-announcement=',
+      );
     },
   );
 
@@ -296,13 +476,13 @@ describe('settings UI helpers', () => {
     expect(cards[0]).toContain('Sign-in required');
     expect(cards[0]).toContain('Connect Codex');
     expect(cards[0]).toContain('Sign in with OpenAI to start tracking your usage windows.');
-    expect(cards[0]).toContain('data-provider-settings-form hidden');
+    expect(cards[0]).toMatch(/data-provider-settings-form[^>]* hidden>/);
     expect(cards[0]).toContain('data-provider-monitoring-note>Connect your account');
     expect(cards[1]).toContain('Connected');
     expect(cards[1]).toContain('Reconnect account');
     expect(cards[1]).toContain('Reconnect Antigravity');
-    expect(cards[1]).toContain('data-provider-settings-form>');
-    expect(cards[1]).not.toContain('data-provider-settings-form hidden');
+    expect(cards[1]).toMatch(/data-provider-settings-form[^>]*>/);
+    expect(cards[1]).not.toMatch(/data-provider-settings-form[^>]* hidden>/);
     expect(html).toContain('Time Zone');
     expect(html).toContain('Schedules and window resets are displayed in this time zone.');
     expect(html).toContain('Manage connected accounts and update frequencies.');
@@ -356,6 +536,15 @@ describe('settings UI helpers', () => {
     expect(html).not.toContain('confidence');
     expect(html).toContain('Your schedule at a glance');
     expect(html).toContain('role="img" aria-label="24-hour schedule view.');
+    expect(regionValues(html).filter((value) => value === 'schedule-workspace')).toHaveLength(1);
+    const scheduleForms = formsForTarget(html, 'schedule-workspace');
+    expect(scheduleForms).toHaveLength(2);
+    expect(scheduleForms[0]).toContain('method="get" action="/schedule"');
+    expect(scheduleForms[0]).toContain('data-awm-enhance="navigation"');
+    expect(scheduleForms[1]).toContain('method="post" action="/schedule"');
+    expect(scheduleForms[1]).toContain('data-awm-enhance="mutation"');
+    expect(scheduleForms[1]).toContain('name="csrfToken" value="csrf-token-for-test"');
+    expect(scheduleForms[1]).toContain('data-awm-pending-label="Saving schedule…"');
     expect(html).toContain('name="toleranceSeconds" value="900"');
     expect(html).not.toContain('Tolerance</label>');
     expect(html.match(/name="windowKind"/g)).toHaveLength(1);
@@ -469,6 +658,7 @@ describe('settings UI helpers', () => {
     expect(html).toContain('Currently managing');
     expect(html).toContain('Gemini Models · Weekly window');
     expect(html).toContain('href="/schedule?providerId=antigravity&amp;scope=claude_gpt"');
+    expect(html).toContain('data-awm-soft-nav data-awm-target="schedule-workspace"');
     expect(html).toContain('name="scope" value="gemini"');
     expect(html).toContain(
       '<span class="field-label">Trigger model</span><code>gemini-3.8-flash-low</code>',
@@ -546,7 +736,9 @@ describe('settings UI helpers', () => {
     expect(html).toContain('name="policyKind" value="manual" checked');
     expect(html).toMatch(/name="policyKind" value="auto" disabled/);
     expect(html).toContain('Waiting for a provider-reported usage window');
-    expect(html).toContain('<button type="submit">Save schedule</button>');
+    expect(html).toContain(
+      '<button type="submit" data-awm-pending-label="Saving schedule…">Save schedule</button>',
+    );
   });
 
   it('does not present a saved automatic policy as editable when its target is unobserved', () => {

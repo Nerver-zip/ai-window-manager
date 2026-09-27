@@ -193,6 +193,10 @@ describe('schedule provider switching', () => {
 
     const codexPage = await app.inject('/schedule?providerId=codex');
     expect(codexPage.statusCode).toBe(200);
+    expect(
+      [...codexPage.body.matchAll(/data-awm-region="([^"]+)"/g)].map((match) => match[1]),
+    ).toEqual(['app-content', 'schedule-workspace']);
+    expect(codexPage.body).toContain('data-awm-region="schedule-workspace"');
     expect(codexPage.body).toMatch(
       /name="providerId" value="codex" checked|<option value="codex" selected>/,
     );
@@ -215,7 +219,9 @@ describe('schedule provider switching', () => {
     const selector = antigravityPage.body.match(
       /<form class="schedule-provider-selection"[\s\S]*?<\/form>/,
     )?.[0];
-    expect(selector).toContain('method="get" action="/schedule"');
+    expect(selector).toContain(
+      'method="get" action="/schedule" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="schedule-workspace"',
+    );
     expect(selector).toContain(
       '<noscript><div class="form-actions"><button type="submit">View provider schedule</button>',
     );
@@ -224,8 +230,17 @@ describe('schedule provider switching', () => {
     const saveForm = antigravityPage.body.match(
       /<form method="post" action="\/schedule"[\s\S]*?<\/form>/,
     )?.[0];
+    expect(saveForm).toContain('data-awm-enhance="mutation"');
+    expect(saveForm).toContain('data-awm-target="schedule-workspace"');
+    expect(saveForm).toContain('name="csrfToken"');
+    expect(saveForm).toContain('data-awm-pending-label="Saving schedule…"');
     expect(saveForm).toContain('type="hidden" name="providerId" value="antigravity"');
     expect(saveForm).not.toContain('class="provider-picker-input"');
+    const familyLink = antigravityPage.body.match(
+      /<a[^>]*href="\/schedule\?providerId=antigravity&amp;scope=claude_gpt"[^>]*>/,
+    )?.[0];
+    expect(familyLink).toContain('data-awm-soft-nav');
+    expect(familyLink).toContain('data-awm-target="schedule-workspace"');
     expect(antigravityPage.body).toContain(
       'Choose a provider to load its saved schedule. This does not save changes.',
     );
@@ -303,6 +318,20 @@ describe('schedule provider switching', () => {
     );
     expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')?.requiresReview).toBe(false);
     expect(reconcileRequests).toBe(1);
+
+    const savedPage = await app.inject({
+      method: 'GET',
+      url: '/schedule?updated=schedule&providerId=antigravity&scope=claude_gpt',
+      headers: { host: 'localhost:8787' },
+    });
+    expect(savedPage.statusCode).toBe(200);
+    expect(savedPage.body).toContain('Schedule saved.');
+    expect(savedPage.body).toContain('data-awm-announcement="Schedule saved."');
+    expect(savedPage.body).toContain('data-awm-region="schedule-workspace"');
+    expect(savedPage.body).toContain('name="policyKind" value="fixed" checked');
+    expect(savedPage.body).toContain('name="anchorLocalTime" type="time" value="10:30"');
+    expect(savedPage.body).toContain('value="antigravity_claude_gpt_weekly" selected');
+    expect(savedPage.body).toContain('name="scope" value="claude_gpt"');
   });
 
   it('submits provider radios on change without auto-submitting unrelated filters', () => {

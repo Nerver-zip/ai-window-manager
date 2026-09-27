@@ -5,6 +5,13 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
   const pendingForms = new WeakSet();
   const pendingMutationTargets = new Set();
   const getRequests = new Map();
+  const providerClientPolls = new Map();
+  const ACTIVE_PROVIDER_CLIENT_STATES = new Set(['checking', 'updating', 'rolling_back']);
+  const TERMINAL_PROVIDER_CLIENT_STATES = new Set([
+    'idle', 'current', 'update_available', 'updated', 'rolled_back', 'blocked', 'error',
+  ]);
+  const PROVIDER_CLIENT_POLL_INTERVAL_MS = 1500;
+  const MAX_PROVIDER_CLIENT_POLL_ATTEMPTS = 120;
   let getSequence = 0;
 
   function all(root, selector) {
@@ -106,6 +113,171 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
   function announcementFor(region, fallback) {
     const message = region?.querySelector('[data-awm-announcement]')?.textContent?.trim();
     return message || fallback;
+  }
+
+  function stopProviderClientPoll(target, state) {
+    if (state.timer !== null) window.clearTimeout(state.timer);
+    state.timer = null;
+    state.controller?.abort();
+    state.controller = null;
+    if (providerClientPolls.get(target) === state) providerClientPolls.delete(target);
+  }
+
+  function providerClientPollFailure(target, state, message, href) {
+    const region = findRegion(document, target) || state.region;
+    if (region) showFailure(region, message, href, 'Refresh status');
+    announce(message);
+    stopProviderClientPoll(target, state);
+  }
+
+  function scheduleProviderClientPoll(target, state) {
+    const region = findRegion(document, target);
+    if (!region || !ACTIVE_PROVIDER_CLIENT_STATES.has(region.dataset.awmPollState)) {
+      stopProviderClientPoll(target, state);
+      return;
+    }
+    state.region = region;
+    if (state.timer !== null || state.running) return;
+    state.timer = window.setTimeout(() => {
+      state.timer = null;
+      void pollProviderClientStatus(target, state);
+    }, PROVIDER_CLIENT_POLL_INTERVAL_MS);
+  }
+
+  function enhanceProviderClientPolling(root) {
+    const seen = new Set();
+    for (const region of all(root, REGION_SELECTOR)) {
+      const target = region.dataset.awmRegion;
+      if (typeof target !== 'string' || !target.startsWith('provider-client:')) continue;
+      seen.add(target);
+      if (!ACTIVE_PROVIDER_CLIENT_STATES.has(region.dataset.awmPollState)) {
+        const previous = providerClientPolls.get(target);
+        if (previous) stopProviderClientPoll(target, previous);
+        continue;
+      }
+      let state = providerClientPolls.get(target);
+      if (!state) {
+        state = { attempts: 0, controller: null, region, running: false, timer: null };
+        providerClientPolls.set(target, state);
+      }
+      state.region = region;
+      scheduleProviderClientPoll(target, state);
+    }
+    if (!root || root === document) return;
+    const disposedTarget = root.dataset?.awmRegion;
+    for (const [target, state] of providerClientPolls) {
+      if (!seen.has(target) && target !== disposedTarget && root.contains?.(state.region)) {
+        stopProviderClientPoll(target, state);
+      }
+    }
+  }
+
+  async function pollProviderClientStatus(target, state) {
+    if (providerClientPolls.get(target) !== state) return;
+    const region = findRegion(document, target);
+    if (!region) {
+      stopProviderClientPoll(target, state);
+      return;
+    }
+    state.region = region;
+    if (!ACTIVE_PROVIDER_CLIENT_STATES.has(region.dataset.awmPollState)) {
+      stopProviderClientPoll(target, state);
+      return;
+    }
+    if (pendingMutationTargets.has(target)) {
+      scheduleProviderClientPoll(target, state);
+      return;
+    }
+    const url = sameOriginUrl(region.dataset.awmPollHref, window.location.href);
+    if (!url || url.pathname !== '/settings') {
+      providerClientPollFailure(
+        target,
+        state,
+        'Provider app status could not be refreshed. Refresh status before trying again.',
+        window.location.href,
+      );
+      return;
+    }
+    if (state.attempts >= MAX_PROVIDER_CLIENT_POLL_ATTEMPTS) {
+      providerClientPollFailure(
+        target,
+        state,
+        'The provider operation is still running. Refresh its status later; it has not been cancelled.',
+        url.href,
+      );
+      return;
+    }
+
+    state.attempts += 1;
+    state.running = true;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    state.controller = controller;
+    setBusy(region, true);
+    try {
+      const response = await fetch(url.href, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Accept: 'text/html' },
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (providerClientPolls.get(target) !== state || controller?.signal.aborted) return;
+      const finalUrl = finalSameOriginUrl(response, url);
+      if (!finalUrl) throw new Error('cross_origin_response');
+      if (isLoginResponse(response, finalUrl)) {
+        stopProviderClientPoll(target, state);
+        window.location.assign(finalUrl.href);
+        return;
+      }
+      const parsed = parsedHtml(response, await response.text());
+      if (providerClientPolls.get(target) !== state || controller?.signal.aborted) return;
+      if (!response.ok || !parsed) throw new Error('invalid_status_response');
+      const incoming = findRegion(parsed, target);
+      if (!incoming) throw new Error('missing_provider_client_region');
+      const nextStatus = incoming.dataset.awmPollState;
+      if (
+        !ACTIVE_PROVIDER_CLIENT_STATES.has(nextStatus) &&
+        !TERMINAL_PROVIDER_CLIENT_STATES.has(nextStatus)
+      ) {
+        throw new Error('unknown_provider_client_status');
+      }
+      const replacement = replaceRegion(target, parsed);
+      if (!replacement) throw new Error('missing_current_provider_client_region');
+      if (TERMINAL_PROVIDER_CLIENT_STATES.has(nextStatus)) {
+        stopProviderClientPoll(target, state);
+        announce(announcementFor(replacement, 'Provider app status: ' + nextStatus + '.'));
+        return;
+      }
+      if (state.attempts >= MAX_PROVIDER_CLIENT_POLL_ATTEMPTS) {
+        providerClientPollFailure(
+          target,
+          state,
+          'The provider operation is still running. Refresh its status later; it has not been cancelled.',
+          url.href,
+        );
+      }
+    } catch {
+      if (providerClientPolls.get(target) === state && !controller?.signal.aborted) {
+        providerClientPollFailure(
+          target,
+          state,
+          'Provider app status could not be refreshed. The operation may still be running; refresh status before trying again.',
+          url.href,
+        );
+      }
+    } finally {
+      state.running = false;
+      state.controller = null;
+      const current = findRegion(document, target);
+      if (current) setBusy(current, false);
+      if (providerClientPolls.get(target) === state) {
+        if (current && ACTIVE_PROVIDER_CLIENT_STATES.has(current.dataset.awmPollState)) {
+          state.region = current;
+          scheduleProviderClientPoll(target, state);
+        } else {
+          stopProviderClientPoll(target, state);
+        }
+      }
+    }
   }
 
   function showFailure(region, message, href, actionLabel) {
@@ -287,6 +459,12 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
 
     getRequests.get(target)?.controller?.abort();
     getRequests.delete(target);
+    const providerPoll = providerClientPolls.get(target);
+    if (providerPoll?.timer !== null && providerPoll?.timer !== undefined) {
+      window.clearTimeout(providerPoll.timer);
+      providerPoll.timer = null;
+    }
+    providerPoll?.controller?.abort();
     pendingForms.add(form);
     pendingMutationTargets.add(target);
     setBusy(region, true);
@@ -311,12 +489,27 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
         return;
       }
       const parsed = parsedHtml(response, await response.text());
-      if (!response.ok || !parsed) {
+      if (!parsed) {
         showFailure(region, uncertainMessage, window.location.href, 'Refresh status');
         announce(uncertainMessage);
         return;
       }
       const replacement = replaceRegion(target, parsed);
+      if (!response.ok) {
+        if (replacement) {
+          setHistory(finalUrl, 'replace');
+          announce(
+            announcementFor(
+              replacement,
+              'The request was not accepted. Review the returned message and try again.',
+            ),
+          );
+        } else {
+          showFailure(region, uncertainMessage, window.location.href, 'Refresh status');
+          announce(uncertainMessage);
+        }
+        return;
+      }
       if (!replacement) {
         window.location.assign(finalUrl.href);
         return;
@@ -333,6 +526,7 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
         setBusy(region, false);
         restoreButton();
       }
+      enhanceProviderClientPolling(document);
     }
   }
 
@@ -410,9 +604,12 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
         return;
       }
       const parsed = parsedHtml(response, await response.text());
-      if (!response.ok || !parsed || !replaceRegion(target, parsed)) {
+      const replacement = parsed ? replaceRegion(target, parsed) : null;
+      if (!response.ok || !parsed || !replacement) {
         window.location.reload();
+        return;
       }
+      if (finalUrl.href !== url.href) setHistory(finalUrl, 'replace');
     } catch {
       if (getRequests.get(target) === request && !controller?.signal.aborted) window.location.reload();
     } finally {
@@ -426,5 +623,19 @@ export const PROGRESSIVE_INTERACTIONS_JS = String.raw`(() => {
   if (typeof document.addEventListener !== 'function') return;
   document.addEventListener('submit', onSubmit);
   document.addEventListener('click', onClick);
+  document.addEventListener('awm:enhance', (event) => {
+    enhanceProviderClientPolling(event.detail?.root);
+  });
+  document.addEventListener('awm:dispose', (event) => {
+    const root = event.detail?.root;
+    if (!root) return;
+    const disposedTarget = root.dataset?.awmRegion;
+    for (const [target, state] of providerClientPolls) {
+      if (target !== disposedTarget && root.contains?.(state.region)) {
+        stopProviderClientPoll(target, state);
+      }
+    }
+  });
   window.addEventListener?.('popstate', () => { void restorePageFromHistory(); });
+  enhanceProviderClientPolling(document);
 })();`;
