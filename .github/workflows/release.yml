@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to validate and publish
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    env:
+      REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve and verify the exact release tag
+        id: resolve
+        shell: bash
+        run: |
+          if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?(\+[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Invalid release tag: $REQUESTED_TAG" >&2
+            exit 1
+          fi
+          git show-ref --tags --verify --quiet "refs/tags/$REQUESTED_TAG"
+          release_sha="$(git rev-parse --verify "${REQUESTED_TAG}^{commit}")"
+          test "$(git rev-parse HEAD)" = "$release_sha"
+          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "Release tag $REQUESTED_TAG resolves to $release_sha"
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit all dependencies
+        run: pnpm audit --audit-level moderate
+
+      - name: Validate source, tests, build, and secrets
+        run: pnpm validate
+
+      - name: Test release-note generation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Validate Compose and run disposable authenticated Docker smoke test
+        run: ./scripts/docker_auth_smoke.sh
+
+      - name: Set up QEMU for arm64 validation
+        uses: docker/setup-qemu-action@v4.2.0
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.3.0
+
+      - name: Build supported Linux architectures without publishing an image
+        run: >-
+          docker buildx build
+          --platform linux/amd64,linux/arm64
+          --tag ai-window-manager:release-validation
+          --output "type=oci,dest=${RUNNER_TEMP}/ai-window-manager-release.oci"
+          .
+
+  publish-release:
+    needs: validate-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+      RELEASE_SHA: ${{ needs.validate-release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.validate-release.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Reverify source revision and generate notes
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(git rev-parse --verify "${RELEASE_TAG}^{commit}")" = "$RELEASE_SHA"
+          python3 .github/scripts/generate_release_notes.py \
+            --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output "$RUNNER_TEMP/release-notes.md"
+
+      - name: Create or refresh the source-only GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --verify-tag \
+              --latest
+          fi

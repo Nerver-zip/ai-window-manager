@@ -31,6 +31,8 @@ jobs:
       - run: pnpm test
       - run: pnpm test:coverage
       - run: pnpm build
+      - name: Test release-note generation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 
   security:
     runs-on: ubuntu-latest
