@@ -68,9 +68,8 @@ function tarEntry(entry: TarInput): Buffer {
 
 function paxRecord(key: string, value: string): Buffer {
   let length = 0;
-  let record = '';
   while (true) {
-    record = `${length} ${key}=${value}\n`;
+    const record = `${length} ${key}=${value}\n`;
     const nextLength = Buffer.byteLength(record, 'utf8');
     if (nextLength === length) return Buffer.from(record, 'utf8');
     length = nextLength;

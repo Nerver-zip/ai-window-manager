@@ -524,7 +524,7 @@ export class CodexAppServerClient {
     let delivered = false;
     for (const waiter of [...this.notificationWaiters]) {
       if (waiter.method !== method) continue;
-      let matches = false;
+      let matches: boolean;
       try {
         matches = waiter.predicate(params);
       } catch {
