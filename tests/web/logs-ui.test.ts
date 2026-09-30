@@ -478,11 +478,17 @@ describe('history UI helpers', () => {
     expectSoftNavigationContract(html);
     expect(html.match(/data-awm-region="logs-results"/g)).toHaveLength(1);
     expect(html).toContain(
-      '<form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-awm-enhance="navigation" data-awm-target="logs-results">',
+      '<form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="logs-results">',
     );
     expect(html).toContain('value="12h" selected');
-    expect(html).toContain('data-awm-focus-key="logs-range"');
-    expect(html).toContain('data-awm-focus-key="logs-apply-filters"');
+    expect(html).toContain(
+      '<select name="range" data-chart-range-select data-awm-focus-key="logs-range">',
+    );
+    expect(html).toContain('name="provider" value="codex" checked');
+    expect(html).toContain(
+      '<noscript><button class="button button-primary" type="submit">Apply filters</button></noscript>',
+    );
+    expect(html).not.toContain('data-awm-focus-key="logs-apply-filters"');
     expect(html).toContain(
       'href="/logs?range=12h&amp;tag=trigger&amp;provider=codex" data-awm-soft-nav data-awm-target="logs-results"',
     );
@@ -498,6 +504,18 @@ describe('history UI helpers', () => {
     expect(html).toContain('href="/usage?provider=codex"');
     expect(html).not.toContain('href="/usage?provider=codex" data-awm-soft-nav');
     expect(html).toContain('method="get" action="/logs"');
+  });
+
+  it('preserves the selected event type in the GET filter form', () => {
+    const html = renderLogsPage({
+      now: NOW,
+      filter: { range: '12h', eventType: 'scheduler_noop' },
+      providers: [],
+      events: [],
+      samples: [],
+    });
+
+    expect(html).toContain('<input type="hidden" name="type" value="scheduler_noop">');
   });
 
   it('preserves the selected log tag in an escaped hidden form field', () => {

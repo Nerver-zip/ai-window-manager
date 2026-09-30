@@ -373,6 +373,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .history-toolbar-summary strong { font-size: 18px; }
 .history-toolbar-summary .eyebrow { margin-bottom: 0; }
 .history-toolbar-fields { display: grid; grid-template-columns: minmax(130px, 1fr) auto; gap: 12px; align-items: end; min-width: 0; }
+.history-toolbar-fields > .field { grid-column: 1 / -1; }
 .log-tag-filters { display: flex; flex-wrap: wrap; gap: 8px; }
 .log-tag-filter { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 8px 13px; color: var(--text-muted); font-size: 12px; font-weight: 600; text-decoration: none; }
 .log-tag-filter:hover { border-color: var(--accent); color: var(--text); }

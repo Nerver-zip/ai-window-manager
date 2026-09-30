@@ -406,7 +406,7 @@ export function renderLogsPage(input: HistoryPageInput): string {
   const timeZone = input.timeZone ?? 'UTC';
   const content = `<div class="logs-page" data-awm-region="${LOGS_RESULTS_REGION}">
     ${usageNotice}
-    <form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-awm-enhance="navigation" data-awm-target="${LOGS_RESULTS_REGION}">
+    <form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="${LOGS_RESULTS_REGION}">
       ${hiddenTag}${hiddenType}
       <div class="history-toolbar-summary">
         <span class="eyebrow">Explore</span>
@@ -417,9 +417,9 @@ export function renderLogsPage(input: HistoryPageInput): string {
         ${providerPicker}
         <label class="field">
           <span class="field-label">Timeline range</span>
-          <select name="range" data-awm-focus-key="logs-range">${rangeOptions}</select>
+          <select name="range" data-chart-range-select data-awm-focus-key="logs-range">${rangeOptions}</select>
         </label>
-        <button class="button button-primary" type="submit" data-awm-focus-key="logs-apply-filters">Apply filters</button>
+        <noscript><button class="button button-primary" type="submit">Apply filters</button></noscript>
       </div>
     </form>
     <nav class="log-tag-filters" aria-label="Filter logs by category">${tagFilters}</nav>

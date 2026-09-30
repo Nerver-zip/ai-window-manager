@@ -1,5 +1,6 @@
 import { Script } from 'node:vm';
 import { describe, expect, it } from 'vitest';
+import { APP_JS } from '../../src/web/ui/chart-interactions.js';
 import { PROGRESSIVE_INTERACTIONS_JS } from '../../src/web/ui/progressive-interactions.js';
 
 type Listener = (event: Record<string, unknown>) => void;
@@ -62,6 +63,7 @@ class FakeElement {
   }
 
   matches(selector: string): boolean {
+    if (selector === 'form') return this.tagName === 'FORM';
     if (selector === 'a' || selector === 'button') return this.tagName === selector.toUpperCase();
     if (selector === '[data-awm-soft-nav]') return this.dataset.awmSoftNav !== undefined;
     if (selector === '[data-awm-region]') return Boolean(this.dataset.awmRegion);
@@ -75,6 +77,15 @@ class FakeElement {
     if (selector === '[role="alert"]') return this.attributes.get('role') === 'alert';
     if (selector === 'h1' || selector === 'h2' || selector === 'h3')
       return this.tagName === selector.toUpperCase();
+    if (selector.startsWith('.')) {
+      return (this.attributes.get('class') ?? '').split(/\s+/).includes(selector.slice(1));
+    }
+    if (selector.startsWith('[data-') && selector.endsWith(']')) {
+      const key = selector
+        .slice(6, -1)
+        .replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+      return this.dataset[key] !== undefined;
+    }
     return false;
   }
 
@@ -236,8 +247,8 @@ class FakeDocument {
   }
 
   querySelectorAll(selector: string): FakeElement[] {
-    if (selector !== '[data-awm-region]') return [];
-    return this.regions;
+    if (selector === '[data-awm-region]') return this.regions;
+    return this.regions.flatMap((region) => region.querySelectorAll(selector));
   }
 
   querySelector(selector: string): FakeElement | null {
@@ -296,16 +307,17 @@ class FakeForm extends FakeElement {
   }
 
   matches(selector: string): boolean {
-    return (
-      selector === 'form[data-awm-enhance]' &&
-      this.tagName === 'FORM' &&
-      Boolean(this.dataset.awmEnhance)
-    );
+    if (selector === 'form[data-awm-enhance]') return Boolean(this.dataset.awmEnhance);
+    return super.matches(selector);
   }
 
   querySelector(selector: string): FakeElement | null {
     if (selector === 'button[type="submit"], input[type="submit"]') return this.submitButton;
     return super.querySelector(selector);
+  }
+
+  requestSubmit(): void {
+    if (this.ownerDocument) submit(this.ownerDocument, this, null);
   }
 }
 
@@ -347,6 +359,7 @@ class FakeParsedDocument {
     title: string,
     focusId?: string,
     polling?: { pollState?: string; pollHref?: string; announcement?: string },
+    focusKey?: string,
   ) {
     this.region = new FakeRegion(target, document, text);
     if (polling?.pollState) this.region.dataset.awmPollState = polling.pollState;
@@ -357,9 +370,10 @@ class FakeParsedDocument {
       announcement.textContent = polling.announcement;
       this.region.append(announcement);
     }
-    if (focusId) {
+    if (focusId || focusKey) {
       const control = new FakeElement('select', document);
-      control.id = focusId;
+      if (focusId) control.id = focusId;
+      if (focusKey) control.dataset.awmFocusKey = focusKey;
       this.region.append(control);
     }
     this.title = new FakeElement('title', document);
@@ -394,11 +408,15 @@ function response(input: { token: string; url: string; status?: number }) {
   };
 }
 
-function submit(document: FakeDocument, form: FakeForm): { defaultPrevented: boolean } {
+function submit(
+  document: FakeDocument,
+  form: FakeForm,
+  submitter: FakeElement | null = form.submitButton,
+): { defaultPrevented: boolean } {
   const event = {
     type: 'submit',
     target: form,
-    submitter: form.submitButton,
+    submitter,
     defaultPrevented: false,
     preventDefault() {
       this.defaultPrevented = true;
@@ -424,6 +442,7 @@ function createRuntime(input: {
       text: string;
       title?: string;
       focusId?: string;
+      focusKey?: string;
       pollState?: string;
       pollHref?: string;
       announcement?: string;
@@ -466,6 +485,7 @@ function createRuntime(input: {
         text: string;
         title?: string;
         focusId?: string;
+        focusKey?: string;
         pollState?: string;
         pollHref?: string;
         announcement?: string;
@@ -482,6 +502,7 @@ function createRuntime(input: {
         page.title ?? 'Updated page',
         page.focusId,
         page,
+        page.focusKey,
       );
     }
   }
@@ -513,6 +534,42 @@ function createRuntime(input: {
   return { document, history, location, region, timers };
 }
 
+function enhanceLogsFilterForm(
+  runtime: ReturnType<typeof createRuntime>,
+  initial: { providerId: string; range: string },
+) {
+  const form = new FakeForm(runtime.document, {
+    mode: 'navigation',
+    target: 'logs-results',
+    method: 'get',
+    action: 'http://awm.test/logs',
+    entries: [
+      ['tag', 'trigger'],
+      ['type', 'scheduler_noop'],
+      ['provider', initial.providerId],
+      ['range', initial.range],
+    ],
+  });
+  form.dataset.providerPickerAutoSubmit = '';
+
+  const codex = new FakeElement('input', runtime.document);
+  codex.attributes.set('class', 'provider-picker-input');
+  codex.id = 'provider-codex';
+  const antigravity = new FakeElement('input', runtime.document);
+  antigravity.attributes.set('class', 'provider-picker-input');
+  antigravity.id = 'provider-antigravity';
+  const range = new FakeElement('select', runtime.document);
+  range.dataset.chartRangeSelect = '';
+  range.dataset.awmFocusKey = 'logs-range';
+  range.name = 'range';
+  range.value = initial.range;
+  form.append(codex, antigravity, range);
+  runtime.region.append(form);
+
+  new Script(APP_JS).runInNewContext({ document: runtime.document, window: {} });
+  return { form, codex, antigravity, range };
+}
+
 async function runNextTimer(timers: Map<number, () => void>): Promise<void> {
   const next = timers.entries().next().value as [number, () => void] | undefined;
   if (!next) throw new Error('No timer is scheduled');
@@ -522,6 +579,73 @@ async function runNextTimer(timers: Map<number, () => void>): Promise<void> {
 }
 
 describe('progressive SSR interaction runtime', () => {
+  it.each([
+    { changed: 'provider' as const, expectedProvider: 'codex', expectedRange: '24h' },
+    { changed: 'range' as const, expectedProvider: 'antigravity', expectedRange: '3h' },
+  ])(
+    'applies Logs $changed changes through one partial GET while preserving filters and focus',
+    async ({ changed, expectedProvider, expectedRange }) => {
+      const requests: Array<{ url: string; options: Record<string, unknown> }> = [];
+      const pending = deferred<ReturnType<typeof response>>();
+      const runtime = createRuntime({
+        target: 'logs-results',
+        pages: new Map([
+          [
+            'updated',
+            {
+              target: 'logs-results',
+              text: 'Updated activity log results',
+              ...(changed === 'range' ? { focusKey: 'logs-range' } : { focusId: 'provider-codex' }),
+            },
+          ],
+        ]),
+        fetch: (url, options) => {
+          requests.push({ url, options });
+          return pending.promise;
+        },
+      });
+      runtime.location.href =
+        'http://awm.test/logs?range=24h&page=4&provider=antigravity&tag=trigger&type=scheduler_noop';
+      const { form, codex, antigravity, range } = enhanceLogsFilterForm(runtime, {
+        providerId: 'antigravity',
+        range: '24h',
+      });
+      const activeControl = changed === 'provider' ? codex : range;
+      runtime.document.activeElement = activeControl;
+
+      if (changed === 'provider') {
+        form.entries[2] = ['provider', 'codex'];
+        codex.dispatchEvent({ type: 'change' });
+      } else {
+        form.entries[3] = ['range', '3h'];
+        range.value = '3h';
+        range.dispatchEvent({ type: 'change' });
+      }
+      expect(runtime.region.getAttribute('aria-busy')).toBe('true');
+      expect(runtime.document.status.textContent).toBe('Updating this section.');
+      pending.resolve(response({ token: 'updated', url: requests[0]!.url }));
+      await flushPromises();
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.options).toMatchObject({ method: 'GET', credentials: 'same-origin' });
+      const requestedUrl = new URL(requests[0]!.url);
+      expect(requestedUrl.pathname).toBe('/logs');
+      expect(requestedUrl.searchParams.get('provider')).toBe(expectedProvider);
+      expect(requestedUrl.searchParams.get('range')).toBe(expectedRange);
+      expect(requestedUrl.searchParams.get('tag')).toBe('trigger');
+      expect(requestedUrl.searchParams.get('type')).toBe('scheduler_noop');
+      expect(requestedUrl.searchParams.has('page')).toBe(false);
+      expect(runtime.document.regions[0]?.textContent).toContain('Updated activity log results');
+      expect(runtime.history.pushed).toEqual([requests[0]!.url]);
+      expect(runtime.location.assignCalls).toHaveLength(0);
+      expect(runtime.location.reloadCalls).toBe(0);
+      expect(runtime.document.activeElement?.focusedWith).toEqual({ preventScroll: true });
+      expect(runtime.document.status.textContent).toBe('View updated.');
+      expect(form.dataset.providerPickerAutoSubmit).toBe('');
+      expect(antigravity.id).toBe('provider-antigravity');
+    },
+  );
+
   it('submits one POST with the submitter, shows pending feedback, replaces the region and PRG URL', async () => {
     const request = deferred<ReturnType<typeof response>>();
     const fetchCalls: Array<{ url: string; options: Record<string, unknown> }> = [];
@@ -670,41 +794,87 @@ describe('progressive SSR interaction runtime', () => {
     expect(runtime.region.querySelector('[data-awm-interaction-error]')).toBeNull();
   });
 
-  it('only lets the newest GET response replace a region and pushes the resulting URL', async () => {
+  it('only lets the newest Logs filter GET replace results and pushes its URL', async () => {
     const older = deferred<ReturnType<typeof response>>();
     let calls = 0;
+    const requestUrls: string[] = [];
+    const requestOptions: Array<Record<string, unknown>> = [];
     const runtime = createRuntime({
-      target: 'usage-chart:codex-primary',
+      target: 'logs-results',
       pages: new Map([
-        ['older', { target: 'usage-chart:codex-primary', text: 'Older range' }],
-        ['newer', { target: 'usage-chart:codex-primary', text: 'Newer range' }],
+        ['older', { target: 'logs-results', text: 'Older activity results' }],
+        ['newer', { target: 'logs-results', text: 'Newer activity results' }],
       ]),
-      fetch: () => {
+      fetch: (url, options) => {
         calls += 1;
+        requestUrls.push(url);
+        requestOptions.push(options);
         if (calls === 1) return older.promise;
-        return Promise.resolve(
-          response({ token: 'newer', url: 'http://awm.test/usage?chartRange=24h' }),
-        );
+        return Promise.resolve(response({ token: 'newer', url }));
       },
     });
+    runtime.location.href = 'http://awm.test/logs?range=3h&page=2&provider=codex&tag=trigger';
     const makeForm = (range: string) =>
       new FakeForm(runtime.document, {
         mode: 'navigation',
-        target: 'usage-chart:codex-primary',
+        target: 'logs-results',
         method: 'get',
-        action: 'http://awm.test/usage',
-        entries: [['chartRange', range]],
+        action: 'http://awm.test/logs',
+        entries: [
+          ['tag', 'trigger'],
+          ['type', 'scheduler_noop'],
+          ['provider', 'codex'],
+          ['range', range],
+        ],
       });
 
-    submit(runtime.document, makeForm('6h'));
-    submit(runtime.document, makeForm('24h'));
+    submit(runtime.document, makeForm('6h'), null);
+    submit(runtime.document, makeForm('24h'), null);
     await flushPromises();
-    older.resolve(response({ token: 'older', url: 'http://awm.test/usage?chartRange=6h' }));
+    older.resolve(response({ token: 'older', url: requestUrls[0]! }));
     await flushPromises();
 
     expect(calls).toBe(2);
-    expect(runtime.document.regions[0]?.textContent).toBe('Newer range');
-    expect(runtime.history.pushed).toEqual(['http://awm.test/usage?chartRange=24h']);
+    expect(requestOptions[0]?.signal).toMatchObject({ aborted: true });
+    expect(runtime.document.regions[0]?.textContent).toBe('Newer activity results');
+    expect(new URL(requestUrls[1]!).searchParams.get('range')).toBe('24h');
+    expect(runtime.history.pushed).toEqual([requestUrls[1]!]);
+    expect(runtime.location.reloadCalls).toBe(0);
+  });
+
+  it('keeps the current Logs results visible and offers an accessible retry when refresh fails', async () => {
+    const runtime = createRuntime({
+      target: 'logs-results',
+      fetch: () => Promise.reject(new Error('connection reset')),
+    });
+    const form = new FakeForm(runtime.document, {
+      mode: 'navigation',
+      target: 'logs-results',
+      method: 'get',
+      action: 'http://awm.test/logs',
+      entries: [
+        ['tag', 'trigger'],
+        ['type', 'scheduler_noop'],
+        ['provider', 'codex'],
+        ['range', '3h'],
+      ],
+    });
+
+    submit(runtime.document, form, null);
+    await flushPromises();
+
+    const alert = runtime.document.regions[0]?.querySelector('[data-awm-interaction-error]');
+    expect(runtime.document.regions[0]).toBe(runtime.region);
+    expect(runtime.document.regions[0]?.textContent).toContain('Initial state');
+    expect(alert?.attributes.get('role')).toBe('alert');
+    expect(alert?.textContent).toContain('This section could not be updated.');
+    expect(alert?.querySelector('a')?.textContent).toBe('Try again');
+    expect(alert?.querySelector('a')?.href).toBe(
+      'http://awm.test/logs?tag=trigger&type=scheduler_noop&provider=codex&range=3h',
+    );
+    expect(runtime.document.status.textContent).toBe('This section could not be updated.');
+    expect(runtime.location.assignCalls).toHaveLength(0);
+    expect(runtime.location.reloadCalls).toBe(0);
   });
 
   it('polls provider-client SSR status until the operation reaches a terminal state', async () => {
@@ -857,17 +1027,25 @@ describe('progressive SSR interaction runtime', () => {
   });
 
   it('restores the server-rendered page region on browser back/forward without adding history entries', async () => {
+    const requested: string[] = [];
     const runtime = createRuntime({
       target: 'app-content',
-      pages: new Map([['history', { target: 'app-content', text: 'Schedule at saved URL' }]]),
-      fetch: (url) => Promise.resolve(response({ token: 'history', url })),
+      pages: new Map([
+        ['history', { target: 'app-content', text: 'Activity logs at saved filters' }],
+      ]),
+      fetch: (url) => {
+        requested.push(url);
+        return Promise.resolve(response({ token: 'history', url }));
+      },
     });
-    runtime.location.href = 'http://awm.test/schedule?providerId=codex';
+    runtime.location.href =
+      'http://awm.test/logs?range=6h&provider=codex&tag=trigger&type=scheduler_noop';
 
     runtime.document.dispatchEvent({ type: 'window:popstate' });
     await flushPromises();
 
-    expect(runtime.document.regions[0]?.textContent).toBe('Schedule at saved URL');
+    expect(requested).toEqual([runtime.location.href]);
+    expect(runtime.document.regions[0]?.textContent).toBe('Activity logs at saved filters');
     expect(runtime.history.pushed).toHaveLength(0);
     expect(runtime.history.replaced).toHaveLength(0);
     expect(runtime.location.reloadCalls).toBe(0);
