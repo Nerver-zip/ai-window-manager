@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Deduplicate automatic starts by the persisted observed quota cycle, not
+  epoch-aligned five-hour buckets. A real expiry can plan the next start without
+  allowing another heartbeat inside an already anchored, rounded-zero window.
+- Require fresh window evidence after a Codex turn completes; unconfirmed
+  effects remain uncertain without retrying the prompt. Surface recorded-cycle
+  decisions explicitly in scheduling reads and history.
+
 ## [0.1.0] - 2026-09-27
 
 - Added a single-operator authenticated web console for monitoring Codex and

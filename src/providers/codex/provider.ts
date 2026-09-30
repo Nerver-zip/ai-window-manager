@@ -140,13 +140,15 @@ function windowSnapshot(
     const isResetDue = new Date(resetAt).getTime() <= new Date(observedAt).getTime();
     let phase: WindowPhase;
     if (window.usedPercent === 0 || isResetDue) {
-      phase = 'INACTIVE';
+      // Zero may be rounded inside an already anchored window. Temporal
+      // lifecycle evidence is accumulated durably by the application.
+      phase = 'UNKNOWN';
     } else if (window.usedPercent >= 100) {
       phase = 'EXHAUSTED';
     } else {
       phase = 'ACTIVE';
     }
-    snapshot.phase = fact(phase, 'inferred', 'high', observedAt);
+    snapshot.phase = fact(phase, 'inferred', phase === 'UNKNOWN' ? 'unknown' : 'high', observedAt);
   }
   return snapshot;
 }

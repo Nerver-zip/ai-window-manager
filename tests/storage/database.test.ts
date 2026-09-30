@@ -11,10 +11,49 @@ afterEach(() => {
 });
 
 describe('openDatabase', () => {
+  it('adds durable cycles to schema v7 without rewriting existing intent dedupe/history', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-cycle-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'v7');
+    fs.mkdirSync(migrationsDir);
+    for (const name of fs.readdirSync('migrations').filter((name) => /^00[1-7]_/.test(name))) {
+      fs.copyFileSync(path.join('migrations', name), path.join(migrationsDir, name));
+    }
+    const file = path.join(dir, 'awm.db');
+    const old = openDatabase(file, { migrationsDir });
+    old
+      .prepare(
+        `INSERT INTO providers (id, kind, enabled, mode, poll_interval_seconds, config_json, config_version, created_at_ms, updated_at_ms)
+      VALUES ('codex', 'codex', 1, 'automation', 30, '{}', 1, 1, 1)`,
+      )
+      .run();
+    old
+      .prepare(
+        `INSERT INTO action_intents (id, provider_id, action_type, dedupe_key, state, scheduled_for_ms, attempt_count, reason_code, explanation_json, created_at_ms, updated_at_ms)
+      VALUES ('old-intent', 'codex', 'trigger_window', 'legacy-cycle-key', 'uncertain', 1, 1, 'ACTION_DISPATCH_UNCERTAIN', '{}', 1, 1)`,
+      )
+      .run();
+    old.close();
+    const upgraded = openDatabase(file);
+    expect(upgraded.prepare('SELECT state, dedupe_key FROM action_intents').get()).toEqual({
+      state: 'uncertain',
+      dedupe_key: 'legacy-cycle-key',
+    });
+    expect(upgraded.prepare('SELECT COUNT(*) AS count FROM observed_window_cycles').get()).toEqual({
+      count: 0,
+    });
+    expect(upgraded.pragma('foreign_key_check')).toEqual([]);
+    upgraded.close();
+    const reopened = openDatabase(file);
+    expect(
+      reopened.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 8').get(),
+    ).toEqual({ count: 1 });
+    reopened.close();
+  });
   it('opens an in-memory database without creating a filesystem directory', () => {
     const db = openDatabase(':memory:');
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
-      version: 7,
+      version: 8,
     });
     db.close();
   });
@@ -36,6 +75,7 @@ describe('openDatabase', () => {
       { version: 5, applied_at_ms: appliedAtMs },
       { version: 6, applied_at_ms: appliedAtMs },
       { version: 7, applied_at_ms: appliedAtMs },
+      { version: 8, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -54,7 +94,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(7);
+    ).toBe(8);
     reopened.close();
   });
 
@@ -166,6 +206,7 @@ describe('openDatabase', () => {
       { version: 5 },
       { version: 6 },
       { version: 7 },
+      { version: 8 },
     ]);
     expect(
       upgraded
@@ -206,7 +247,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toHaveLength(7);
+    ).toHaveLength(8);
     expect(
       upgraded
         .prepare(

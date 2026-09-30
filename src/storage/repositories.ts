@@ -11,6 +11,7 @@ import { parseProviderObservation, WindowSnapshotSchema } from '../domain/schema
 import type { UsageInterval, UsageSampleInput, UsageSeriesState } from '../usage/aggregation.js';
 import type { ProviderCleanupArtifactKind } from '../domain/provider-cleanup.js';
 import type { SqliteDatabase } from './database.js';
+import { WindowCycleRepository } from './window-cycles.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
 export type SchedulePolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'legacy';
@@ -130,6 +131,7 @@ export interface ListOptions {
 }
 
 export interface StorageRepositories {
+  windowCycles: WindowCycleRepository;
   providers: ProviderRepository;
   providerState: ProviderStateRepository;
   windowSamples: WindowSampleRepository;
@@ -143,6 +145,7 @@ export interface StorageRepositories {
 
 export function createRepositories(db: SqliteDatabase): StorageRepositories {
   return {
+    windowCycles: new WindowCycleRepository(db),
     providers: new ProviderRepository(db),
     providerState: new ProviderStateRepository(db),
     windowSamples: new WindowSampleRepository(db),

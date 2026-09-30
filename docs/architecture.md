@@ -83,6 +83,7 @@ The current runtime implements the observation-to-intent planning path:
 reconciler tick
   -> due adapter inspection
   -> canonical observation validation
+  -> durable observed-window cycle/temporal evidence update
   -> provider_state + window_samples + event
   -> pure activation-policy decision
   -> deduplicated planned action_intent

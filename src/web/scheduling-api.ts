@@ -7,7 +7,12 @@ import { resolveWindowTarget } from '../domain/window-target.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
-import { planWindowAction, upcomingSchedule, type PlannerDecision } from '../scheduler/planner.js';
+import {
+  planWindowAction,
+  PlannerReasonCode,
+  upcomingSchedule,
+  type PlannerDecision,
+} from '../scheduler/planner.js';
 import {
   activationPolicyId,
   activationPolicyScopes,
@@ -105,7 +110,10 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
           state?.health,
           currentWindowKind,
         );
-        const decision =
+        const cycle = window
+          ? input.repositories.windowCycles.get(provider.id, window.windowKind)
+          : undefined;
+        let decision =
           !requiresReview && resolvedPolicy && adapter && observation && state?.health === 'UP'
             ? safeDecision({
                 now,
@@ -120,8 +128,25 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
                 automationEnabled: provider.mode === 'automation',
                 pendingIntents: input.repositories.actionIntents.listOpen(provider.id),
                 ...(window ? { window } : {}),
+                ...(cycle ? { observedCycleAt: new Date(cycle.cycleAtMs).toISOString() } : {}),
               })
             : null;
+        if (
+          decision?.kind === 'START' &&
+          decision.dedupeKey &&
+          input.repositories.actionIntents.getByDedupeKey(decision.dedupeKey)
+        ) {
+          decision = {
+            ...decision,
+            kind: 'WAIT',
+            reasonCode: PlannerReasonCode.ActionAlreadyRecorded,
+            explanation: {
+              ...decision.explanation,
+              decision: 'WAIT',
+              reasonCode: PlannerReasonCode.ActionAlreadyRecorded,
+            },
+          };
+        }
         return {
           scope,
           policy: resolvedPolicy,

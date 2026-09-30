@@ -16,6 +16,8 @@ import type {
   StorageRepositories,
 } from '../storage/repositories.js';
 import type { SqliteDatabase } from '../storage/database.js';
+import { withTransaction } from '../storage/repositories.js';
+import { trackWindowCycles } from './window-cycle.js';
 
 export const ActionReasonCode = {
   IntentExpired: 'ACTION_INTENT_EXPIRED',
@@ -32,6 +34,7 @@ export const ActionReasonCode = {
   AlreadySatisfied: 'ACTION_ALREADY_SATISFIED',
   PolicyChanged: 'ACTION_POLICY_CHANGED',
   TargetWindowMissing: 'ACTION_TARGET_WINDOW_MISSING',
+  CycleChanged: 'ACTION_WINDOW_CYCLE_CHANGED',
 } as const;
 
 export type ActionReasonCode = (typeof ActionReasonCode)[keyof typeof ActionReasonCode];
@@ -200,7 +203,18 @@ export class ActionExecutor {
       this.markSkipped(intent, nowMs, ActionReasonCode.PolicyChanged, report);
       return;
     }
+    if (!this.cycleStillCurrent(intent)) {
+      this.markSkipped(intent, nowMs, ActionReasonCode.CycleChanged, report);
+      return;
+    }
     if (!isEligibleForTrigger(preflight.observation, intent)) {
+      if (
+        typeof asRecord(intent.explanation).observedCycleAt === 'string' &&
+        windowFor(preflight.observation, intent)?.phase.value === 'UNKNOWN'
+      ) {
+        this.markRetryable(intent, nowMs, ActionReasonCode.PreflightRejected, report);
+        return;
+      }
       this.markSkipped(intent, nowMs, ActionReasonCode.AlreadySatisfied, report);
       return;
     }
@@ -263,22 +277,6 @@ export class ActionExecutor {
       this.appendEventOnce(this.actionEvent(claimed, 'action_succeeded', 'ACTION_SUCCEEDED'));
       const succeeded = this.input.repositories.actionIntents.get(claimed.id);
       if (!succeeded) return;
-      if (result.confirmationHint === 'CODEX_TURN_COMPLETED') {
-        if (
-          this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
-            claimed.id,
-            nowMs,
-          )
-        ) {
-          report.confirmedIntentIds.push(claimed.id);
-          this.appendEventOnce(
-            this.actionEvent(claimed, 'action_confirmed', ActionReasonCode.Confirmed, {
-              confirmationHint: result.confirmationHint,
-            }),
-          );
-        }
-        return;
-      }
       await this.phase('after_succeeded_before_confirmation', succeeded);
       await this.confirmExisting(succeeded, report);
       return;
@@ -360,7 +358,11 @@ export class ActionExecutor {
     if (!adapter) return;
     await this.phase('during_confirmation', intent);
     const inspection = await this.inspect(adapter);
-    if (inspection.observation && isSatisfied(inspection.observation, intent)) {
+    if (
+      inspection.observation &&
+      this.cycleStillCurrent(intent) &&
+      isSatisfied(inspection.observation, intent)
+    ) {
       const nowMs = this.input.clock.now().getTime();
       if (
         this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(intent.id, nowMs)
@@ -397,13 +399,22 @@ export class ActionExecutor {
   private async inspect(adapter: ProviderAdapter): Promise<FreshInspection> {
     try {
       const observation = parseProviderObservation(await adapter.inspect({}));
-      if (observation.providerId !== adapter.id || observation.health !== 'UP') {
+      if (
+        observation.providerId !== adapter.id ||
+        observation.health !== 'UP' ||
+        Date.parse(observation.observedAt) > this.input.clock.now().getTime() ||
+        this.input.clock.now().getTime() - Date.parse(observation.observedAt) >
+          observation.staleAfterSeconds * 1000
+      ) {
         return {
           failureCode:
             observation.health === 'AUTH_REQUIRED' ? 'AUTH_REQUIRED' : 'PROVIDER_UNAVAILABLE',
         };
       }
-      return { observation };
+      const tracked = withTransaction(this.input.db, () =>
+        trackWindowCycles(observation, this.input.repositories),
+      );
+      return { observation: tracked };
     } catch (error) {
       const code = safeErrorCode(error);
       return {
@@ -415,6 +426,14 @@ export class ActionExecutor {
               : 'INSPECTION_FAILED',
       };
     }
+  }
+
+  private cycleStillCurrent(intent: ActionIntentRecord): boolean {
+    const expected = asRecord(intent.explanation).observedCycleAt;
+    if (typeof expected !== 'string') return true;
+    const target = windowKindFor(intent)!;
+    const cycle = this.input.repositories.windowCycles.get(intent.providerId, target);
+    return cycle !== undefined && cycle.cycleAtMs === Date.parse(expected);
   }
 
   private markRetryable(

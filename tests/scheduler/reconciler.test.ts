@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import type { ProviderObservation } from '../../src/domain/types.js';
+import { trackWindowCycles } from '../../src/scheduler/window-cycle.js';
 import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
@@ -140,7 +141,7 @@ describe('Reconciler', () => {
       health: 'UP',
       observedAtMs: nowMs,
       staleAfterMs: antigravityObservation.staleAfterSeconds * 1000,
-      observation: antigravityObservation,
+      observation: trackWindowCycles(antigravityObservation, context.repositories),
       lastSuccessAtMs: nowMs,
       lastErrorCode: null,
       updatedAtMs: nowMs,

@@ -5,7 +5,8 @@ import type { ProviderObservation } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import { decideTargetReset, type SchedulerDecision } from './decision.js';
 import { deriveCurrentWindow, deriveCurrentWindowForTarget } from './current-window.js';
-import { planWindowAction, type PlannerDecision } from './planner.js';
+import { planWindowAction, PlannerReasonCode, type PlannerDecision } from './planner.js';
+import { trackWindowCycles } from './window-cycle.js';
 import { activationPolicyFromRecord } from './policy.js';
 import {
   activationPolicyId,
@@ -246,6 +247,9 @@ export class Reconciler {
               (candidate) => candidate.windowKind === selectedWindowKind,
             )
           : undefined;
+        const cycle = window
+          ? this.input.repositories.windowCycles.get(provider.id, window.windowKind)
+          : undefined;
         const decision = planWindowAction({
           now,
           providerId: provider.id,
@@ -264,6 +268,7 @@ export class Reconciler {
           capabilities: adapter.capabilities(),
           automationEnabled: provider.mode === 'automation',
           pendingIntents: this.input.repositories.actionIntents.listOpen(provider.id),
+          ...(cycle ? { observedCycleAt: new Date(cycle.cycleAtMs).toISOString() } : {}),
         });
         const result: ReconcileDecisionResult = {
           providerId: provider.id,
@@ -296,6 +301,30 @@ export class Reconciler {
                 intentId: intentResult.intent.id,
                 dedupeKey: intentResult.intent.dedupeKey,
                 explanation: decision.explanation,
+              },
+            });
+          } else {
+            const explanation = {
+              ...decision.explanation,
+              decision: 'WAIT' as const,
+              reasonCode: PlannerReasonCode.ActionAlreadyRecorded,
+            };
+            result.decision = {
+              ...decision,
+              kind: 'WAIT',
+              reasonCode: explanation.reasonCode,
+              explanation,
+            };
+            this.appendEventIfChanged({
+              occurredAtMs: nowMs,
+              providerId: provider.id,
+              type: 'scheduler_noop',
+              severity: 'info',
+              reasonCode: explanation.reasonCode,
+              data: {
+                ...explanation,
+                intentId: intentResult.intent.id,
+                intentState: intentResult.intent.state,
               },
             });
           }
@@ -443,18 +472,19 @@ export class Reconciler {
     nowMs: number,
     previousState?: ProviderStateRecord,
   ): ProviderStateRecord {
-    const state: ProviderStateRecord = {
-      providerId: provider.id,
-      health: observation.health,
-      observedAtMs: Date.parse(observation.observedAt),
-      staleAfterMs: observation.staleAfterSeconds * 1000,
-      observation,
-      lastSuccessAtMs: nowMs,
-      lastErrorCode: null,
-      updatedAtMs: nowMs,
-    };
+    return withTransaction(this.input.db, () => {
+      observation = trackWindowCycles(observation, this.input.repositories);
+      const state: ProviderStateRecord = {
+        providerId: provider.id,
+        health: observation.health,
+        observedAtMs: Date.parse(observation.observedAt),
+        staleAfterMs: observation.staleAfterSeconds * 1000,
+        observation,
+        lastSuccessAtMs: nowMs,
+        lastErrorCode: null,
+        updatedAtMs: nowMs,
+      };
 
-    withTransaction(this.input.db, () => {
       this.input.repositories.providerState.upsert(state);
       for (const window of observation.windows) {
         this.input.repositories.windowSamples.insert(window);
@@ -507,9 +537,8 @@ export class Reconciler {
           });
         }
       }
+      return state;
     });
-
-    return state;
   }
 
   private recordFailure(

@@ -17,7 +17,8 @@ Stable reasons currently include `TARGET_RESET_WINDOW_MATCH`,
 `MANUAL_POLICY`, `MONITORING_UNAVAILABLE`, `CURRENT_WINDOW_ACTIVE`,
 `SCHEDULED_ANCHOR`, `ANCHOR_NOT_DUE`, `ANCHOR_EXPIRED`,
 `ACTION_ALREADY_PENDING`, `ACTIVE_HOURS_COVERAGE`, `ACTIVE_HOURS_TOO_SHORT` and
-`WINDOW_NOT_REPORTED`. Phase confidence is also retained in the explanation,
+`WINDOW_NOT_REPORTED`, `WINDOW_CYCLE_MISSING` and `ACTION_ALREADY_RECORDED`.
+Phase confidence is also retained in the explanation,
 so a low-confidence observed phase is not presented as an ordinary monitoring
 failure.
 
@@ -139,6 +140,30 @@ provider_id + action_type + schedule_policy_id + target_cycle_instant
 
 The DB unique constraint is the final guard. Repeated ticks can propose the same action without producing multiple triggers.
 
+For `auto`, the cycle instant comes from durable **observed quota lifecycle**
+state, not epoch-aligned duration buckets. The key additionally includes the
+exact window kind. The first observation establishes an availability identity;
+it advances after a previously anchored reset expires and actionable fresh
+evidence identifies the next availability/active window, or a trustworthy
+active-to-inactive transition when reset timestamps are unavailable. A moving
+`now + duration` reset never changes that identity. Fixed/custom/active-hours
+policies keep their explicit schedule anchors.
+
+A Codex zero-used snapshot alone has unknown phase. For inferred zero-used
+windows, two observations spanning at least 15 seconds distinguish a reset
+moving with elapsed time from a stable, counting-down reset, allowing up to
+five seconds of timestamp jitter. Duration, reset and zero-usage evidence must
+be actionable. An already known, unexpired anchor remains active even while
+the provider rounds usage to zero; an unexplained correction remains unknown.
+Short executor ticks preserve the evidence baseline rather than repeatedly
+resetting the observation interval. These are operational inferences, not
+official provider lifecycle guarantees.
+
+Missing lifecycle state after an upgrade waits for fresh reconciliation. No
+existing intent or dedupe key is deleted or rewritten. Repeated proposals for
+an already recorded cycle produce an explicit `WAIT`/`ACTION_ALREADY_RECORDED`
+event/read decision, rather than silently displaying another start opportunity.
+
 For `trigger_window`, claiming is additionally serialized at the SQLite
 boundary across every policy for the same provider. An `executing`,
 `succeeded` but unconfirmed, `uncertain`, or retryable trigger blocks another
@@ -160,8 +185,14 @@ planned
 For quota-affecting `trigger_window`, a transport timeout after dispatch is
 **uncertain**, not `failed_retryable`. The daemon reconciles with a fresh usage
 observation before considering any further action. A Codex `turn/completed`
-notification is the provider action confirmation; it does not authorize a
-second turn.
+notification confirms the transport turn only. The intended window effect
+requires a fresh actionable active-window observation (including a stable
+anchor when usage is rounded to zero). Otherwise the result stays uncertain;
+later read-only confirmation may resolve it, but never sends another prompt.
+Auto preflight and confirmation also check the recorded cycle identity: a
+different later cycle cannot satisfy an old action. An ambiguous pre-dispatch
+read may be retried within the intent deadline; an ambiguous dispatched action
+may not.
 
 Trigger-created conversations are disposable artifacts. Their exact provider
 identifier is persisted as a cleanup obligation before prompt dispatch where

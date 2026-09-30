@@ -35,6 +35,8 @@ export const PlannerReasonCode = {
   ActiveHoursCoverage: 'ACTIVE_HOURS_COVERAGE',
   ActiveHoursTooShort: 'ACTIVE_HOURS_TOO_SHORT',
   AutoWindowAvailable: 'AUTO_WINDOW_AVAILABLE',
+  WindowCycleMissing: 'WINDOW_CYCLE_MISSING',
+  ActionAlreadyRecorded: 'ACTION_ALREADY_RECORDED',
 } as const;
 
 export type PlannerReasonCode = (typeof PlannerReasonCode)[keyof typeof PlannerReasonCode];
@@ -57,6 +59,8 @@ export interface PlannerInput {
   capabilities: Pick<ProviderCapabilities, 'windowTrigger'>;
   automationEnabled: boolean;
   pendingIntents?: readonly PlannerIntentLike[];
+  /** Durable identity of the observed availability cycle; never a wall-clock bucket. */
+  observedCycleAt?: string;
 }
 
 export interface PlannerExplanation {
@@ -81,6 +85,7 @@ export interface PlannerExplanation {
   validUntil?: string;
   toleranceSeconds?: number;
   coverageSeconds?: number;
+  observedCycleAt?: string;
 }
 
 export interface PlannerDecision {
@@ -212,13 +217,12 @@ function planAuto(
     return wait(base, PlannerReasonCode.CurrentWindowActive);
   if (input.currentWindow.status !== 'INACTIVE')
     return wait(base, PlannerReasonCode.MonitoringUnavailable);
-  const duration = actionableDuration(input.window);
-  const cycleMs = (duration ?? 18_000) * 1000;
-  const cycleAt = Math.floor(input.now.getTime() / cycleMs) * cycleMs;
+  if (!input.observedCycleAt || !Number.isFinite(Date.parse(input.observedCycleAt)))
+    return wait(base, PlannerReasonCode.WindowCycleMissing);
   return start(
     input,
-    base,
-    new Date(cycleAt),
+    { ...base, observedCycleAt: input.observedCycleAt },
+    new Date(input.observedCycleAt),
     new Date(input.now.getTime() + 5 * 60_000),
     PlannerReasonCode.AutoWindowAvailable,
   );
@@ -365,9 +369,15 @@ function start(
   expiresAt: Date,
   reasonCode: PlannerReasonCode,
 ): PlannerDecision {
-  const dedupeKey = [input.providerId, 'start_window', input.policy.id, anchor.toISOString()].join(
-    ':',
-  );
+  const dedupeKey = [
+    input.providerId,
+    'start_window',
+    input.policy.id,
+    ...(input.policy.kind === 'auto'
+      ? [input.window?.windowKind ?? input.currentWindow.windowKind]
+      : []),
+    anchor.toISOString(),
+  ].join(':');
   if (hasPendingProviderAction(input.pendingIntents)) {
     return wait(
       {

@@ -751,6 +751,8 @@ function plannerReasonLabel(reasonCode: string): string {
     ANCHOR_EXPIRED: 'The scheduled time was missed; waiting for the next one.',
     NEXT_ANCHOR: 'Waiting for the next scheduled time.',
     ACTION_ALREADY_PENDING: 'An automatic start is already safely waiting.',
+    ACTION_ALREADY_RECORDED: 'A start has already been recorded for this usage cycle.',
+    WINDOW_CYCLE_MISSING: 'Waiting for a fresh update to identify this usage cycle.',
     ACTIVE_HOURS_COVERAGE: 'The current active period has enough time remaining.',
     ACTIVE_HOURS_TOO_SHORT: 'There is not enough time left in this active period.',
     AUTO_WINDOW_AVAILABLE: 'The provider is ready for a safe automatic start.',

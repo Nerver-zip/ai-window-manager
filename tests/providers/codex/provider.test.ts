@@ -490,9 +490,9 @@ describe('CodexProvider', () => {
     });
     const inferred = await automation.inspect({});
     expect(inferred.windows[0]?.phase).toMatchObject({
-      value: 'INACTIVE',
+      value: 'UNKNOWN',
       source: 'inferred',
-      confidence: 'high',
+      confidence: 'unknown',
     });
   });
 
@@ -518,7 +518,7 @@ describe('CodexProvider', () => {
     });
   });
 
-  it('infers an inactive phase when quota usage is 0 even if reset is projected in the future', async () => {
+  it('does not authorize automation from zero usage and a single projected reset', async () => {
     const response = {
       rateLimits: {
         primary: {
@@ -536,7 +536,7 @@ describe('CodexProvider', () => {
     });
 
     await expect(provider.inspect({})).resolves.toMatchObject({
-      windows: [{ phase: { value: 'INACTIVE', source: 'inferred', confidence: 'high' } }],
+      windows: [{ phase: { value: 'UNKNOWN', source: 'inferred', confidence: 'unknown' } }],
     });
   });
 

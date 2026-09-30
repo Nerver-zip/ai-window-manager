@@ -9,6 +9,10 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
 ## Current state vs history
 
 - `provider_state`: one current last-known normalized state per provider.
+- `observed_window_cycles`: one durable lifecycle/evidence baseline per exact
+  provider window, with availability identity, last anchored reset and temporal
+  comparison facts. This is current state (no TTL), independent of history
+  retention and epoch-aligned scheduling timers.
 - `window_samples`: normalized historical measurements.
 - `usage_aggregation_checkpoint` and `usage_series_state`: incremental processing
   cursor and last-known cumulative weekly-usage baseline/high-water per provider
@@ -141,6 +145,10 @@ The forward-only schema currently consists of:
   exact family is provable.
 - `migrations/007_provider_cleanup_jobs.sql` for bounded, durable deletion
   obligations for AWM-created provider artifacts.
+- `migrations/008_observed_window_cycles.sql` for observed-cycle deduplication
+  and restart-safe reset evidence. Existing intents, keys and provider state
+  are preserved; fresh inspections populate the new table. Back up before
+  upgrading; migrations remain forward-only.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

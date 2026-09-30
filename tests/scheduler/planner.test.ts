@@ -70,6 +70,7 @@ function input(overrides: Partial<PlannerInput> = {}): PlannerInput {
     observation: { observedAt, staleAfterSeconds: 300 },
     capabilities,
     automationEnabled: true,
+    observedCycleAt: observedAt,
     ...overrides,
   };
 }
@@ -87,6 +88,18 @@ function windowWithoutDuration(): WindowSnapshot {
 }
 
 describe('planWindowAction', () => {
+  it.each([undefined, 'invalid'])(
+    'waits for a durable cycle instead of inventing a bucket (%s)',
+    (observedCycleAt) => {
+      const value = input({ policy: policy({ kind: 'auto' }) });
+      if (observedCycleAt === undefined) delete value.observedCycleAt;
+      else value.observedCycleAt = observedCycleAt;
+      expect(planWindowAction(value)).toMatchObject({
+        kind: 'WAIT',
+        reasonCode: PlannerReasonCode.WindowCycleMissing,
+      });
+    },
+  );
   it.each([
     [
       'disabled policy',

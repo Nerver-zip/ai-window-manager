@@ -128,6 +128,25 @@ function setup(
 }
 
 describe('ActionExecutor', () => {
+  it.each([-301_000, 60_000])(
+    'rejects stale/future preflight timestamps (%s) before creating cycle evidence',
+    async (offset) => {
+      const context = setup();
+      const original = context.adapter.inspect.bind(context.adapter);
+      context.adapter.inspect = (ctx) =>
+        original(ctx).then((observation) => ({
+          ...observation,
+          observedAt: new Date(context.clock.now().getTime() + offset).toISOString(),
+        }));
+      await context.executor().executeDue();
+      expect(context.triggerCount).toBe(0);
+      expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+        state: 'failed_retryable',
+        attemptCount: 0,
+      });
+      expect(context.repositories.windowCycles.get('fake', 'five_hour')).toBeUndefined();
+    },
+  );
   it('defers a planned trigger while its provider executable is changing', async () => {
     const context = setup();
     const inspect = vi.spyOn(context.adapter, 'inspect');
@@ -195,7 +214,7 @@ describe('ActionExecutor', () => {
     );
   });
 
-  it('accepts the Codex turn-completed confirmation as the action outcome', async () => {
+  it('requires observation confirmation even when the Codex turn completed', async () => {
     const context = setup();
     const adapter: ProviderAdapter = {
       ...context.adapter,
@@ -209,8 +228,8 @@ describe('ActionExecutor', () => {
 
     const report = await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
 
-    expect(report.confirmedIntentIds).toEqual(['intent-1']);
-    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+    expect(report.confirmedIntentIds).toEqual([]);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
   });
 
   it('persists a Codex cleanup obligation before trigger dispatch and keeps it after uncertainty', async () => {
@@ -364,7 +383,8 @@ describe('ActionExecutor', () => {
 
     const report = await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
 
-    expect(report.confirmedIntentIds).toContain('manual-intent');
+    expect(report.confirmedIntentIds).not.toContain('manual-intent');
+    expect(context.repositories.actionIntents.get('manual-intent')?.state).toBe('uncertain');
     expect(dispatches).toBe(1);
   });
 

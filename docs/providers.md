@@ -60,6 +60,15 @@ daemon exception.
   the operational effect, not a new official lifecycle field: reset-time phase
   remains explicitly inferred; the operator can disable automatic starts.
 
+The 2026-09-30 incident exposed two unsafe shortcuts: zero rounded usage was
+treated as inactivity, and a completed turn was treated as window confirmation.
+Codex now returns unknown phase for a single zero-used/expired snapshot. The
+application persists temporal reset evidence to distinguish a rolling
+projection from an anchored window, and confirms the effect with a fresh
+observation even after `turn/completed`. Automatic dedupe follows the observed
+window cycle, not fixed five-hour wall-clock buckets. No new provider endpoint,
+credential handling or quota-consuming probe is involved in this correction.
+
 ### Unknown
 
 - The exact allowance cost of a minimal trigger across all models/plans/workspaces.
