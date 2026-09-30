@@ -141,6 +141,9 @@ jobs:
             "The candidate passed \`pnpm validate\`, \`docker build\`, and unauthenticated read-only runtime probes. SHA-256 is verified during image build; no provider credentials or quota-consuming request is used. This PR is never auto-merged.")"
           readonly pr_body
           cp provider-clients.lock.json "${candidate_file}"
+          # Keep the validated candidate in RUNNER_TEMP, then clean the tracked
+          # manifest so switching to the long-lived automation branch is safe.
+          git restore --source=HEAD --worktree -- provider-clients.lock.json
           gh auth setup-git
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
