@@ -3,31 +3,31 @@
   "providers": {
     "codex": {
       "repository": "openai/codex",
-      "version": "0.158.0",
-      "tag": "rust-v0.158.0",
+      "version": "0.159.3",
+      "tag": "rust-v0.159.3",
       "assets": {
         "amd64": {
           "name": "codex-package-x86_64-unknown-linux-musl.tar.gz",
-          "sha256": "b33cd426c9acab9b34c5a93200ba4fe83c8e614c18ce5ef52b2bf36408b8e18c"
+          "sha256": "3930f31ac5fca861ea3e444e2683f261190d96b63fba58e0a40a879174369cdf"
         },
         "arm64": {
           "name": "codex-package-aarch64-unknown-linux-musl.tar.gz",
-          "sha256": "bc55b988c2e0c54ac6a6d437c4e63781e671b269752ac26592675bb9e9f99902"
+          "sha256": "20b7d673cf2b64b6c6208fa4fda06feb9dac0572da9987294b48cde1dab9d001"
         }
       }
     },
     "antigravity": {
       "repository": "google-antigravity/antigravity-cli",
-      "version": "1.2.12",
-      "tag": "1.2.12",
+      "version": "1.2.14",
+      "tag": "1.2.14",
       "assets": {
         "amd64": {
           "name": "agy_cli_linux_x64.tar.gz",
-          "sha256": "26c7c4c661d6c9beda734fcf305031056a6ea46e697c4533e8151179724e2950"
+          "sha256": "68cf4d221cb62e0289245439d3d37f599bdc8e0c4e1e3dae03f326463a0c26dc"
         },
         "arm64": {
           "name": "agy_cli_linux_arm64.tar.gz",
-          "sha256": "bd338c9d19ab963d9d2bc027e4e797b470ea84bae02080e4fde4555357ea9444"
+          "sha256": "3b40c3baab245b43a41007c1db64df51f5f162b6059fcc4a4504731f2689d301"
         }
       }
     }
