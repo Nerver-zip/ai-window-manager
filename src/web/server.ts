@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
+import { authorizeMetricsRead } from '../auth/metrics-token.js';
 import { renderAppShell } from './ui/layout.js';
 import { renderProviderPicker } from './ui/provider-picker.js';
 import { APP_CSS } from './ui/styles.js';
@@ -198,7 +199,16 @@ interface OverviewAuthConnection {
 
 export function buildServer(input: BuildServerInput) {
   const app = Fastify({
-    logger: { level: input.config.AWM_LOG_LEVEL },
+    logger: {
+      level: input.config.AWM_LOG_LEVEL,
+      redact: ['req.headers.authorization', 'req.headers.cookie'],
+      serializers: {
+        req: (request: { method: string; url: string }) => ({
+          method: request.method,
+          url: request.url.split('?', 1)[0] ?? '/',
+        }),
+      },
+    },
     bodyLimit: DEFAULT_HTTP_BODY_LIMIT_BYTES,
     trustProxy: input.config.AWM_TRUST_PROXY.length ? input.config.AWM_TRUST_PROXY : false,
   });
@@ -241,6 +251,15 @@ export function buildServer(input: BuildServerInput) {
 
   app.addHook('onRequest', async (request, reply) => {
     if (isPublicRequest(request.method, request.url)) return;
+    if (
+      authorizeMetricsRead(
+        request.method,
+        request.url,
+        request.headers.authorization,
+        input.config.AWM_METRICS_TOKEN_SHA256,
+      )
+    )
+      return;
     const sessionToken = readCookie(request.headers.cookie, OPERATOR_SESSION_COOKIE_NAME);
     if (input.operatorAuth.sessions.has(sessionToken)) return;
 

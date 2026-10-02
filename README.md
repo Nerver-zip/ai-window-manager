@@ -289,8 +289,10 @@ a periodic reconciler, a durable action executor, and SQLite in WAL mode. There
 is no Redis, external database, or provider call on dashboard reads. The
 container runs non-root with a read-only root filesystem and restricted Linux
 capabilities. AWM uses mandatory single-operator authentication; sessions are
-in-memory and expire on restart. `/metrics` and application APIs require a
-session too.
+in-memory and expire on restart. Application APIs require a session too.
+Exact `GET`/`HEAD /metrics` can alternatively use an optional dedicated
+read-only scraper token, configured only by its digest; see
+[metrics authentication](docs/metrics.md#dedicated-scraper-authentication).
 
 Historical data is bounded by retention: raw samples and ordinary events are
 kept for 90 days, derived usage intervals for 400 days, and action/security

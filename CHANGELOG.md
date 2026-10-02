@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional dedicated read-only Prometheus credential for exact GET/HEAD
+  `/metrics`, with local random-token provisioning, server-side digest-only
+  configuration and restart-based rotation. Browser/API authorization remains
+  session-only; request logs omit query strings and redact credential headers.
+- Private loop diagnostics, coalesced inspect hints, persisted shared provider
+  read backoff, and audited unknown-outcome closure after fresh observed-cycle
+  evidence, without redispatching quota-consuming actions.
+
 ### Fixed
+
+- Drain expired history incrementally with bounded, yielding passes instead of
+  one daily batch. Add forward-only retention indexes and cached low-cardinality
+  backlog/age, maintenance progress and DB/WAL size metrics. Keep unaggregated
+  samples, unresolved intents and cleanup obligations protected; existing TTLs
+  and the operator's idle sweep override remain unchanged.
+- Revalidate deadlines and automation authorization after preflight and at the
+  final Codex/Antigravity send boundary. Slow preparation, operator pause or
+  runtime changes cannot authorize a late prompt; registered cleanup remains
+  protected and dispatched outcomes retain their real transition timestamps.
 
 - Deduplicate automatic starts by the persisted observed quota cycle, not
   epoch-aligned five-hour buckets. A real expiry can plan the next start without

@@ -160,7 +160,13 @@ double-submit CSRF token.
 Only `GET /healthz`, static assets, and the login page are anonymous. The
 logout confirmation and logout mutation both require a valid operator session;
 the mutation additionally requires same-origin Origin and CSRF validation.
-Every dashboard route, API endpoint, and `/metrics` requires a session. HTML
+Every dashboard route and API endpoint requires a session. Exact GET/HEAD
+`/metrics` alternatively accepts the optional dedicated technical Bearer token;
+only its validated SHA-256 digest is configured on the server, and comparison
+is constant-time. Other routes, methods, query strings, form fields, provider
+cookies and forwarded headers cannot use that credential. See
+[provisioning and rotation](metrics.md#dedicated-scraper-authentication).
+Request logs omit query strings and redact Authorization/cookie headers. HTML
 navigation redirects to login; APIs and metrics return `401 AUTH_REQUIRED`.
 No account signup, password reset page, roles, OAuth or trusted-auth-header
 bypass is implemented. There is no password-setting endpoint in the browser.

@@ -159,6 +159,27 @@ executable replacement cannot coalesce reads across client identities. The
 coordinator is deliberately in-memory; restart recovery still begins with a
 new reconciliation.
 
+The coordinator checks persisted per-provider read backoff at the actual
+inspection boundary, including queued work. Reconcile, preflight, confirmation
+and resolution share their maximum pending deadline; auth-check/auth-verify
+reads have bounded separate gates. One explicitly authorized login probe does
+not erase failed history; verified connection/success clears the protection.
+Read hints are bounded/coalesced by provider and wake a supervised reconcile
+worker asynchronously, bypassing only polling due time, never auth/runtime or
+backoff gates. Hints received during work remain pending for a subsequent pass.
+
+An operator may request audited `resolved_unknown` closure through the executor
+only after fresh read-only evidence proves that the exact original observed
+cycle ended. Missing legacy identity remains blocked. This is neither success
+nor retry, and independent cleanup obligations still block client updates.
+See [ADR-008](adr/008-unknown-action-resolution.md).
+
+Loop supervision tracks reconcile, executor, cleanup, aggregation and retention
+progress using monotonic durations and configured limits. Public `/healthz`
+remains minimal HTTP/SQLite liveness; session-protected diagnostics report local
+readiness separately from external provider degradation. The optional technical
+metrics credential grants no diagnostics or API authority (ADR-007).
+
 Usage aggregation is a separate bounded worker. It is requested after a
 successful observation and its samples have committed, runs one startup sweep to
 recover missed notifications, and retains a 60-second idle fallback. Each batch

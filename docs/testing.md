@@ -54,3 +54,22 @@ on pushes and pull requests. The Docker job runs an isolated authenticated
 Compose smoke test with synthetic credentials, including anonymous-route
 rejection, login, CSRF, restart invalidation and SQLite persistence. Real
 secrets must never be committed, including in fixtures or examples.
+
+The regression suite covers fresh dispatch authorization after async
+preparation, exact deadlines, unknown-outcome closure, multi-batch retention,
+loop progress, coalesced wakeups and persisted read backoff. Migrations are
+tested on empty DBs and previous schemas, preserving legacy unresolved intents,
+dedupe, cleanup and explicit preferences. FakeClock controls timing/jitter;
+no real provider or quota is used.
+
+`tests/web/runtime-metrics-smoke.test.ts` starts the actual offline daemon with
+FakeProvider and temporary DB/auth, verifies graceful restart, technical metrics
+revocation and bounded credential-free captured logs. The disposable Docker
+smoke additionally exercises actual index wiring for inspect wakeup, deferred
+hints, persisted backoff, private loop diagnostics and safe legacy resolution
+after recovering an executing intent. No existing container/volume is used.
+
+Validate the documented Prometheus example separately with
+`node scripts/prometheus-config-smoke.mjs`. It runs fixed-version promtool in a
+temporary network-disabled, capability-dropped container using only a synthetic private
+credentials file. Docker may download the official validator image first.

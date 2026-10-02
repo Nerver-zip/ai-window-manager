@@ -1,5 +1,11 @@
 # Docker / deployment
 
+Unattended Prometheus collection can use the optional dedicated metrics token;
+see [provisioning, TLS/VPN guidance and rotation](metrics.md#dedicated-scraper-authentication).
+Compose passes only `AWM_METRICS_TOKEN_SHA256` (empty by default). Never mount
+or configure the raw scraper token in the application container. Browser
+authentication and mandatory operator bootstrap credentials remain unchanged.
+
 ## Target
 
 ```bash
@@ -226,6 +232,59 @@ Terms of Service and Privacy Policy. Review the CLI's settings for its opt-out;
 AWM does not configure or override that preference. Trigger prompts are normal
 provider interactions and may consume quota.
 
+## Stability upgrade to schema 12 (operator-run; not automatic deployment)
+
+1. Review the source diff, especially migrations 010–012 and
+   [unknown-outcome semantics](adr/008-unknown-action-resolution.md). Run
+   `pnpm validate`, `pnpm audit --audit-level moderate`, Compose config/build
+   and the disposable smoke below before scheduling production downtime.
+   Review current persisted automation preferences; temporarily select
+   monitoring-only if you want a read-only post-upgrade inspection. Do not
+   assume an environment trigger gate rewrites an explicit SQLite preference.
+2. Preserve the old image digest/source revision and protected `.env`. Build
+   the reviewed candidate locally; never remove the existing named volumes.
+   Use the [WAL-safe stopped backup procedure](persistence.md#backups-and-restore-runbook)
+   and verify `integrity_check`, `foreign_key_check` and the backup's schema
+   version. If WAL/SHM remains after graceful stop, stop here and investigate;
+   do not copy only the main file or run a destructive reset.
+3. With the backup verified, start the reviewed image using
+   `docker compose up -d --wait --wait-timeout 180`. Index creation and the
+   transactional intent-table rebuild may take longer with a large history;
+   inspect bounded logs instead of repeatedly interrupting migrations.
+4. Check `/healthz`, sign in again (restart invalidates sessions), and inspect
+   the private `/api/v1/diagnostics` with that session. Verify the migration and
+   database checks without printing account payloads or secrets:
+
+   ```bash
+   docker compose exec -T ai-window-manager node --input-type=module -e '
+     import Database from "better-sqlite3";
+     const db = new Database("/data/window-manager.db", { readonly: true });
+     const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version;
+     if (version !== 12 || db.pragma("integrity_check", { simple: true }) !== "ok"
+         || db.pragma("foreign_key_check").length !== 0) process.exitCode = 1;
+     console.log({ schemaVersion: version, valid: process.exitCode !== 1 });
+     db.close();
+   '
+   ```
+
+5. Check that each enabled provider produces fresh read-only observations and
+   that inspect requests wake the loop or visibly remain deferred by auth,
+   updates or backoff. Review open intents: recovered `executing` becomes
+   `uncertain`, never a new prompt. A legacy intent without an identifiable
+   cycle remains blocked; do not fabricate identity or edit SQL to release it.
+   Request unknown-outcome closure only when the UI shows the exact old target
+   and the service can freshly prove that cycle ended. Cleanup remains durable.
+6. If desired, provision the optional metrics credential as described above,
+   restart with only its digest configured, and check the scraper. Review
+   retention backlog/progress over multiple passes; DELETE need not shrink
+   DB/WAL files immediately. Restore automation preferences deliberately only
+   after read-only checks; this runbook does not authorize a live trigger test.
+7. For recovery, stop the candidate gracefully, keep a safety copy of its
+   current state, and restore the verified pre-upgrade DB using the linked
+   procedure together with its compatible old image/configuration. Merely
+   reverting the binary does not downgrade schema. Never delete migration
+   records, modify shipped migrations or erase provider state/cleanup volumes.
+
 ## Smoke test checklist
 
 Run the disposable authenticated Compose smoke test. It uses a unique Compose
@@ -240,7 +299,11 @@ docker compose config --quiet
 The smoke test proves health readiness, anonymous redirects/401s, login,
 session/CSRF enforcement, and SQLite persistence after restart and stop/up. For
 the normally deployed service, `/healthz` stays public for Docker healthchecks;
-dashboard/API/metrics requests require signing in.
+dashboard/API requests require signing in. Metrics additionally supports the
+optional dedicated technical credential. The smoke also checks schema 12,
+inspect wakeup/defer, private loop progress, executing recovery without
+redispatch, safe refusal to resolve an unidentified legacy cycle, metrics
+restart/revocation and credential-free logs. Only disposable fixtures are used.
 
 The focused Codex runtime check, without credentials or a turn, is:
 

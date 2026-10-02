@@ -8,6 +8,7 @@ readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly COMPOSE_FILE="${REPO_ROOT}/compose.yaml"
 readonly CI_AUTH_USERNAME='awm-ci-operator'
 readonly CI_AUTH_PASSWORD='awm-ci-synthetic-password-2026'
+readonly CI_METRICS_TOKEN='synthetic-metrics-smoke-xxxxxxxxxxxxxxxxxxx'
 readonly HEALTH_ATTEMPTS=60
 readonly REQUEST_TIMEOUT_SECONDS=15
 readonly MAIN_SHELL_PID="$BASHPID"
@@ -86,6 +87,7 @@ export AWM_AUTH_USERNAME="$CI_AUTH_USERNAME"
 export AWM_AUTH_PASSWORD_HASH='ci-build-placeholder-not-a-password-hash'
 export AWM_AUTH_SESSION_TTL_SECONDS='900'
 export AWM_TRUST_PROXY=''
+export AWM_METRICS_TOKEN_SHA256=''
 export AWM_FAKE_PROVIDER_ENABLED='true'
 export AWM_CODEX_ENABLED='false'
 export AWM_CODEX_TRIGGER_ENABLED='false'
@@ -133,6 +135,10 @@ generated_hash="$(printf '%s' "$CI_AUTH_PASSWORD" | docker run \
 [[ "$generated_hash" =~ ^\$argon2id\$v=19\$m=[0-9]+,t=[0-9]+,p=[0-9]+\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$ ]] || \
   fail 'the runtime image did not produce an Argon2id PHC hash'
 export AWM_AUTH_PASSWORD_HASH="$generated_hash"
+export AWM_METRICS_TOKEN_SHA256="$(printf '%s' "$CI_METRICS_TOKEN" | docker run \
+  --rm --interactive --network none --read-only --user 10001:10001 \
+  --entrypoint node "$image_id" --input-type=module -e \
+  'import { createHash } from "node:crypto"; let token = ""; for await (const part of process.stdin) token += part; if (!/^[A-Za-z0-9_-]{43}$/.test(token)) process.exit(2); process.stdout.write(createHash("sha256").update(token).digest("hex"));')"
 
 # Compose interpolation of a PHC string containing multiple '$' characters is
 # verified by the browser-style login below, not by printing resolved config.
@@ -191,6 +197,81 @@ except (OSError, ValueError):
     sys.exit(1)
 sys.exit(0 if payload.get("error", {}).get("code") == "AUTH_REQUIRED" else 1)
 PY
+}
+
+assert_metrics_token() {
+  local status
+  status="$(request_code '/metrics' --header "Authorization: Bearer ${CI_METRICS_TOKEN}")"
+  assert_status '200' "$status" 'GET with technical token' '/metrics'
+  [[ -s "$RESPONSE_BODY" ]] || fail 'technical metrics scrape returned no samples'
+  status="$(request_code '/metrics' --head --header "Authorization: Bearer ${CI_METRICS_TOKEN}")"
+  assert_status '200' "$status" 'HEAD with technical token' '/metrics'
+  status="$(request_code '/api/v1/diagnostics' --header "Authorization: Bearer ${CI_METRICS_TOKEN}")"
+  assert_status '401' "$status" 'GET with metrics token' '/api/v1/diagnostics'
+  status="$(request_code "/metrics?token=${CI_METRICS_TOKEN}" --header "Authorization: Bearer ${CI_METRICS_TOKEN}")"
+  assert_status '401' "$status" 'GET with query' '/metrics'
+  status="$(request_code '/metrics' --request POST --header "Authorization: Bearer ${CI_METRICS_TOKEN}")"
+  assert_status '401' "$status" 'POST with metrics token' '/metrics'
+}
+
+check_runtime_state() {
+  local mode="$1"
+  compose exec -T ai-window-manager node --input-type=module - "$mode" <<'JS'
+import assert from 'node:assert/strict';
+import Database from 'better-sqlite3';
+assert.equal(process.env.AWM_FAKE_PROVIDER_ENABLED, 'true');
+assert.equal(process.env.AWM_CODEX_ENABLED, 'false');
+assert.equal(process.env.AWM_ANTIGRAVITY_ENABLED, 'false');
+const db = new Database('/data/window-manager.db');
+db.pragma('busy_timeout = 5000');
+const mode = process.argv[2];
+const now = Date.now();
+assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 12);
+if (mode === 'before-hint') {
+  db.prepare("UPDATE providers SET poll_interval_seconds = 86400 WHERE id = 'fake'").run();
+  const before = db.prepare("SELECT observed_at_ms AS at FROM provider_state WHERE provider_id = 'fake'").get().at;
+  db.prepare("INSERT OR REPLACE INTO settings(key, value_json, updated_at_ms) VALUES('runtime_smoke_observed_before', ?, ?)").run(JSON.stringify(before), now);
+} else if (mode === 'after-hint') {
+  const before = JSON.parse(db.prepare("SELECT value_json FROM settings WHERE key = 'runtime_smoke_observed_before'").get().value_json);
+  assert.ok(db.prepare("SELECT observed_at_ms AS at FROM provider_state WHERE provider_id = 'fake'").get().at > before);
+} else if (mode === 'prepare-restart') {
+  db.transaction(() => {
+    db.prepare(`INSERT INTO action_intents(id, provider_id, action_type, dedupe_key, state,
+      scheduled_for_ms, attempt_count, reason_code, explanation_json, created_at_ms, started_at_ms, updated_at_ms)
+      VALUES('runtime-smoke-legacy', 'fake', 'window_trigger', 'runtime-smoke-no-redispatch', 'executing',
+      ?, 1, 'SYNTHETIC_SMOKE_EXECUTING', '{"windowKind":"five_hour"}', ?, ?, ?)`)
+      .run(now - 60000, now - 60000, now - 60000, now - 60000);
+    db.prepare(`INSERT INTO provider_read_backoff(provider_id, purpose, failure_count, not_before_ms, failure_kind, updated_at_ms)
+      VALUES('fake', 'confirmation', 3, ?, 'auth_required', ?)`)
+      .run(now + 3600000, now);
+  })();
+} else if (mode === 'after-restart') {
+  const intent = db.prepare("SELECT state, attempt_count, dedupe_key FROM action_intents WHERE id = 'runtime-smoke-legacy'").get();
+  assert.equal(intent.state, 'uncertain');
+  assert.equal(intent.attempt_count, 1);
+  assert.equal(intent.dedupe_key, 'runtime-smoke-no-redispatch');
+  assert.ok(db.prepare("SELECT not_before_ms FROM provider_read_backoff WHERE provider_id = 'fake'").get().not_before_ms > now);
+} else if (mode === 'clear-read-backoff') {
+  db.prepare("DELETE FROM provider_read_backoff WHERE provider_id = 'fake'").run();
+} else if (mode === 'after-resolution') {
+  const request = db.prepare("SELECT state, reason_code FROM action_resolution_requests WHERE intent_id = 'runtime-smoke-legacy'").get();
+  assert.equal(request?.state, 'checked');
+  assert.equal(request.reason_code, 'ACTION_RESOLUTION_CYCLE_UNIDENTIFIED');
+  const intent = db.prepare("SELECT state, attempt_count FROM action_intents WHERE id = 'runtime-smoke-legacy'").get();
+  assert.equal(intent.state, 'uncertain');
+  assert.equal(intent.attempt_count, 1);
+} else throw new Error('Unsupported isolated smoke mode');
+db.close();
+JS
+}
+
+wait_for_runtime_state() {
+  local mode="$1" attempt
+  for ((attempt = 1; attempt <= 20; attempt += 1)); do
+    if check_runtime_state "$mode" >/dev/null 2>&1; then return 0; fi
+    sleep 1
+  done
+  fail "isolated runtime state did not reach ${mode}"
 }
 
 assert_http_session_cookie() {
@@ -370,6 +451,7 @@ login_operator() {
 
 wait_for_health
 compose ps
+assert_metrics_token
 
 status="$(request_code '/healthz')"
 assert_status '200' "$status" 'GET' '/healthz'
@@ -452,9 +534,20 @@ status="$(request_code '/api/v1/settings' --cookie "$COOKIE_JAR")"
 assert_status '200' "$status" 'GET' '/api/v1/settings'
 assert_timezone_persisted 'UTC' || fail 'the test-only preference was not persisted before restart'
 
+status="$(request_code '/api/v1/diagnostics' --cookie "$COOKIE_JAR")"
+assert_status '200' "$status" 'GET private readiness' '/api/v1/diagnostics'
+check_runtime_state before-hint
+csrf_value="$(csrf_token_from_cookiejar)"
+status="$(request_code '/api/v1/providers/fake/inspect' --cookie "$COOKIE_JAR" \
+  --request POST --header "Origin: ${EXPECTED_ORIGIN}" --header "x-csrf-token: ${csrf_value}")"
+assert_status '202' "$status" 'POST inspect hint' '/api/v1/providers/fake/inspect'
+wait_for_runtime_state after-hint
+check_runtime_state prepare-restart
+
 docker compose --project-name "$project_name" --env-file /dev/null -f "$COMPOSE_FILE" \
   restart ai-window-manager
 wait_for_health
+assert_metrics_token
 status="$(request_code '/api/v1/providers' --cookie "$COOKIE_JAR")"
 assert_status '401' "$status" 'GET after restart' '/api/v1/providers'
 assert_auth_error_body || fail 'the pre-restart session remained valid after restart'
@@ -467,12 +560,35 @@ assert_provider_client_volume verify
 status="$(request_code '/api/v1/settings' --cookie "$COOKIE_JAR")"
 assert_status '200' "$status" 'GET after re-login' '/api/v1/settings'
 assert_timezone_persisted 'UTC' || fail 'SQLite preference did not survive docker compose restart'
+wait_for_runtime_state after-restart
+csrf_value="$(csrf_token_from_cookiejar)"
+status="$(request_code '/api/v1/providers/fake/inspect' --cookie "$COOKIE_JAR" \
+  --request POST --header "Origin: ${EXPECTED_ORIGIN}" --header "x-csrf-token: ${csrf_value}")"
+assert_status '202' "$status" 'POST deferred inspect' '/api/v1/providers/fake/inspect'
+status="$(request_code '/api/v1/diagnostics' --cookie "$COOKIE_JAR")"
+assert_status '200' "$status" 'GET progress during read backoff' '/api/v1/diagnostics'
+python3 - "$RESPONSE_BODY" <<'PY' || fail 'private diagnostics did not expose the deferred read hint'
+import json
+import sys
+with open(sys.argv[1], encoding='utf-8') as response:
+    payload = json.load(response)
+provider = next(p for p in payload['providers'] if p['id'] == 'fake')
+assert provider['inspectHintPending'] is True
+assert provider['readRetryAtMs'] > 0
+assert {loop['name'] for loop in payload['loops']} == {'reconcile', 'executor', 'cleanup', 'aggregation', 'retention'}
+PY
+check_runtime_state clear-read-backoff
+status="$(request_code '/api/v1/actions/runtime-smoke-legacy/resolve-unknown' --cookie "$COOKIE_JAR" \
+  --request POST --header "Origin: ${EXPECTED_ORIGIN}" --header "x-csrf-token: ${csrf_value}")"
+assert_status '202' "$status" 'POST unknown-outcome review' '/api/v1/actions/runtime-smoke-legacy/resolve-unknown'
+wait_for_runtime_state after-resolution
 
 # Retain the original stop/up lifecycle coverage, with the same readiness wait
 # used after initial startup and restart to avoid transient connection resets.
 compose stop ai-window-manager
 compose up -d --no-build
 wait_for_health
+assert_metrics_token
 status="$(request_code '/api/v1/providers' --cookie "$COOKIE_JAR")"
 assert_status '401' "$status" 'GET after stop/up' '/api/v1/providers'
 login_operator
@@ -519,6 +635,8 @@ except OSError:
 secrets = [
     os.environ.get("AWM_AUTH_PASSWORD_HASH", ""),
     os.environ.get("AWM_AUTH_SMOKE_TEST_PASSWORD", ""),
+    os.environ.get("AWM_METRICS_TOKEN_SHA256", ""),
+    "synthetic-metrics-smoke-xxxxxxxxxxxxxxxxxxx",
 ]
 for line in cookie_lines:
     if line.startswith("#HttpOnly_"):
@@ -549,4 +667,10 @@ then
   fail 'container logs contain a prohibited error pattern or authentication material'
 fi
 
-printf '%s\n' 'docker-auth-smoke: passed (auth boundary, CSRF, provider-client fallback/version persistence, restart invalidation, SQLite persistence, stop/up, and logs)'
+export AWM_METRICS_TOKEN_SHA256=''
+compose up -d --no-build --force-recreate
+wait_for_health
+status="$(request_code '/metrics' --header "Authorization: Bearer ${CI_METRICS_TOKEN}")"
+assert_status '401' "$status" 'GET after token revocation' '/metrics'
+
+printf '%s\n' 'docker-auth-smoke: passed (auth boundary, CSRF, provider-client fallback/version persistence, restart invalidation, SQLite persistence, technical metrics/revocation, stop/up, and logs)'

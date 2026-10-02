@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OPERATOR_SESSION_COOKIE_NAME, OperatorAuthService } from '../../src/auth/operator-auth.js';
 import { loadConfig } from '../../src/config.js';
@@ -30,6 +31,7 @@ const resources: Array<{
 function createContext(
   trustedProxy = '',
   requestRateLimitForTests?: { maxRequests: number; timeWindowMs: number },
+  metricsDigest = '',
 ) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-operator-auth-routes-'));
   const db = openDatabase(path.join(directory, 'window-manager.db'));
@@ -42,6 +44,7 @@ function createContext(
     AWM_AUTH_PASSWORD_HASH: OPERATOR_PASSWORD_HASH,
     AWM_AUTH_SESSION_TTL_SECONDS: '900',
     AWM_TRUST_PROXY: trustedProxy,
+    AWM_METRICS_TOKEN_SHA256: metricsDigest,
   });
   const verifyPassword = vi.fn((password: string) =>
     Promise.resolve(password === OPERATOR_PASSWORD),
@@ -90,6 +93,66 @@ afterEach(async () => {
 });
 
 describe('operator authentication route protection', () => {
+  it('restricts the technical credential to metrics, supports restart and revocation', async () => {
+    const token = 'synthetic-route-metrics-'.padEnd(43, 'x');
+    const digest = createHash('sha256').update(token).digest('hex');
+    const headers = { authorization: `Bearer ${token}` };
+    const first = createContext('', undefined, digest);
+    const oldSession = first.operatorAuth.sessions.create().token;
+    for (const context of [first, createContext('', undefined, digest)]) {
+      expect((await context.app.inject({ url: '/metrics', headers })).statusCode).toBe(200);
+      const head = await context.app.inject({ method: 'HEAD', url: '/metrics', headers });
+      expect(head.statusCode).toBe(200);
+      expect(head.body).toBe('');
+      for (const url of ['/metrics?token=' + token, '/api/v1/diagnostics', '/api/v1/providers']) {
+        expect((await context.app.inject({ url, headers })).statusCode, url).toBe(401);
+      }
+      expect(
+        (await context.app.inject({ method: 'POST', url: '/metrics', headers })).statusCode,
+      ).toBe(401);
+      for (const url of ['/', '/logs', '/logout', '/metrics/', '/%6Detrics']) {
+        expect((await context.app.inject({ url, headers })).statusCode, url).not.toBe(200);
+      }
+      const login = await context.app.inject({ url: '/login', headers });
+      expect(login.body).not.toContain(token);
+      expect(login.body).not.toContain(digest);
+    }
+    const restarted = createContext('', undefined, digest);
+    expect(
+      (
+        await restarted.app.inject({
+          url: '/metrics',
+          headers: { cookie: `${OPERATOR_SESSION_COOKIE_NAME}=${oldSession}` },
+        })
+      ).statusCode,
+    ).toBe(401);
+    for (const context of [createContext(), createContext('', undefined, 'a'.repeat(64))]) {
+      expect((await context.app.inject({ url: '/metrics', headers })).statusCode).toBe(401);
+      const session = context.operatorAuth.sessions.create().token;
+      expect(
+        (
+          await context.app.inject({
+            url: '/metrics',
+            headers: { cookie: `${OPERATOR_SESSION_COOKIE_NAME}=${session}` },
+          })
+        ).statusCode,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await first.app.inject({
+          url: '/metrics',
+          headers: {
+            cookie: `provider_token=${token}`,
+            'x-forwarded-authorization': headers.authorization,
+          },
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (await first.app.inject({ method: 'POST', url: '/metrics', payload: { token } })).statusCode,
+    ).toBe(401);
+  });
   it('keeps only health, assets, and login public while protecting app, API, and metrics routes', async () => {
     const { app } = createContext();
 

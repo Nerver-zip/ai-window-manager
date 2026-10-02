@@ -73,7 +73,10 @@ product state is served. This does not introduce multi-user account management.
   bounded in-memory session store, logout and restart invalidation.
 - **AUTH-APP-003 — Central route gate**: default deny before application
   handlers; only health, static assets and login are public; logout, HTML
-  redirects and API/metrics are session-protected with 401 for machine clients.
+  redirects and APIs are session-protected with 401 for machine clients.
+  Exact GET/HEAD `/metrics` also accepts an optional read-only scraper credential
+  under [ADR-007](adr/007-single-operator-authentication.md); other routes remain
+  session-only.
 - **AUTH-APP-004 — Login throttling**: in-memory per-source (5 failures / 5
   minutes) and global (60 failures / 5 minutes) limits with bounded state and
   `Retry-After` responses.

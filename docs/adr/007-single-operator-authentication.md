@@ -22,7 +22,8 @@ multi-user accounts or an identity platform.
   or sessions are migrated into SQLite.
 - Apply a central default-deny HTTP gate before application handlers. Only the
   minimal health endpoint, static assets and login are anonymous; logout,
-  dashboard, API and metrics routes require a session. Mutations also require
+  dashboard and API routes require a session. Metrics also require a session,
+  except for the narrow optional technical credential described below. Mutations require
   same-origin Origin and CSRF validation.
 - Compose publishes `0.0.0.0` by default for trusted-LAN use. `AWM_HOST_BIND`
   can narrow the host bind. A login page does not encrypt traffic: direct HTTP
@@ -47,6 +48,19 @@ multi-user accounts or an identity platform.
   broaden trust assumptions and are out of scope.
 
 ## Consequences
+
+### Authorized operational exception — 2026-10-02
+
+Exact `GET`/`HEAD /metrics` may alternatively accept a dedicated Bearer token.
+The local `pnpm metrics:token` helper generates 32 random bytes and displays
+the token once; only its validated lowercase SHA-256 digest is configured as
+`AWM_METRICS_TOKEN_SHA256`. Comparison is constant-time. Empty configuration
+preserves session-only access. No query, form, cookie or proxy-header token is
+accepted, and the credential never authorizes other routes or methods.
+Rotation/revocation requires changing/clearing the digest and restarting AWM;
+browser sessions are still invalidated, while an unchanged token remains valid.
+Store the raw token only in a private scraper credentials file and protect its
+transport with TLS/VPN. No digest/token is returned to the browser or SQLite.
 
 - A new installation must prepare the username and Argon2id hash before the
   first service start. Changing them requires an environment update and

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { isIP } from 'node:net';
 import path from 'node:path';
 import { validateArgon2idPasswordHash } from './auth/operator-password.js';
+import { validateMetricsTokenDigest } from './auth/metrics-token.js';
 
 const trustedProxySchema = z
   .string()
@@ -79,6 +80,9 @@ const envSchema = z.object({
     }),
   AWM_AUTH_SESSION_TTL_SECONDS: z.coerce.number().int().min(900).max(604800).default(43200),
   AWM_TRUST_PROXY: trustedProxySchema,
+  AWM_METRICS_TOKEN_SHA256: z.string().default('').refine(validateMetricsTokenDigest, {
+    message: 'AWM_METRICS_TOKEN_SHA256 must be empty or a lowercase SHA-256 digest',
+  }),
   AWM_ANTIGRAVITY_ENABLED: z
     .enum(['true', 'false'])
     .default('false')

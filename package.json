@@ -18,6 +18,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "auth:hash": "tsx scripts/auth-hash.ts",
+    "metrics:token": "tsx scripts/metrics-token.ts",
     "provider-clients:check": "tsx scripts/provider-clients-check.ts",
     "provider-clients:bump": "tsx scripts/provider-clients-bump.ts",
     "lint": "eslint .",

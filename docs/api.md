@@ -4,16 +4,19 @@ The API exists to support the small UI and local automation/inspection. It is no
 
 The web service has mandatory native single-operator authentication. `GET
 /healthz`, static assets, and `/login` are public; every dashboard route, JSON
-endpoint, `/metrics`, and both logout routes require the in-memory operator
-session. Unauthenticated HTML navigation redirects to `/login`; JSON and
+endpoint and both logout routes require the in-memory operator session.
+Exact `GET`/`HEAD /metrics` also accepts the optional dedicated technical
+Bearer credential described in [metrics](metrics.md); no query token is accepted.
+Unauthenticated HTML navigation redirects to `/login`; JSON and
 metrics return `401` with `AUTH_REQUIRED`. `POST /login` and `POST /logout` are
 same-origin and CSRF protected. The login cookie is browser-only; there is no
-API password, bearer-token, public-registration or trusted-header bypass.
+API password, general-purpose bearer token, public-registration or trusted-header bypass.
 
 Proposed final MVP endpoints:
 
 ```text
 GET  /healthz
+GET  /api/v1/diagnostics
 GET  /metrics
 GET  /login
 POST /login
@@ -38,6 +41,7 @@ POST /api/v1/providers/:id/auth/submit
 POST /api/v1/providers/:id/auth/cancel
 POST /api/v1/providers/:id/trigger
 POST /api/v1/providers/:id/inspect
+POST /api/v1/actions/:id/resolve-unknown
 POST /api/v1/settings/timezone
 POST /api/v1/scheduling
 POST /api/v1/provider-clients/:id/check
@@ -57,7 +61,26 @@ contains `policyScopes[]` for `gemini` and `claude_gpt`; each entry has its own
 policy, current window, decision, upcoming occurrences and `requiresReview`
 flag. The older top-level fields remain a Gemini-family-compatible view for
 existing clients. Trigger requests create a durable intent and return `202`,
-while inspect requests append a reconcile hint and return `202`.
+while inspect requests append a per-provider reconcile hint, asynchronously wake
+the service and return `202`. This is queue acceptance, not a fresh result. The
+hint requests a fresh read even before the next poll is due; disabled providers
+are rejected, and active authentication/runtime changes defer the read until
+safe periodic recovery. Shared read backoff also defers the hint without consuming
+it or clearing the failure streak. Private diagnostics expose `readRetryAtMs`
+(zero when no shared read deadline exists) and `inspectHintPending` separately
+from provider health. Repeated requests coalesce and do not authorize prompts.
+
+`POST /api/v1/actions/:id/resolve-unknown` persists a review request for an
+uncertain action, returning `202` without provider I/O in the handler. The
+native equivalent is `POST /actions/:id/resolve-unknown`, which uses PRG back to
+Overview. Both require operator session, Origin and CSRF. The executor performs
+a fresh read and requires durable evidence that the corresponding exact old
+cycle ended before recording `resolved_unknown`. Neither expiry nor browser
+payload supplies that evidence. Duplicate pending requests coalesce; another
+explicit review after failure has a 30-second cooldown. Already confirmed or
+closed outcomes are returned without another transition. Executing actions
+cannot be closed. Overview shows the blocker, age, confirmation attempts and
+review result. Cleanup obligations still block executable updates independently.
 
 Provider-client status is a bounded allowlisted view with packaged, active,
 previous and last-checked versions plus update state; it contains no executable
