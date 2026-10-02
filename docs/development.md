@@ -49,8 +49,9 @@ pnpm validate
 
 `node --max-old-space-size=96 scripts/performance-benchmark.mjs` runs the
 synthetic local benchmark after `pnpm build`. It measures idle aggregation
-batch cadence, retained-history heatmap queries, and concurrent/fresh-barrier
-inspection coordination. See [`performance.md`](performance.md) for the
+batch cadence, retained-history heatmap queries, concurrent inspections,
+pre-action freshness barriers, and post-action reconciliation reuse. Use Node
+24 to compare against the packaged runtime. See [`performance.md`](performance.md) for the
 isolated Node 24 runtime and heap-limit comparison methodology and results.
 The fixture does not invoke packaged provider clients, use credentials, or send
 provider requests; its child-process RSS is not an estimate of Codex or

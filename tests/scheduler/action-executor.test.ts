@@ -1054,6 +1054,43 @@ describe('ActionExecutor', () => {
     expect(reopenedRepositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
   });
 
+  it('uses the persisted wall deadline across backward and forward clock jumps', async () => {
+    const context = setup();
+    const originalWallMs = context.clock.now().getTime();
+    const confirmationAtMs = originalWallMs + 30_000;
+    context.fake.setPhase('ACTIVE');
+    context.db
+      .prepare(
+        `UPDATE action_intents
+         SET state = 'uncertain', attempt_count = 1,
+             confirmation_attempt_count = 1,
+             confirmation_not_before_ms = ?, updated_at_ms = ?
+         WHERE id = 'intent-1'`,
+      )
+      .run(confirmationAtMs, originalWallMs);
+    let inspections = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: (ctx) => {
+        inspections += 1;
+        return context.fake.inspect(ctx);
+      },
+    };
+    const executor = context.executor({ adapters: new Map([['fake', adapter]]) });
+
+    context.clock.setWallClock(new Date(originalWallMs - 60_000));
+    await executor.executeDue();
+    expect(inspections).toBe(0);
+    expect(context.clock.monotonicMs()).toBe(0);
+
+    context.clock.setWallClock(new Date(confirmationAtMs));
+    await executor.executeDue();
+    expect(inspections).toBe(1);
+    expect(context.clock.monotonicMs()).toBe(0);
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
   it('turns a failed confirmation into uncertain and later confirms by observation', async () => {
     const context = setup();
     let inspections = 0;
@@ -1070,12 +1107,11 @@ describe('ActionExecutor', () => {
     await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
     expect(inspections).toBe(2);
-    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
-    expect(inspections).toBe(2);
-    context.clock.advanceMs(29_999);
-    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
-    expect(inspections).toBe(2);
-    context.clock.advanceMs(1);
+    for (let tick = 0; tick < 6; tick += 1) {
+      context.clock.advanceMs(5_000);
+      await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+      if (tick < 5) expect(inspections).toBe(2);
+    }
     await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
 
     expect(inspections).toBe(3);

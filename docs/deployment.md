@@ -155,6 +155,13 @@ permission to click again; wait for new observations to resolve it. If the
 selected window is not naturally eligible, skip the live test rather than
 spending quota to manufacture eligibility.
 
+Pending confirmation checks back off from the configured reconcile interval to
+five minutes and preserve their deadlines across restart. The five-second
+executor wakeup does not launch an inspection before that deadline. Usage
+aggregation runs after sample commits, with startup recovery and a 60-second
+fallback. See [Scheduling](scheduling.md) and [Performance](performance.md) for
+the cadence and locally measured limits.
+
 The process also runs one coalescing executor interval and one bounded retention
 maintenance interval. Shutdown stops all intervals, waits for in-flight
 read-only work, closes the HTTP server, and then closes SQLite. FakeProvider is

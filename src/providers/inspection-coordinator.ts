@@ -19,6 +19,7 @@ interface PendingInspection {
 
 interface ProviderInspectionState {
   epoch: number;
+  actionCompletedEpoch: number | undefined;
   active: ActiveInspection | undefined;
   pendingFresh: PendingInspection | undefined;
 }
@@ -51,9 +52,9 @@ export class ProviderInspectionCoordinator {
   }
 
   /**
-   * Starts after any older in-flight read, or joins a fresh read already
-   * started in the current epoch. This is used for action preflight and
-   * post-action confirmation barriers.
+   * Starts after any read that predates the latest action, or joins a fresh
+   * read already started in the current epoch. A reconciliation read started
+   * after action completion may satisfy confirmation without another CLI call.
    */
   inspectFresh(
     adapter: ProviderAdapter,
@@ -70,7 +71,11 @@ export class ProviderInspectionCoordinator {
     }
 
     const active = state.active;
-    if (active?.adapter === adapter && active.fresh && active.epoch === state.epoch) {
+    if (
+      active?.adapter === adapter &&
+      active.epoch === state.epoch &&
+      (active.fresh || active.epoch === state.actionCompletedEpoch)
+    ) {
       return withCallerSignal(active.promise, context.signal);
     }
 
@@ -85,6 +90,7 @@ export class ProviderInspectionCoordinator {
   markActionCompleted(providerId: string): void {
     const state = this.stateFor(providerId);
     state.epoch += 1;
+    state.actionCompletedEpoch = state.epoch;
     if (state.pendingFresh) state.pendingFresh.epoch = state.epoch;
   }
 
@@ -113,7 +119,12 @@ export class ProviderInspectionCoordinator {
   private stateFor(providerId: string): ProviderInspectionState {
     let state = this.states.get(providerId);
     if (!state) {
-      state = { epoch: 0, active: undefined, pendingFresh: undefined };
+      state = {
+        epoch: 0,
+        actionCompletedEpoch: undefined,
+        active: undefined,
+        pendingFresh: undefined,
+      };
       this.states.set(providerId, state);
     }
     return state;

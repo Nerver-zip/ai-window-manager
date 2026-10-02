@@ -187,11 +187,25 @@ async function benchmarkInspectionCoordination() {
   await secondStart;
   await barrierCoordinator.close();
 
+  const reconciliation = createSyntheticAdapter('synthetic-reconciliation-reuse');
+  const reconciliationCoordinator = new ProviderInspectionCoordinator();
+  reconciliationCoordinator.markActionCompleted('synthetic-reconciliation-reuse');
+  const reconciliationStart = reconciliation.waitForNextChildStart();
+  const reconciliationStartedAt = performance.now();
+  const reconciledObservation = reconciliationCoordinator.inspect(reconciliation.adapter);
+  const reconciledConfirmation = reconciliationCoordinator.inspectFresh(reconciliation.adapter);
+  await reconciliationStart;
+  await Promise.all([reconciledObservation, reconciledConfirmation]);
+  const reconciliationElapsedMs = performance.now() - reconciliationStartedAt;
+  await reconciliationCoordinator.close();
+
   assert.equal(direct.metrics.inspections, syntheticFanIn);
   assert.equal(coordinated.metrics.inspections, 1);
   assert.equal(barrier.metrics.inspections, 2);
+  assert.equal(reconciliation.metrics.inspections, 1);
   assert.equal(coordinated.metrics.maxConcurrentChildren, 1);
   assert.equal(barrier.metrics.maxConcurrentChildren, 1);
+  assert.equal(reconciliation.metrics.maxConcurrentChildren, 1);
   return {
     synthetic_child: {
       buffer_mib: syntheticChildBytes / 1024 / 1024,
@@ -208,6 +222,10 @@ async function benchmarkInspectionCoordination() {
       elapsed_ms: round(coordinatedElapsedMs),
     },
     fresh_post_action_barrier: summarizeSyntheticMetrics(barrier.metrics),
+    post_action_reconciliation_reuse: {
+      ...summarizeSyntheticMetrics(reconciliation.metrics),
+      elapsed_ms: round(reconciliationElapsedMs),
+    },
   };
 }
 

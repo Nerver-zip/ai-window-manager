@@ -125,6 +125,24 @@ describe('ProviderInspectionCoordinator', () => {
     await coordinator.close();
   });
 
+  it('reuses a reconciliation read started after action completion for confirmation', async () => {
+    const coordinator = new ProviderInspectionCoordinator();
+    const { adapter, calls } = controlledAdapter();
+    coordinator.markActionCompleted(adapter.id);
+
+    const reconciliation = coordinator.inspect(adapter);
+    await flushMicrotasks();
+    expect(calls).toHaveLength(1);
+
+    const confirmation = coordinator.inspectFresh(adapter);
+    expect(calls).toHaveLength(1);
+    calls[0]!.release();
+    const [observed, confirmed] = await Promise.all([reconciliation, confirmation]);
+    expect(observed).toEqual(confirmed);
+    expect(calls).toHaveLength(1);
+    await coordinator.close();
+  });
+
   it('keeps a fresh barrier queued when the action invalidates an older queued read', async () => {
     const coordinator = new ProviderInspectionCoordinator();
     const { adapter, calls } = controlledAdapter();

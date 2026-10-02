@@ -10,6 +10,9 @@ Environment/.env/Compose controls process/container concerns:
   `0.0.0.0` for trusted-LAN access);
 - DB path;
 - log level;
+- `AWM_RECONCILE_INTERVAL_SECONDS` (1–3600, default `30`) for reconciliation
+  ticks and the initial read-only confirmation/pre-dispatch retry delay;
+- `AWM_EXECUTOR_INTERVAL_SECONDS` (1–3600, default `5`) for executor wakeups;
 - data/secret/provider-home paths;
 - migration/startup behavior;
 - initial provider/policy defaults (including `AWM_TIMEZONE`) when the DB is
@@ -38,6 +41,13 @@ Environment/.env/Compose controls process/container concerns:
 - `AWM_ANTIGRAVITY_KEYRING_SECRET_FILE`, an internal mounted-file path only (not secret contents).
 
 These generally require restart.
+
+Confirmation eligibility is persisted per intent. The first post-action check
+is prompt; further checks double their delay from the reconcile interval up to
+five minutes. Short executor ticks respect that deadline and never retry an
+uncertain action. Provider polling intervals remain separate SQLite settings.
+Usage aggregation is notified after sample commits and has a fixed 60-second
+recovery fallback; it adds no environment setting.
 
 The image-packaged Codex/Antigravity versions are immutable fallbacks. Runtime
 client versions and the `current` pointer live in the separate provider-client

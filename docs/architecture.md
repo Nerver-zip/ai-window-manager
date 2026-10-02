@@ -150,12 +150,14 @@ The daemon wakes every configurable interval (default 30 seconds), loads runtime
 
 All in-process consumers of provider inspections share a per-provider coordinator.
 It coalesces concurrent reads only; completed observations are never cached.
-At most one fresh read is queued behind an older in-flight read. Action completion
-invalidates the read epoch, so the confirmation barrier cannot mistake a
-pre-action result for post-action evidence. Caller cancellation does not cancel
-another consumer's shared read, and a provider executable replacement cannot
-coalesce reads across client identities. The coordinator is deliberately
-in-memory; restart recovery still begins with a new reconciliation.
+Action completion invalidates the read epoch, so the confirmation barrier cannot
+mistake a pre-action result for post-action evidence. A reconciliation read
+started after the action can satisfy confirmation without another CLI call;
+otherwise at most one fresh read is queued behind older work. Caller
+cancellation does not cancel another consumer's shared read, and a provider
+executable replacement cannot coalesce reads across client identities. The
+coordinator is deliberately in-memory; restart recovery still begins with a
+new reconciliation.
 
 Usage aggregation is a separate bounded worker. It is requested after a
 successful observation and its samples have committed, runs one startup sweep to

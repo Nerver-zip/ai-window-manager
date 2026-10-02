@@ -34,4 +34,10 @@ export class FakeClock implements Clock {
     this.currentMs += ms;
     this.monoMs += ms;
   }
+
+  setWallClock(instant: string | Date): void {
+    const wallMs = typeof instant === 'string' ? Date.parse(instant) : instant.getTime();
+    if (!Number.isSafeInteger(wallMs)) throw new RangeError('wall-clock instant is invalid');
+    this.currentMs = wallMs;
+  }
 }

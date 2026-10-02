@@ -195,17 +195,19 @@ read may be retried within the intent deadline; an ambiguous dispatched action
 may not.
 
 Confirmation reads are coordinated with reconciliation and authentication
-reads, but a completed observation is never reused as fresh confirmation.
-Before each confirmation inspection, the executor atomically claims and persists
-that confirmation attempt and its next eligible time. The first confirmation is
-attempted immediately after a reported success, or on the next executor tick for
-an uncertain outcome. Failed confirmations then back off from the configured
-reconcile interval (capped at five minutes, doubling up to the cap); the attempt
-count/deadline survive restart. This delays read-only checks only. It never
-re-dispatches a quota-consuming trigger, which remains provider-wide serialized
-until confirmed or otherwise safely resolved. The executor may still wake on
-its independent short interval, but intervening ticks skip the provider read
-until the persisted confirmation deadline.
+reads, but a completed observation is never cached. Before each confirmation
+inspection, the executor atomically claims and persists that confirmation
+attempt and its next eligible time. The first confirmation is attempted
+immediately after a reported success, or on the next executor tick for an
+uncertain outcome. A reconciliation inspection already in flight may satisfy
+confirmation only if it began after action completion; older reads are followed
+by a fresh post-action inspection. Failed confirmations then back off from the
+configured reconcile interval (capped at five minutes, doubling up to the cap);
+the attempt count/deadline survive restart. This delays read-only checks only.
+It never re-dispatches a quota-consuming trigger, which remains provider-wide
+serialized until confirmed or otherwise safely resolved. The executor may
+still wake on its independent short interval, but intervening ticks skip the
+provider read until the persisted confirmation deadline.
 
 Trigger-created conversations are disposable artifacts. Their exact provider
 identifier is persisted as a cleanup obligation before prompt dispatch where
