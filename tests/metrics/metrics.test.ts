@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { openDatabase } from '../../src/storage/database.js';
+import { observeRetention } from '../../src/storage/retention-observation.js';
+import { FakeClock } from '../../src/scheduler/clock.js';
+import { LoopMonitor } from '../../src/scheduler/loop-monitor.js';
 import type { ProviderObservation, WindowSnapshot } from '../../src/domain/types.js';
 import {
   InspectionResult,
@@ -9,6 +13,8 @@ import {
   recordProviderHealth,
   recordSchedulerDecision,
   recordTrigger,
+  recordRetention,
+  recordLoopProgress,
   refreshObservationMetrics,
   registry,
   resetMetricState,
@@ -23,6 +29,74 @@ beforeEach(() => {
 });
 
 describe('prometheus metrics', () => {
+  it('exports bounded loop progress without database or provider reads', async () => {
+    const clock = new FakeClock(observedAt);
+    const monitor = new LoopMonitor(clock);
+    monitor.register('cleanup', { intervalMs: 1000, maxRunMs: 1000 });
+    recordLoopProgress(monitor.snapshot());
+    expect(await registry.metrics()).not.toContain(
+      'ai_window_loop_success_timestamp_seconds{loop="cleanup"}',
+    );
+    monitor.begin('cleanup');
+    clock.advanceMs(500);
+    recordLoopProgress(monitor.snapshot());
+    expect(await registry.metrics()).toContain('ai_window_loop_running{loop="cleanup"} 1');
+    monitor.finish('cleanup', true);
+    recordLoopProgress(monitor.snapshot());
+    const text = await registry.metrics();
+    expect(text).toContain('ai_window_loop_duration_seconds{loop="cleanup"} 0.5');
+    expect(text).toContain('ai_window_loop_success_timestamp_seconds{loop="cleanup"}');
+    expect(() =>
+      recordLoopProgress({
+        ready: true,
+        loops: [{ ...monitor.snapshot().loops[0]!, name: 'injected' as 'cleanup' }],
+      }),
+    ).toThrow('invalid loop');
+  });
+
+  it('publishes cached bounded retention values without database queries on scrapes', async () => {
+    const db = openDatabase(':memory:');
+    try {
+      const clock = new FakeClock(observedAt);
+      const observation = observeRetention(db, clock);
+      observation.buckets.lifecycle = { count: 1000, capped: true, oldestAgeSeconds: 400 };
+      observation.databaseBytes = 4096;
+      observation.walBytes = 1024;
+      const progress = {
+        startedAtMs: 0,
+        finishedAtMs: 1,
+        durationMs: 25,
+        batches: 2,
+        totalDeleted: 1000,
+        pending: true,
+        running: false,
+        consecutiveFailures: 0,
+      };
+      recordRetention(progress, observation);
+      const query = vi.spyOn(db, 'prepare');
+      await registry.metrics();
+      await registry.metrics();
+      expect(query).not.toHaveBeenCalled();
+      expect(await valuesFor('ai_window_retention_backlog_rows')).toContainEqual({
+        labels: { bucket: 'lifecycle' },
+        value: 1000,
+      });
+      expect(await valuesFor('ai_window_retention_backlog_capped')).toContainEqual({
+        labels: { bucket: 'lifecycle' },
+        value: 1,
+      });
+      expect(await valuesFor('ai_window_retention_duration_seconds')).toEqual([
+        { labels: {}, value: 0.025 },
+      ]);
+      expect(await valuesFor('ai_window_storage_bytes')).toHaveLength(2);
+      recordRetention(progress, { ...observation, databaseBytes: null, walBytes: null });
+      expect(await valuesFor('ai_window_storage_bytes')).toEqual([]);
+      query.mockRestore();
+    } finally {
+      db.close();
+    }
+  });
+
   it('records provider and window gauges with deterministic time values', async () => {
     const observation = makeObservation([
       makeWindow('five_hour', {

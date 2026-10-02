@@ -7,6 +7,10 @@ import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { ActionExecutor, type ActionExecutorPhase } from '../../src/scheduler/action-executor.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { ProviderCleanupWorker } from '../../src/scheduler/provider-cleanup.js';
+import { trackWindowCycles } from '../../src/scheduler/window-cycle.js';
+import { ProviderReadBackoff } from '../../src/storage/provider-read-backoff.js';
+import { ProviderInspectionCoordinator } from '../../src/providers/inspection-coordinator.js';
+import { ProviderClientUpdateService } from '../../src/provider-clients/update-service.js';
 import { openDatabase } from '../../src/storage/database.js';
 import {
   createRepositories,
@@ -119,6 +123,7 @@ function setup(
     },
     executor(extra: Partial<ConstructorParameters<typeof ActionExecutor>[0]> = {}) {
       return new ActionExecutor({
+        isProviderRuntimeChanging: () => false,
         clock,
         db,
         repositories,
@@ -130,6 +135,356 @@ function setup(
 }
 
 describe('ActionExecutor', () => {
+  it('confirms fresh same-cycle evidence during review instead of inventing an unknown closure', async () => {
+    const context = setup();
+    const now = context.clock.now().getTime();
+    context.db
+      .prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?')
+      .run(
+        JSON.stringify({ windowKind: 'five_hour', observedCycleAt: new Date(now).toISOString() }),
+        context.intent.id,
+      );
+    context.repositories.actionIntents.setState(context.intent.id, 'uncertain', now, {
+      attemptCount: 1,
+    });
+    context.fake.setPhase('ACTIVE');
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs: now,
+      anchoredResetAtMs: now + 18000000,
+      lastObservedAtMs: now,
+      lastResetAtMs: now + 18000000,
+      phase: 'ACTIVE',
+      phaseConfidence: 'high',
+    });
+    context.repositories.actionIntents.requestResolution(context.intent.id, now);
+    await context.executor().executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('confirmed');
+    expect(
+      context.repositories.actionIntents.resolutionRequest(context.intent.id)?.reasonCode,
+    ).toBe('ACTION_CONFIRMED');
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('processes a persisted closure request after restart without sending another prompt', async () => {
+    const context = setup({ providerId: 'codex' });
+    const now = context.clock.now().getTime();
+    context.db
+      .prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?')
+      .run(
+        JSON.stringify({ windowKind: 'five_hour', observedCycleAt: new Date(now).toISOString() }),
+        context.intent.id,
+      );
+    context.repositories.actionIntents.setState(context.intent.id, 'uncertain', now, {
+      attemptCount: 1,
+      startedAtMs: now,
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs: now,
+      anchoredResetAtMs: now + 5000,
+      lastObservedAtMs: now,
+      lastResetAtMs: now + 5000,
+      phase: 'ACTIVE',
+      phaseConfidence: 'high',
+    });
+    expect(
+      context.repositories.actionIntents.requestResolution(context.intent.id, now).created,
+    ).toBe(true);
+    expect(
+      context.repositories.actionIntents.requestResolution(context.intent.id, now).created,
+    ).toBe(false);
+    context.clock.advanceMs(10000);
+    context.repositories.providerCleanupJobs.createIfAbsent({
+      id: 'synthetic-old-artifact-cleanup',
+      providerId: 'codex',
+      artifactKind: 'codex_thread',
+      externalId: 'synthetic-old-artifact',
+      state: 'pending',
+      attemptCount: 0,
+      notBeforeMs: now,
+      lastErrorCode: null,
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+    context.db.close();
+    const reopened = openDatabase(path.join(context.dir, 'awm.db'));
+    try {
+      const repositories = createRepositories(reopened);
+      const inspection = vi.spyOn(context.adapter, 'inspect');
+      const executor = new ActionExecutor({
+        clock: context.clock,
+        db: reopened,
+        repositories,
+        adapters: new Map([[context.providerId, context.adapter]]),
+        isProviderRuntimeChanging: () => false,
+      });
+      await executor.executeDue();
+      await executor.executeDue();
+      expect(inspection).toHaveBeenCalledTimes(1);
+      expect(context.triggerCount).toBe(0);
+      expect(repositories.actionIntents.get(context.intent.id)).toMatchObject({
+        state: 'resolved_unknown',
+        attemptCount: 1,
+      });
+      expect(repositories.actionIntents.resolutionRequest(context.intent.id)).toMatchObject({
+        state: 'checked',
+        reasonCode: 'ACTION_OUTCOME_UNKNOWN',
+      });
+      expect(
+        repositories.events
+          .list(context.providerId)
+          .filter((event) => event.type === 'action_resolved_unknown'),
+      ).toHaveLength(1);
+      expect(repositories.actionIntents.listOpen('codex')).toEqual([]);
+      expect(repositories.providerCleanupJobs.hasOpenForProvider('codex')).toBe(true);
+      expect(
+        repositories.actionIntents.createIfAbsent({
+          ...context.intent,
+          id: 'synthetic-old-duplicate',
+        }).created,
+      ).toBe(false);
+
+      const unexpectedRuntimeIo = vi.fn(() => Promise.reject(new Error('unexpected runtime I/O')));
+      const updates = new ProviderClientUpdateService({
+        runtimeStore: {
+          getState: unexpectedRuntimeIo,
+          install: unexpectedRuntimeIo,
+          rollback: unexpectedRuntimeIo,
+        },
+        resolveOfficialRelease: unexpectedRuntimeIo,
+        architecture: 'amd64',
+        clock: context.clock,
+        isProviderBusy: (providerId) =>
+          repositories.actionIntents.listOpen(providerId).length > 0 ||
+          repositories.providerCleanupJobs.hasOpenForProvider(providerId),
+      });
+      expect((await updates.update('codex')).status).toBe('blocked');
+      expect(unexpectedRuntimeIo).not.toHaveBeenCalled();
+
+      const provider = repositories.providers.get('codex')!;
+      repositories.providers.upsert({
+        ...provider,
+        mode: 'monitor_only',
+        updatedAtMs: context.clock.now().getTime(),
+      });
+      repositories.actionIntents.createIfAbsent({
+        ...context.intent,
+        id: 'synthetic-future-intent',
+        dedupeKey: 'synthetic-future-cycle',
+        scheduledForMs: context.clock.now().getTime(),
+        createdAtMs: context.clock.now().getTime(),
+        updatedAtMs: context.clock.now().getTime(),
+      });
+      await executor.executeDue();
+      expect(repositories.actionIntents.get('synthetic-future-intent')).toMatchObject({
+        state: 'skipped',
+        attemptCount: 0,
+      });
+      expect(repositories.actionIntents.get(context.intent.id)?.state).toBe('resolved_unknown');
+      expect(repositories.providerCleanupJobs.hasOpenForProvider('codex')).toBe(true);
+      expect(context.triggerCount).toBe(0);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it.each(['unavailable', 'legacy', 'runtime', 'confirmation race'])(
+    'keeps resolution safe for %s',
+    async (variant) => {
+      const context = setup();
+      const now = context.clock.now().getTime();
+      if (variant !== 'legacy')
+        context.db.prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?').run(
+          JSON.stringify({
+            windowKind: 'five_hour',
+            observedCycleAt: new Date(now).toISOString(),
+          }),
+          context.intent.id,
+        );
+      context.repositories.actionIntents.setState(context.intent.id, 'uncertain', now, {
+        attemptCount: 1,
+      });
+      context.repositories.windowCycles.upsert({
+        providerId: context.providerId,
+        windowKind: 'five_hour',
+        cycleAtMs: now,
+        anchoredResetAtMs: now + 5000,
+        lastObservedAtMs: now,
+        lastResetAtMs: now + 5000,
+        phase: 'ACTIVE',
+        phaseConfidence: 'high',
+      });
+      context.repositories.actionIntents.requestResolution(context.intent.id, now);
+      context.clock.advanceMs(10000);
+      let changing = false;
+      context.adapter.inspect = async () => {
+        if (variant === 'unavailable') throw new Error('synthetic outage');
+        if (variant === 'runtime') changing = true;
+        if (variant === 'confirmation race')
+          context.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+            context.intent.id,
+            context.clock.now().getTime(),
+          );
+        return context.fake.inspect({});
+      };
+      await context.executor({ isProviderRuntimeChanging: () => changing }).executeDue();
+      expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe(
+        variant === 'confirmation race' ? 'confirmed' : 'uncertain',
+      );
+      expect(context.repositories.actionIntents.resolutionRequest(context.intent.id)?.state).toBe(
+        'checked',
+      );
+      expect(context.triggerCount).toBe(0);
+    },
+  );
+
+  it('fails closed when runtime coordination is absent', async () => {
+    const context = setup();
+    await new ActionExecutor({
+      clock: context.clock,
+      db: context.db,
+      repositories: context.repositories,
+      adapters: new Map([[context.providerId, context.adapter]]),
+    }).executeDue();
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_PROVIDER_RUNTIME_CHANGING',
+    });
+  });
+
+  it.each([
+    'expiry',
+    'pause',
+    'disable',
+    'policy',
+    'capability',
+    'runtime',
+    'runtime_unknown',
+    'stale',
+  ])('revokes %s after artifact registration without losing cleanup', async (change) => {
+    const context = setup({ providerId: 'codex' });
+    let prompts = 0;
+    let changing = false;
+    let unknown = false;
+    let capable = true;
+    context.adapter.capabilities = () => ({
+      ...context.fake.capabilities(),
+      windowTrigger: { supported: capable, contract: 'official_supported', consumesQuota: false },
+    });
+    context.adapter.triggerWindow = async (ctx, request) => {
+      await ctx.registerCleanupArtifact!({ kind: 'codex_thread', externalId: 'synthetic-thread' });
+      if (change === 'expiry') context.clock.advanceMs(30_000);
+      if (change === 'stale') context.clock.advanceMs(11_000);
+      if (change === 'pause' || change === 'disable') {
+        context.repositories.providers.upsert({
+          ...context.repositories.providers.get(context.providerId)!,
+          mode: change === 'pause' ? 'monitor_only' : 'automation',
+          enabled: change !== 'disable',
+        });
+      }
+      if (change === 'policy')
+        context.repositories.schedulePolicies.upsert({
+          ...context.repositories.schedulePolicies.get('policy-1')!,
+          enabled: false,
+        });
+      changing = change === 'runtime';
+      unknown = change === 'runtime_unknown';
+      capable = change !== 'capability';
+      ctx.assertDispatchAllowed!();
+      prompts += 1;
+      return context.fake.triggerWindow(ctx, request);
+    };
+    await context
+      .executor({
+        isProviderRuntimeChanging: () => {
+          if (unknown) throw new Error('coordination unavailable');
+          return changing;
+        },
+      })
+      .executeDue();
+    expect(prompts).toBe(0);
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('skipped');
+    expect(
+      context.repositories.providerCleanupJobs.listDue(context.clock.now().getTime()),
+    ).toHaveLength(1);
+  });
+
+  it('keeps the real outcome when pause and expiry occur after send', async () => {
+    const context = setup();
+    context.adapter.triggerWindow = async (ctx, request) => {
+      const result = await context.fake.triggerWindow(ctx, request);
+      context.clock.advanceMs(35_000);
+      context.repositories.providers.upsert({
+        ...context.repositories.providers.get(context.providerId)!,
+        mode: 'monitor_only',
+      });
+      return result;
+    };
+    await context.executor().executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'confirmed',
+      updatedAtMs: context.clock.now().getTime(),
+      attemptCount: 1,
+    });
+  });
+
+  it('skips a deadline crossed during preflight without dispatching', async () => {
+    const context = setup();
+    context.db
+      .prepare('UPDATE action_intents SET expires_at_ms = ? WHERE id = ?')
+      .run(context.clock.now().getTime() + 1_000, context.intent.id);
+    context.adapter.inspect = (ctx) => {
+      context.clock.advanceMs(2_000);
+      return context.fake.inspect(ctx);
+    };
+    await context.executor().executeDue();
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_INTENT_EXPIRED',
+      updatedAtMs: context.clock.now().getTime(),
+    });
+  });
+
+  it.each(['pause', 'disable', 'runtime'])(
+    'revokes %s during a pending preflight',
+    async (change) => {
+      const context = setup();
+      let release!: () => void;
+      let started!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const inspected = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      context.adapter.inspect = async (ctx) => {
+        started();
+        await barrier;
+        return context.fake.inspect(ctx);
+      };
+      let changing = false;
+      const execution = context
+        .executor({ isProviderRuntimeChanging: () => changing })
+        .executeDue();
+      await inspected;
+      context.repositories.providers.upsert({
+        ...context.repositories.providers.get(context.providerId)!,
+        ...(change === 'pause' ? { mode: 'monitor_only' as const } : {}),
+        ...(change === 'disable' ? { enabled: false } : {}),
+      });
+      changing = change === 'runtime';
+      release();
+      await execution;
+      expect(context.triggerCount).toBe(0);
+      expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('skipped');
+    },
+  );
+
   it.each([-301_000, 60_000])(
     'rejects stale/future preflight timestamps (%s) before creating cycle evidence',
     async (offset) => {
@@ -331,6 +686,7 @@ describe('ActionExecutor', () => {
     ).toBeUndefined();
 
     const reopenedExecutor = new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       clock: context.clock,
       db: reopenedDb,
       repositories: reopenedRepositories,
@@ -1012,9 +1368,188 @@ describe('ActionExecutor', () => {
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
   });
 
+  it.each(['uncertain', 'executing', 'succeeded'] as const)(
+    'does not invent a cycle for a recovered legacy %s outcome',
+    async (state) => {
+      const context = setup();
+      context.repositories.actionIntents.setState(
+        context.intent.id,
+        state,
+        context.clock.now().getTime(),
+      );
+      context.clock.advanceMs(6 * 60 * 60 * 1000);
+      context.fake.setPhase('ACTIVE');
+      context.db.close();
+      const db = openDatabase(path.join(context.dir, 'awm.db'));
+      resources.push({ db, dir: context.dir });
+      const repositories = createRepositories(db);
+      const executor = context.executor({ db, repositories });
+      await executor.executeDue();
+      context.clock.advanceMs(300_000);
+      await executor.executeDue();
+      expect(repositories.actionIntents.get(context.intent.id)).toMatchObject({
+        state: 'uncertain',
+        explanation: context.intent.explanation,
+        dedupeKey: context.intent.dedupeKey,
+      });
+      expect(context.triggerCount).toBe(0);
+      expect(
+        repositories.events
+          .list('fake', { limit: 100 })
+          .some(
+            (event) =>
+              event.type === 'action_confirmed' || event.type === 'action_recovery_confirmed',
+          ),
+      ).toBe(false);
+    },
+  );
+
+  it('persists an unsent manual intent cycle before the provider side effect', async () => {
+    const context = setup();
+    context.db
+      .prepare(
+        `UPDATE action_intents SET reason_code = 'MANUAL_TRIGGER_REQUESTED',
+      explanation_json = ? WHERE id = ?`,
+      )
+      .run(
+        JSON.stringify({
+          windowKind: 'five_hour',
+          decision: 'manual_trigger',
+          reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+        }),
+        context.intent.id,
+      );
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      triggerWindow: async (ctx, request) => {
+        expect(context.repositories.actionIntents.get(request.intentId)).toMatchObject({
+          state: 'executing',
+          explanation: {
+            observedCycleAt: context.clock.now().toISOString(),
+            decision: 'manual_trigger',
+          },
+        });
+        return context.adapter.triggerWindow!(ctx, request);
+      },
+    };
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('confirmed');
+    expect(context.triggerCount).toBe(1);
+  });
+
+  it('does not replace a malformed cycle identity to authorize dispatch', async () => {
+    const context = setup();
+    context.db
+      .prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?')
+      .run(
+        JSON.stringify({ windowKind: 'five_hour', observedCycleAt: 'invalid-cycle' }),
+        context.intent.id,
+      );
+    await context.executor().executeDue();
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'skipped',
+      explanation: { observedCycleAt: 'invalid-cycle' },
+    });
+  });
+
+  it('does not read or extend a planned opportunity while shared backoff is active', async () => {
+    const context = setup();
+    const backoff = new ProviderReadBackoff({
+      db: context.db,
+      clock: context.clock,
+      random: () => 0,
+      pollIntervalMs: () => 30_000,
+    });
+    const inspections = new ProviderInspectionCoordinator({ backoff });
+    backoff.failed('fake', 'reconcile', 'auth_required');
+    const executor = context.executor({ inspections });
+    await executor.executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'planned',
+      attemptCount: 0,
+    });
+    expect(inspections.isInspecting('fake')).toBe(false);
+    context.clock.advanceMs(31_000);
+    await executor.executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'skipped',
+      attemptCount: 0,
+    });
+    expect(context.triggerCount).toBe(0);
+    await inspections.close();
+  });
+
+  it.each(['confirmation', 'resolution'] as const)(
+    'defers %s reads during shared backoff and still confirms fresh same-cycle evidence',
+    async (purpose) => {
+      const context = setup();
+      const now = context.clock.now().getTime();
+      context.db
+        .prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?')
+        .run(
+          JSON.stringify({ windowKind: 'five_hour', observedCycleAt: new Date(now).toISOString() }),
+          context.intent.id,
+        );
+      context.repositories.actionIntents.setState(context.intent.id, 'uncertain', now, {
+        attemptCount: 1,
+        startedAtMs: now,
+      });
+      context.fake.setPhase('ACTIVE');
+      trackWindowCycles(await context.fake.inspect({}), context.repositories);
+      if (purpose === 'resolution')
+        context.repositories.actionIntents.requestResolution(context.intent.id, now);
+      const backoff = new ProviderReadBackoff({
+        db: context.db,
+        clock: context.clock,
+        random: () => 0,
+        pollIntervalMs: () => 30_000,
+      });
+      backoff.failed('fake', 'reconcile', 'unavailable');
+      const inspections = new ProviderInspectionCoordinator({ backoff });
+      const inspect = vi.spyOn(context.adapter, 'inspect');
+      const executor = context.executor({ inspections });
+      try {
+        for (let second = 0; second < 30; second++) {
+          await executor.executeDue();
+          expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+            state: 'uncertain',
+            attemptCount: 1,
+            confirmationAttemptCount: 0,
+          });
+          context.clock.advanceMs(1000);
+        }
+        expect(inspect).not.toHaveBeenCalled();
+        if (purpose === 'resolution')
+          expect(
+            context.repositories.actionIntents.resolutionRequest(context.intent.id)?.state,
+          ).toBe('pending');
+        await executor.executeDue();
+        expect(inspect).toHaveBeenCalledTimes(1);
+        expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+          state: 'confirmed',
+          attemptCount: 1,
+        });
+        expect(backoff.retryAtMs('fake', purpose)).toBe(0);
+        expect(context.triggerCount).toBe(0);
+      } finally {
+        await inspections.close();
+      }
+    },
+  );
+
   it('honors a persisted confirmation deadline after reopening the database', async () => {
     const context = setup();
     const nowMs = context.clock.now().getTime();
+    trackWindowCycles(await context.fake.inspect({}), context.repositories);
+    expect(
+      context.repositories.actionIntents.bindObservedCycle(
+        context.intent,
+        'five_hour',
+        nowMs,
+        nowMs,
+      ),
+    ).toBeDefined();
     context.fake.setPhase('ACTIVE');
     context.db
       .prepare(
@@ -1057,6 +1592,15 @@ describe('ActionExecutor', () => {
   it('uses the persisted wall deadline across backward and forward clock jumps', async () => {
     const context = setup();
     const originalWallMs = context.clock.now().getTime();
+    trackWindowCycles(await context.fake.inspect({}), context.repositories);
+    expect(
+      context.repositories.actionIntents.bindObservedCycle(
+        context.intent,
+        'five_hour',
+        originalWallMs,
+        originalWallMs,
+      ),
+    ).toBeDefined();
     const confirmationAtMs = originalWallMs + 30_000;
     context.fake.setPhase('ACTIVE');
     context.db

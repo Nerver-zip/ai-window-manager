@@ -25,7 +25,7 @@ export interface CommandApiInput {
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
   clock: Clock;
-  requestReconcile?: (() => void) | undefined;
+  requestReconcile?: ((providerId?: string) => void) | undefined;
   idFactory?: () => string;
   fakeProviderEnabled?: boolean;
 }
@@ -50,12 +50,50 @@ export interface CommandResult {
 export interface CommandApiHandlers {
   inspect(providerId: unknown): CommandResult;
   trigger(providerId: unknown, body: unknown): CommandResult;
+  resolveUnknown(intentId: unknown): CommandResult;
 }
 
 export function createCommandApi(input: CommandApiInput): CommandApiHandlers {
   return {
     inspect: (providerId) => inspectProvider(input, providerId),
     trigger: (providerId, body) => triggerProvider(input, providerId, body),
+    resolveUnknown: (intentId) => requestUnknownResolution(input, intentId),
+  };
+}
+
+function requestUnknownResolution(input: CommandApiInput, rawId: unknown): CommandResult {
+  if (
+    typeof rawId !== 'string' ||
+    rawId.length < 1 ||
+    rawId.length > 128 ||
+    !/^[a-zA-Z0-9_-]+$/.test(rawId)
+  )
+    return badRequest('intent id is invalid');
+  const intent = input.repositories.actionIntents.get(rawId);
+  if (!intent || !isProviderVisible(intent.providerId, input.fakeProviderEnabled ?? true))
+    return notFound('intent not found');
+  if (intent.state === 'resolved_unknown' || intent.state === 'confirmed')
+    return {
+      statusCode: 202,
+      body: {
+        accepted: true,
+        command: 'resolve_unknown',
+        intent: { intentId: intent.id, state: intent.state, created: false },
+      },
+    };
+  if (intent.state !== 'uncertain') return conflict('only uncertain outcomes can be reviewed');
+  const result = input.repositories.actionIntents.requestResolution(
+    intent.id,
+    input.clock.now().getTime(),
+  );
+  input.requestReconcile?.();
+  return {
+    statusCode: 202,
+    body: {
+      accepted: true,
+      command: 'resolve_unknown',
+      intent: { intentId: intent.id, state: intent.state, created: result.created },
+    },
   };
 }
 
@@ -76,7 +114,7 @@ function inspectProvider(input: CommandApiInput, rawProviderId: unknown): Comman
     reasonCode: 'INSPECT_REQUESTED',
     data: { providerId },
   });
-  input.requestReconcile?.();
+  input.requestReconcile?.(providerId);
   return { statusCode: 202, body: { accepted: true, command: 'inspect' } };
 }
 

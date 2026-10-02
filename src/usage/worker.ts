@@ -7,6 +7,8 @@ export interface UsageAggregationWorkerInput {
   errorRetryBaseMs?: number;
   errorRetryMaxMs?: number;
   yieldBetweenBatches?: () => Promise<void>;
+  onRunStart?: () => void;
+  onRunFinish?: (succeeded: boolean) => void;
 }
 
 const DEFAULT_FALLBACK_INTERVAL_MS = 60_000;
@@ -90,13 +92,19 @@ export class UsageAggregationWorker {
     while (this.requested && !this.stopped) {
       this.requested = false;
       try {
+        this.input.onRunStart?.();
         let batch = this.input.processBatch();
         while (batch.pending && !this.stopped) {
           await this.yieldBetweenBatches();
-          if (this.stopped) return;
+          if (this.stopped) {
+            this.input.onRunFinish?.(true);
+            return;
+          }
           batch = this.input.processBatch();
         }
+        this.input.onRunFinish?.(true);
       } catch (error) {
+        this.input.onRunFinish?.(false);
         this.requested = false;
         this.failures += 1;
         this.input.onError(error);

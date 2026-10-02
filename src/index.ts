@@ -17,12 +17,15 @@ import {
   recordInspection,
   recordObservation,
   recordProviderHealth,
+  recordRetention,
   recordSchedulerDecision,
   recordTrigger,
   refreshObservationMetrics,
   setActionIntentCounts,
 } from './metrics/metrics.js';
 import { SystemClock } from './scheduler/clock.js';
+import { LoopMonitor } from './scheduler/loop-monitor.js';
+import { ReconcileWorker } from './scheduler/reconcile-worker.js';
 import { resolveLocalOccurrence } from './scheduler/time.js';
 import { Reconciler } from './scheduler/reconciler.js';
 import { ActionExecutor } from './scheduler/action-executor.js';
@@ -31,6 +34,9 @@ import { ProviderInspectionCoordinator } from './providers/inspection-coordinato
 import { openDatabase } from './storage/database.js';
 import { createRepositories, type SchedulePolicyRecord } from './storage/repositories.js';
 import { runRetentionMaintenance } from './storage/retention.js';
+import { RetentionWorker } from './storage/retention-worker.js';
+import { observeRetention } from './storage/retention-observation.js';
+import { ProviderReadBackoff } from './storage/provider-read-backoff.js';
 import { processUsageAggregationBatch } from './usage/service.js';
 import { UsageAggregationWorker } from './usage/worker.js';
 import { buildServer } from './web/server.js';
@@ -60,15 +66,22 @@ const providerExecutables = {
 const db = openDatabase(config.AWM_DB_PATH);
 const repositories = createRepositories(db);
 const clock = new SystemClock();
+const loopMonitor = new LoopMonitor(clock);
 const adapters = new Map<string, ProviderAdapter>();
 const cleanupAdapters = new Map<string, ProviderAdapter>();
-let reconcileRequested = false;
+let requestReconcile: (providerId?: string) => void = () => undefined;
 
 registerFakeProvider();
 registerCodexProvider();
 registerAntigravityProvider();
 hydrateMetricsFromState();
-const providerInspections = new ProviderInspectionCoordinator();
+const readBackoff = new ProviderReadBackoff({
+  db,
+  clock,
+  pollIntervalMs: (providerId) =>
+    (repositories.providers.get(providerId)?.pollIntervalSeconds ?? 30) * 1000,
+});
+const providerInspections = new ProviderInspectionCoordinator({ backoff: readBackoff });
 let requestUsageAggregation = (): void => undefined;
 
 const reconciler = new Reconciler({
@@ -80,7 +93,10 @@ const reconciler = new Reconciler({
   resolveTargetResetAt,
   isProviderRuntimeChanging: (providerId) =>
     (providerId === 'codex' || providerId === 'antigravity') &&
-    (providerClientUpdateTasks?.isRuntimeChanging(providerId) ?? false),
+    ((providerClientUpdateTasks?.isRuntimeChanging(providerId) ?? false) ||
+      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(
+        authSessions.status(providerId).state,
+      )),
   onObservation: (observation) => {
     recordObservation(observation);
     requestUsageAggregation();
@@ -106,7 +122,20 @@ const authSessions = new AuthSessionManager({
     antigravityExecutable: providerExecutables.antigravity,
   }),
   sessionTimeoutMs: config.AWM_AUTH_SESSION_TIMEOUT_SECONDS * 1000,
+  onAuthenticationReadRequested: (providerId, phase) => {
+    if (phase === 'verify') providerInspections.markAuthenticationVerification(providerId);
+    readBackoff.authorizeAuthenticationProbe(
+      providerId,
+      phase === 'check' ? 'auth_check' : 'auth_verify',
+    );
+  },
   onEvent: (event) => {
+    if (
+      ['provider_auth_failed', 'provider_auth_timed_out', 'provider_auth_canceled'].includes(
+        event.type,
+      )
+    )
+      readBackoff.revokeAuthenticationProbes(event.providerId);
     const occurredAtMs = clock.now().getTime();
     repositories.events.append({
       occurredAtMs,
@@ -120,8 +149,9 @@ const authSessions = new AuthSessionManager({
       data: {},
     });
   },
-  requestReconcile: () => {
-    reconcileRequested = true;
+  requestReconcile: (providerId) => {
+    readBackoff.succeeded(providerId);
+    requestReconcile(providerId);
   },
 });
 const providerClientUpdateService = providerRuntimeStore
@@ -138,7 +168,7 @@ const providerClientUpdateTasks = providerClientUpdateService
       service: providerClientUpdateService,
       clock,
       onRuntimeChanged: () => {
-        reconcileRequested = true;
+        requestReconcile();
       },
       onAutomaticUpdateFinished: (providerId, successful) => {
         if (!successful) return;
@@ -158,7 +188,12 @@ const executor = new ActionExecutor({
   retryDelayMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
   isProviderRuntimeChanging: (providerId) => {
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
-    return clientId ? (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false) : false;
+    if (!clientId) return false;
+    const authentication = authSessions.status(clientId).state;
+    return (
+      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authentication) ||
+      (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false)
+    );
   },
   onTrigger: recordTrigger,
 });
@@ -194,40 +229,77 @@ const app = buildServer({
   clock,
   authSessions,
   operatorAuth,
-  requestReconcile: () => {
-    reconcileRequested = true;
-  },
+  loopMonitor,
+  readBackoff,
+  pendingInspectProviderIds: () => reconcileWorker.pendingProviderIds(),
+  requestReconcile: (providerId) => requestReconcile(providerId),
   ...(providerClientUpdateControls ? { providerClientUpdates: providerClientUpdateControls } : {}),
 });
 const usageAggregationWorker = new UsageAggregationWorker({
   processBatch: () => processUsageAggregationBatch(db, repositories, clock.now().getTime()),
   onError: (error) => app.log.error({ error }, 'usage aggregation failed'),
+  onRunStart: () => loopMonitor.begin('aggregation'),
+  onRunFinish: (succeeded) => loopMonitor.finish('aggregation', succeeded),
 });
 requestUsageAggregation = () => usageAggregationWorker.request();
-let reconcileTimer: NodeJS.Timeout | undefined;
+const retentionWorker = new RetentionWorker({
+  clock,
+  idleIntervalMs: config.AWM_RETENTION_INTERVAL_SECONDS * 1000,
+  processBatch: () => runRetentionMaintenance(db, { clock }),
+  onError: (error) => app.log.error({ error }, 'retention maintenance failed'),
+  onPassStart: () => loopMonitor.begin('retention'),
+  onProgress: (progress) => {
+    loopMonitor.finish('retention', progress.consecutiveFailures === 0);
+    recordRetention(progress, observeRetention(db, clock));
+  },
+});
+// Allow sequential official-client timeout budgets and cleanup batches. These
+// are diagnostic tolerances, not provider timeouts or container restart rules.
+const readBudgetMs = Math.max(60_000, adapters.size * 180_000);
+const cleanupBudgetMs =
+  10 *
+  (60_000 +
+    Math.max(
+      config.AWM_CODEX_ACTION_TIMEOUT_SECONDS,
+      config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
+    ) *
+      1000);
+loopMonitor.register('reconcile', {
+  intervalMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
+  maxRunMs: readBudgetMs,
+});
+loopMonitor.register('executor', {
+  intervalMs: config.AWM_EXECUTOR_INTERVAL_SECONDS * 1000,
+  maxRunMs: readBudgetMs + 2 * cleanupBudgetMs,
+});
+loopMonitor.register('cleanup', {
+  intervalMs: config.AWM_EXECUTOR_INTERVAL_SECONDS * 1000,
+  maxRunMs: cleanupBudgetMs + readBudgetMs,
+});
+loopMonitor.register('aggregation', { intervalMs: 60_000, maxRunMs: 60_000 });
+loopMonitor.register('retention', {
+  intervalMs: config.AWM_RETENTION_INTERVAL_SECONDS * 1000,
+  maxRunMs: 60_000,
+});
+const reconcileWorker = new ReconcileWorker({
+  providerIds: repositories.providers.list().map((provider) => provider.id),
+  intervalMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
+  work: async (hints) => {
+    const report = await loopMonitor.run('reconcile', () => reconciler.reconcile(hints));
+    refreshRuntimeMetrics();
+    return report.inspectedProviderIds;
+  },
+  onError: (error) => app.log.error({ error }, 'reconcile failed'),
+});
+requestReconcile = (providerId) => {
+  reconcileWorker.request(providerId);
+};
 let executorTimer: NodeJS.Timeout | undefined;
-let retentionTimer: NodeJS.Timeout | undefined;
 let providerClientUpdateTimer: NodeJS.Timeout | undefined;
-let reconcileInFlight: Promise<unknown> | undefined;
 let executorInFlight: Promise<unknown> | undefined;
 let stopping = false;
 function startReconcileLoop(): void {
-  reconcileTimer = setInterval(() => {
-    if (stopping || reconcileInFlight) return;
-    const requested = reconcileRequested;
-    reconcileRequested = false;
-    if (requested) app.log.debug('reconcile requested by HTTP command');
-    const current = reconciler.reconcile();
-    reconcileInFlight = current;
-    void current
-      .catch((error: unknown) => {
-        app.log.error({ error }, 'reconcile failed');
-      })
-      .finally(() => {
-        if (reconcileInFlight === current) reconcileInFlight = undefined;
-        refreshRuntimeMetrics();
-      });
-  }, config.AWM_RECONCILE_INTERVAL_SECONDS * 1000);
+  reconcileWorker.start();
 }
 
 function startExecutorLoop(): void {
@@ -249,7 +321,7 @@ function startExecutorLoop(): void {
 async function executeActionsAndCleanup(): Promise<void> {
   await runProviderCleanup();
   try {
-    await executor.executeDue();
+    await loopMonitor.run('executor', () => executor.executeDue());
   } finally {
     // A Codex trigger registers its thread before turn/start. Cleanup is separate
     // from the action result, so it must not prevent that result being persisted.
@@ -259,7 +331,7 @@ async function executeActionsAndCleanup(): Promise<void> {
 
 async function runProviderCleanup(): Promise<void> {
   try {
-    const report = await providerCleanupWorker.runDue();
+    const report = await loopMonitor.run('cleanup', () => providerCleanupWorker.runDue());
     if (report.retryable > 0) {
       app.log.debug({ retryable: report.retryable }, 'provider artifact cleanup deferred');
     }
@@ -269,25 +341,17 @@ async function runProviderCleanup(): Promise<void> {
 }
 
 function startRetentionLoop(): void {
-  retentionTimer = setInterval(() => {
-    if (stopping) return;
-    try {
-      runRetentionMaintenance(db, { clock });
-    } catch (error) {
-      app.log.error({ error }, 'retention maintenance failed');
-    }
-  }, config.AWM_RETENTION_INTERVAL_SECONDS * 1000);
+  retentionWorker.start();
 }
 
 async function shutdown(signal: string): Promise<void> {
   if (stopping) return;
   stopping = true;
   app.log.info({ signal }, 'shutting down');
-  if (reconcileTimer) clearInterval(reconcileTimer);
+  await reconcileWorker.stop();
   if (executorTimer) clearInterval(executorTimer);
-  if (retentionTimer) clearInterval(retentionTimer);
+  await retentionWorker.stop();
   if (providerClientUpdateTimer) clearInterval(providerClientUpdateTimer);
-  if (reconcileInFlight) await reconcileInFlight;
   if (executorInFlight) await executorInFlight;
   if (providerClientUpdateTasks) await providerClientUpdateTasks.close();
   await authSessions.shutdown();
@@ -598,10 +662,9 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   });
 }
 
-await reconciler.reconcile();
+await reconcileWorker.runOnce();
 await executeActionsAndCleanup();
 refreshRuntimeMetrics();
-runRetentionMaintenance(db, { clock });
 startReconcileLoop();
 startExecutorLoop();
 startRetentionLoop();

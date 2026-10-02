@@ -31,6 +31,8 @@ import { filterVisibleProviders, isProviderVisible } from '../providers/visibili
 import { PROVIDER_CLIENT_IDS, type ProviderClientId } from '../provider-clients/runtime-store.js';
 import type { ProviderClientUpdateWebControls } from '../provider-clients/web-controls.js';
 import type { Clock } from '../scheduler/clock.js';
+import type { LoopMonitor } from '../scheduler/loop-monitor.js';
+import type { ProviderReadBackoff } from '../storage/provider-read-backoff.js';
 import { activationPolicyFromRecord, parseActivationPolicy } from '../scheduler/policy.js';
 import {
   activationPolicyId,
@@ -48,7 +50,7 @@ import type {
   ProviderStateRecord,
   StorageRepositories,
 } from '../storage/repositories.js';
-import { registry } from '../metrics/metrics.js';
+import { registry, recordLoopProgress } from '../metrics/metrics.js';
 import { createCommandApi } from './api-commands.js';
 import { createReadApi } from './api-read.js';
 import {
@@ -97,6 +99,7 @@ import {
 } from './security.js';
 import {
   errorLabel,
+  eventReasonLabel,
   healthLabel,
   isEstimatedSource,
   providerDisplayName,
@@ -137,7 +140,10 @@ export interface BuildServerInput {
   clock: Clock;
   authSessions?: AuthSessionManager;
   operatorAuth: OperatorAuthService;
-  requestReconcile?: () => void;
+  loopMonitor?: LoopMonitor;
+  readBackoff?: ProviderReadBackoff;
+  pendingInspectProviderIds?: () => readonly string[];
+  requestReconcile?: (providerId?: string) => void;
   providerClientUpdates?: ProviderClientUpdateWebControls;
   /** Test-only override for exercising rate-limit boundaries without waiting a minute. */
   requestRateLimitForTests?: { maxRequests: number; timeWindowMs: number };
@@ -168,6 +174,15 @@ interface ProviderRead {
   activationPolicies?: ProviderPolicyRead[];
   capabilities?: ProviderCapabilities;
   triggerModels?: { gemini: string; claudeGpt: string };
+  pendingActions?: Array<{
+    id: string;
+    state: string;
+    windowKind: string;
+    createdAtMs: number;
+    confirmationAttempts: number;
+    lastCheckedAtMs: number | null;
+    resolutionStatus: string | null;
+  }>;
 }
 
 interface ProviderPolicyRead {
@@ -400,8 +415,39 @@ export function buildServer(input: BuildServerInput) {
   });
 
   app.get('/metrics', async (_request, reply) => {
+    if (input.loopMonitor) recordLoopProgress(input.loopMonitor.snapshot());
     reply.header('Content-Type', registry.contentType);
     return registry.metrics();
+  });
+
+  app.get('/api/v1/diagnostics', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!input.loopMonitor) return reply.code(503).send({ status: 'unavailable' });
+    const snapshot = input.loopMonitor.snapshot();
+    let databaseReady = true;
+    try {
+      input.db.prepare('SELECT 1').get();
+    } catch {
+      databaseReady = false;
+    }
+    const ready = snapshot.ready && databaseReady;
+    return reply.code(ready ? 200 : 503).send({
+      status: ready ? 'ready' : 'degraded',
+      databaseReady,
+      loops: snapshot.loops,
+      providers: databaseReady
+        ? filterVisibleProviders(
+            input.repositories.providers.list(),
+            input.config.AWM_FAKE_PROVIDER_ENABLED,
+          ).map((provider) => ({
+            id: provider.id,
+            enabled: provider.enabled,
+            health: input.repositories.providerState.get(provider.id)?.health ?? 'UNKNOWN',
+            readRetryAtMs: input.readBackoff?.retryAtMs(provider.id, 'reconcile') ?? 0,
+            inspectHintPending: input.pendingInspectProviderIds?.().includes(provider.id) ?? false,
+          }))
+        : [],
+    });
   });
 
   app.get('/api/v1/providers', () => readApi.getProviders().body);
@@ -935,6 +981,18 @@ export function buildServer(input: BuildServerInput) {
   app.post('/api/v1/providers/:id/inspect', async (request, reply) => {
     const result = commandApi.inspect((request.params as { id?: unknown }).id);
     return reply.code(result.statusCode).send(result.body);
+  });
+
+  app.post('/api/v1/actions/:id/resolve-unknown', async (request, reply) => {
+    const result = commandApi.resolveUnknown((request.params as { id?: unknown }).id);
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  app.post('/actions/:id/resolve-unknown', async (request, reply) => {
+    const result = commandApi.resolveUnknown((request.params as { id?: unknown }).id);
+    if (result.statusCode !== 202)
+      return reply.code(result.statusCode).type('text/plain').send(result.body.error?.message);
+    return reply.code(303).redirect('/?updated=resolution-requested');
   });
 
   app.post('/api/v1/providers/:id/trigger', async (request, reply) => {
@@ -1576,6 +1634,7 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
       enabled: provider.enabled,
       mode: provider.mode,
       health: state?.health ?? 'UNKNOWN',
+      pendingActions: pendingActionViews(input, provider.id),
       lastErrorCode: state?.lastErrorCode ?? null,
       observation,
       currentWindow: deriveCurrentWindowForTarget(
@@ -1600,6 +1659,33 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
         : {}),
     };
   });
+}
+
+function pendingActionViews(
+  input: BuildServerInput,
+  providerId: string,
+): NonNullable<ProviderRead['pendingActions']> {
+  return input.repositories.actionIntents
+    .listOpen(providerId)
+    .filter((intent) => intent.state === 'uncertain' || intent.state === 'succeeded')
+    .slice(0, 10)
+    .map((intent) => {
+      const request = input.repositories.actionIntents.resolutionRequest(intent.id);
+      return {
+        id: intent.id,
+        state: intent.state,
+        windowKind: stringValue(asRecord(intent.explanation).windowKind) ?? 'Unidentified window',
+        createdAtMs: intent.createdAtMs,
+        confirmationAttempts: intent.confirmationAttemptCount,
+        lastCheckedAtMs:
+          request?.checkedAtMs ?? (intent.confirmationAttemptCount > 0 ? intent.updatedAtMs : null),
+        resolutionStatus: request
+          ? request.state === 'pending'
+            ? 'Review queued'
+            : eventReasonLabel('action_resolution_reviewed', request.reasonCode)
+          : null,
+      };
+    });
 }
 
 function safeCapabilities(adapter: ProviderAdapter): ProviderCapabilities | undefined {
@@ -1887,7 +1973,17 @@ function renderProviderCard(
   const connectionBadgeClass = isConnected ? 'badge-success' : 'badge-warning';
   const selectedPolicy = renderSelectedPolicy(provider);
   const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
-  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${onboardingAction}${selectedPolicy}${windows}${details}</article>`;
+  const pendingActions = (provider.pendingActions ?? [])
+    .map(
+      (intent) => `<section class="notice"><h3>Unresolved start outcome</h3>
+    <p>Window: ${escapeHtml(intent.windowKind)} · State: ${escapeHtml(intent.state)} · Age: ${Math.max(0, Math.floor((now.getTime() - intent.createdAtMs) / 60000))} minutes.</p>
+    <p>Confirmation attempts: ${intent.confirmationAttempts}. Last check: ${intent.lastCheckedAtMs === null ? 'Not yet checked' : escapeHtml(new Date(intent.lastCheckedAtMs).toISOString())}.</p>
+    <p>This blocks automatic starts across this provider. Review performs a read-only check; closure records an unknown outcome, not success or failure. The old prompt is never repeated. Pending artifact cleanup remains required.</p>
+    ${intent.resolutionStatus ? `<p role="status">${escapeHtml(intent.resolutionStatus)}</p>` : ''}
+    ${intent.state === 'uncertain' ? `<form method="post" action="/actions/${encodeURIComponent(intent.id)}/resolve-unknown"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><button class="button button-secondary" type="submit">Review and close only if the old cycle ended</button></form>` : ''}</section>`,
+    )
+    .join('');
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${onboardingAction}${selectedPolicy}${pendingActions}${windows}${details}</article>`;
 }
 
 function renderProviderWindows(

@@ -133,6 +133,23 @@ export function trackWindowCycles(
     windows: observation.windows.map((window) => {
       const previous = repositories.windowCycles.get(window.providerId, window.windowKind);
       const result = observeWindowCycle(window, previous);
+      if (
+        previous &&
+        result.cycle.cycleAtMs > previous.cycleAtMs &&
+        actionable(result.window.phase.confidence)
+      ) {
+        repositories.windowCycles.recordClosure({
+          providerId: window.providerId,
+          windowKind: window.windowKind,
+          cycleAtMs: previous.cycleAtMs,
+          endedAtMs: result.cycle.cycleAtMs,
+          observedAtMs: Date.parse(result.window.observedAt),
+          evidenceKind:
+            previous.anchoredResetAtMs !== null
+              ? 'anchored_boundary'
+              : 'reported_inactive_transition',
+        });
+      }
       repositories.windowCycles.upsert(result.cycle);
       return result.window;
     }),

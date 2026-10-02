@@ -97,7 +97,7 @@ class CodexAuthDriver implements ProviderAuthDriver {
 
   async verify(signal: AbortSignal): Promise<boolean> {
     const observation = await (this.options.inspections
-      ? this.options.inspections.inspectFresh(this.adapter, { signal })
+      ? this.options.inspections.inspectFresh(this.adapter, { signal }, 'auth_verify')
       : this.adapter.inspect({ signal }));
     return observation.health === 'UP' || observation.health === 'DEGRADED';
   }
@@ -128,7 +128,7 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
 
   async isAlreadyAuthenticated(signal: AbortSignal): Promise<boolean | undefined> {
     const observation = await (this.options.inspections
-      ? this.options.inspections.inspectFresh(this.adapter, { signal })
+      ? this.options.inspections.inspectFresh(this.adapter, { signal }, 'auth_check')
       : this.adapter.inspect({ signal }));
     if (observation.health === 'AUTH_REQUIRED') return false;
     if (observation.health === 'UP' || observation.health === 'DEGRADED') return true;
@@ -238,7 +238,7 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
 
   async verify(signal: AbortSignal): Promise<boolean> {
     const observation = await (this.options.inspections
-      ? this.options.inspections.inspectFresh(this.adapter, { signal })
+      ? this.options.inspections.inspectFresh(this.adapter, { signal }, 'auth_verify')
       : this.adapter.inspect({ signal }));
     return observation.health === 'UP' || observation.health === 'DEGRADED';
   }

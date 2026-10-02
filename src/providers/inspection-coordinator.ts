@@ -1,5 +1,11 @@
 import type { ProviderObservation } from '../domain/types.js';
 import type { ProviderAdapter, ProviderContext } from './provider.js';
+import { parseProviderObservation } from '../domain/schemas.js';
+import type { ReadPurpose } from './read-backoff-policy.js';
+import {
+  ProviderReadDeferredError,
+  type ProviderReadBackoff,
+} from '../storage/provider-read-backoff.js';
 
 interface ActiveInspection {
   adapter: ProviderAdapter;
@@ -15,6 +21,7 @@ interface PendingInspection {
   promise: Promise<ProviderObservation>;
   resolve: (observation: ProviderObservation) => void;
   reject: (error: unknown) => void;
+  purpose: ReadPurpose;
 }
 
 interface ProviderInspectionState {
@@ -29,7 +36,20 @@ export class ProviderInspectionCoordinator {
   private readonly states = new Map<string, ProviderInspectionState>();
   private closed = false;
 
-  inspect(adapter: ProviderAdapter, context: ProviderContext = {}): Promise<ProviderObservation> {
+  constructor(private readonly input: { backoff?: ProviderReadBackoff } = {}) {}
+
+  isDeferred(providerId: string, purpose: ReadPurpose = 'reconcile'): boolean {
+    return (
+      this.input.backoff !== undefined &&
+      this.input.backoff.nowMs() < this.input.backoff.retryAtMs(providerId, purpose)
+    );
+  }
+
+  inspect(
+    adapter: ProviderAdapter,
+    context: ProviderContext = {},
+    purpose: ReadPurpose = 'reconcile',
+  ): Promise<ProviderObservation> {
     if (this.closed) return Promise.reject(shutdownError());
     if (context.signal?.aborted) return Promise.reject(callerAbortedError());
     const state = this.stateFor(adapter.id);
@@ -37,6 +57,7 @@ export class ProviderInspectionCoordinator {
     if (pending) {
       if (pending.adapter !== adapter) return Promise.reject(runtimeChangedError());
       pending.epoch = state.epoch;
+      if (purpose.startsWith('auth_')) pending.purpose = purpose;
       return withCallerSignal(pending.promise, context.signal);
     }
 
@@ -46,9 +67,12 @@ export class ProviderInspectionCoordinator {
     }
     if (active) {
       if (active.adapter !== adapter) state.epoch += 1;
-      return withCallerSignal(this.queueFresh(state, adapter), context.signal);
+      return withCallerSignal(this.queueFresh(state, adapter, purpose), context.signal);
     }
-    return withCallerSignal(this.start(state, adapter, state.epoch, false), context.signal);
+    return withCallerSignal(
+      this.start(state, adapter, state.epoch, false, purpose),
+      context.signal,
+    );
   }
 
   /**
@@ -59,6 +83,7 @@ export class ProviderInspectionCoordinator {
   inspectFresh(
     adapter: ProviderAdapter,
     context: ProviderContext = {},
+    purpose: ReadPurpose = 'preflight',
   ): Promise<ProviderObservation> {
     if (this.closed) return Promise.reject(shutdownError());
     if (context.signal?.aborted) return Promise.reject(callerAbortedError());
@@ -67,6 +92,7 @@ export class ProviderInspectionCoordinator {
     if (pending) {
       if (pending.adapter !== adapter) return Promise.reject(runtimeChangedError());
       pending.epoch = state.epoch;
+      if (purpose.startsWith('auth_')) pending.purpose = purpose;
       return withCallerSignal(pending.promise, context.signal);
     }
 
@@ -81,9 +107,9 @@ export class ProviderInspectionCoordinator {
 
     state.epoch += 1;
     if (active) {
-      return withCallerSignal(this.queueFresh(state, adapter), context.signal);
+      return withCallerSignal(this.queueFresh(state, adapter, purpose), context.signal);
     }
-    return withCallerSignal(this.start(state, adapter, state.epoch, true), context.signal);
+    return withCallerSignal(this.start(state, adapter, state.epoch, true, purpose), context.signal);
   }
 
   /** Invalidates inspections that began before a provider action completed. */
@@ -91,6 +117,14 @@ export class ProviderInspectionCoordinator {
     const state = this.stateFor(providerId);
     state.epoch += 1;
     state.actionCompletedEpoch = state.epoch;
+    if (state.pendingFresh) state.pendingFresh.epoch = state.epoch;
+  }
+
+  /** Credential input completed: old in-flight reads cannot verify that login. */
+  markAuthenticationVerification(providerId: string): void {
+    const state = this.stateFor(providerId);
+    state.epoch += 1;
+    state.actionCompletedEpoch = undefined;
     if (state.pendingFresh) state.pendingFresh.epoch = state.epoch;
   }
 
@@ -133,6 +167,7 @@ export class ProviderInspectionCoordinator {
   private queueFresh(
     state: ProviderInspectionState,
     adapter: ProviderAdapter,
+    purpose: ReadPurpose,
   ): Promise<ProviderObservation> {
     const existing = state.pendingFresh;
     if (existing) {
@@ -150,7 +185,7 @@ export class ProviderInspectionCoordinator {
     // A pending read can outlive every caller that requested it. Keep shutdown
     // rejection handled even when all callers have independently canceled.
     void promise.catch(() => undefined);
-    state.pendingFresh = { adapter, epoch: state.epoch, promise, resolve, reject };
+    state.pendingFresh = { adapter, epoch: state.epoch, promise, resolve, reject, purpose };
     return promise;
   }
 
@@ -159,6 +194,7 @@ export class ProviderInspectionCoordinator {
     adapter: ProviderAdapter,
     epoch: number,
     fresh: boolean,
+    purpose: ReadPurpose,
   ): Promise<ProviderObservation> {
     const controller = new AbortController();
     const active: ActiveInspection = {
@@ -166,14 +202,79 @@ export class ProviderInspectionCoordinator {
       epoch,
       fresh,
       controller,
-      promise: Promise.resolve().then(() => adapter.inspect({ signal: controller.signal })),
+      promise: Promise.resolve()
+        .then(() => {
+          this.input.backoff?.assertAllowed(adapter.id, purpose);
+          return adapter.inspect({ signal: controller.signal });
+        })
+        .then((raw) => {
+          const backoff = this.input.backoff;
+          if (!backoff) return raw;
+          let observation: ProviderObservation;
+          try {
+            observation = parseProviderObservation(raw);
+          } catch {
+            throw Object.assign(new Error('invalid provider observation'), {
+              code: 'INVALID_PROVIDER_RESPONSE',
+            });
+          }
+          const ageMs = backoff.nowMs() - Date.parse(observation.observedAt);
+          if (
+            observation.providerId !== adapter.id ||
+            ageMs < 0 ||
+            ageMs > observation.staleAfterSeconds * 1000
+          )
+            throw Object.assign(new Error('invalid provider observation'), {
+              code: 'INVALID_PROVIDER_RESPONSE',
+            });
+          if (
+            observation.health === 'UP' ||
+            (purpose.startsWith('auth_') && observation.health === 'DEGRADED')
+          )
+            backoff.succeeded(adapter.id);
+          else
+            backoff.failed(
+              adapter.id,
+              purpose,
+              observation.health === 'AUTH_REQUIRED' ? 'auth_required' : 'unavailable',
+            );
+          return observation;
+        })
+        .catch((error: unknown) => {
+          if (
+            !(error instanceof ProviderReadDeferredError) &&
+            !controller.signal.aborted &&
+            !this.closed
+          ) {
+            const code =
+              typeof error === 'object' && error !== null && 'code' in error
+                ? error.code
+                : undefined;
+            this.input.backoff?.failed(
+              adapter.id,
+              purpose,
+              code === 'AUTH_REQUIRED'
+                ? 'auth_required'
+                : code === 'INVALID_PROVIDER_RESPONSE'
+                  ? 'invalid_response'
+                  : 'unavailable',
+            );
+          }
+          throw error;
+        }),
     };
     active.promise = active.promise.finally(() => {
       if (state.active === active) state.active = undefined;
       if (!this.closed && state.pendingFresh) {
         const pending = state.pendingFresh;
         state.pendingFresh = undefined;
-        const next = this.start(state, pending.adapter, Math.max(pending.epoch, state.epoch), true);
+        const next = this.start(
+          state,
+          pending.adapter,
+          Math.max(pending.epoch, state.epoch),
+          true,
+          pending.purpose,
+        );
         void next.then(pending.resolve, pending.reject);
       }
     });

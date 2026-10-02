@@ -12,8 +12,50 @@ export interface ObservedWindowCycle {
   phaseConfidence: Confidence;
 }
 
+export interface ClosedWindowCycle {
+  providerId: string;
+  windowKind: string;
+  cycleAtMs: number;
+  endedAtMs: number;
+  observedAtMs: number;
+  evidenceKind: 'anchored_boundary' | 'reported_inactive_transition';
+}
+
 export class WindowCycleRepository {
   constructor(private readonly db: SqliteDatabase) {}
+
+  getClosure(
+    providerId: string,
+    windowKind: string,
+    cycleAtMs: number,
+  ): ClosedWindowCycle | undefined {
+    return this.db
+      .prepare(
+        `SELECT provider_id AS providerId, window_kind AS windowKind,
+      cycle_at_ms AS cycleAtMs, ended_at_ms AS endedAtMs, observed_at_ms AS observedAtMs,
+      evidence_kind AS evidenceKind FROM observed_cycle_closures
+      WHERE provider_id = ? AND window_kind = ? AND cycle_at_ms = ?`,
+      )
+      .get(providerId, windowKind, cycleAtMs) as ClosedWindowCycle | undefined;
+  }
+
+  recordClosure(closure: ClosedWindowCycle): void {
+    // Store only evidence needed by unresolved side effects, bounded by intents.
+    // Terminal-intent retention cascades its closure evidence instead of creating
+    // an unbounded second history stream.
+    this.db
+      .prepare(
+        `INSERT INTO observed_cycle_closures
+      (intent_id, provider_id, window_kind, cycle_at_ms, ended_at_ms, observed_at_ms, evidence_kind)
+      SELECT id, @providerId, @windowKind, @cycleAtMs, @endedAtMs, @observedAtMs, @evidenceKind
+      FROM action_intents WHERE provider_id = @providerId
+        AND state IN ('succeeded', 'uncertain')
+        AND json_extract(explanation_json, '$.windowKind') = @windowKind
+        AND json_extract(explanation_json, '$.observedCycleAt') = @cycleAtIso
+      ON CONFLICT(intent_id) DO NOTHING`,
+      )
+      .run({ ...closure, cycleAtIso: new Date(closure.cycleAtMs).toISOString() });
+  }
 
   get(providerId: string, windowKind: string): ObservedWindowCycle | undefined {
     return this.db

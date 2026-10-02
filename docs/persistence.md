@@ -9,6 +9,13 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
 ## Current state vs history
 
 - `provider_state`: one current last-known normalized state per provider.
+- `provider_read_backoff`: at most six fixed-purpose current failure records per
+  configured provider, with a shared normal-read deadline/streak and separate
+  explicit-login purposes. Migration 012 creates this state without rewriting
+  intents, cycle evidence, cleanup or operator preferences. Successful verified
+  reads clear it; deleting a provider cascades it. It has no history TTL and holds
+  no payloads, credentials or conversation content. Ephemeral single-probe login
+  permits are not persisted or restored after restart.
 - `observed_window_cycles`: one durable lifecycle/evidence baseline per exact
   provider window, with availability identity, last anchored reset and temporal
   comparison facts. This is current state (no TTL), independent of history
@@ -24,6 +31,12 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
   Confirmation attempts and their next eligible timestamps are persisted on the
   intent so an unresolved result is not inspected on every executor tick or
   reset to an immediate retry after restart.
+- `action_resolution_requests`: one coalesced manual review request per intent,
+  persisted across restart. The executor records a bounded reason and checked
+  timestamp; another explicit review after failure has a 30-second cooldown.
+- `observed_cycle_closures`: exact lifecycle closure evidence linked to the
+  unresolved intent that needs it. This does not assert a prompt outcome;
+  terminal intent retention cascades requests and closure evidence.
 - `provider_cleanup_jobs`: durable deletion obligations for disposable provider
   artifacts created by AWM actions. An opaque external ID remains only until
   cleanup succeeds; it is not exposed in ordinary history, metrics or read APIs.
@@ -51,7 +64,23 @@ MVP defaults:
 - action intents required for current dedupe/recovery are retained at least 365 days;
 - current state/config: no TTL.
 
-A daily low-priority maintenance pass deletes eligible rows in bounded batches.
+Low-priority maintenance starts at bootstrap and deletes eligible rows in batches
+of at most 500 per table/event class. Each pass yields between transactions and
+stops after 32 batches or a 25 ms monotonic work budget. Remaining work continues
+after one second; `AWM_RETENTION_INTERVAL_SECONDS` controls the idle sweep only,
+so an existing daily override cannot limit backlog removal to 500 rows a day.
+Concurrent requests share the active pass; shutdown stops between batches, and
+restart resumes from the remaining SQL rows without a separate cleanup cursor.
+After each pass, bounded index probes cache eligible backlog (up to 1,000 per
+class, with a saturation flag), oldest eligible age and available DB/WAL sizes
+for metrics. Scraping never starts retention or runs backlog queries.
+The TTL is eligibility, not a promise of immediate deletion: cleanup can lag
+during downtime or a backlog. DELETE frees reusable SQLite pages but need not
+shrink the database file; no automatic blocking VACUUM is performed.
+
+Routine `provider_inspected` events remain lifecycle history retained for 365
+days. Migration 010 adds an indexed derived class without changing event data
+or reducing the existing retention promise.
 It will not delete a window sample until the aggregation checkpoint has passed
 that sample. Adjacent equivalent zero/unknown intervals are coalesced while
 preserving their covered UTC span, limiting idle-poll storage growth. Derived
@@ -156,6 +185,21 @@ The forward-only schema currently consists of:
   attempt counts and restart-safe confirmation deadlines. Existing action
   outcomes and dedupe keys are preserved; prior intents begin with no recorded
   confirmation backoff.
+- `migrations/010_retention_indexes.sql` for indexed event class/age, sample age
+  and terminal-intent age queries. The event class is derived from its existing
+  type; original payloads, intents, dedupe, cleanup and preferences are unchanged.
+  Index creation runs transactionally during upgrade and may take time on large
+  histories. Back up first; schema rollback requires restoring a compatible backup,
+  not deleting migration records or editing shipped SQL.
+- `migrations/011_unknown_action_resolution.sql` expands the intent state CHECK
+  with `resolved_unknown` while preserving all existing rows and unique dedupe.
+  Closure evidence is linked to an unresolved intent and survives raw-history
+  pruning; terminal intent deletion cascades that evidence. It does not invent
+  closure evidence for pre-migration cycles. See [ADR-008](adr/008-unknown-action-resolution.md).
+- `migrations/012_provider_read_backoff.sql` for six bounded read-purpose rows
+  per provider. Existing intents, cleanup, observations and preferences are
+  unchanged. Normal read purposes share persisted protection across restart;
+  ephemeral explicit-login probe permits are not restored.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

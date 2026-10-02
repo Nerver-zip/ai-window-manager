@@ -54,44 +54,13 @@ export interface RetentionMaintenanceResult {
   totalDeleted: number;
 }
 
-const SECURITY_EVENT_SQL = `(
-  LOWER(type) LIKE 'security_%'
-  OR LOWER(type) LIKE 'auth_%'
-  OR LOWER(type) LIKE 'csrf_%'
-  OR LOWER(type) LIKE 'origin_%'
-  OR LOWER(type) = 'provider_auth_required'
-)`;
-
-const ACTION_EVENT_SQL = `(
-  LOWER(type) LIKE 'action_%'
-  OR LOWER(type) LIKE 'manual_trigger_%'
-)`;
-
-const LIFECYCLE_EVENT_SQL = `(
-  (
-    LOWER(type) LIKE 'provider_%'
-    OR LOWER(type) LIKE 'scheduler_%'
-    OR LOWER(type) LIKE 'schedule_%'
-    OR LOWER(type) LIKE 'config_%'
-    OR LOWER(type) LIKE 'setting_%'
-    OR LOWER(type) LIKE 'policy_%'
-    OR LOWER(type) IN (
-      'inspection_failed',
-      'inspect_requested',
-      'reconcile_started',
-      'reconcile_finished'
-    )
-  )
-  AND NOT ${SECURITY_EVENT_SQL}
-)`;
-
-const IMPORTANT_EVENT_SQL = `(
-  ${SECURITY_EVENT_SQL}
-  OR ${ACTION_EVENT_SQL}
-  OR ${LIFECYCLE_EVENT_SQL}
-)`;
-
-const TERMINAL_INTENT_STATES = ['confirmed', 'skipped', 'canceled', 'failed_terminal'] as const;
+const TERMINAL_INTENT_STATES = [
+  'confirmed',
+  'skipped',
+  'canceled',
+  'failed_terminal',
+  'resolved_unknown',
+] as const;
 
 /**
  * Classify an event using the same bounded naming contract as the SQL cleanup.
@@ -168,23 +137,19 @@ export function runRetentionMaintenance(
     const eventPolicies: Array<{
       retentionClass: EventRetentionClass;
       retentionMs: number;
-      predicate: string;
     }> = [
       {
         retentionClass: 'ordinary',
         retentionMs: policy.ordinaryEventsMs,
-        predicate: `NOT ${IMPORTANT_EVENT_SQL}`,
       },
       {
         retentionClass: 'lifecycle',
         retentionMs: policy.lifecycleEventsMs,
-        predicate: LIFECYCLE_EVENT_SQL,
       },
-      { retentionClass: 'action', retentionMs: policy.actionEventsMs, predicate: ACTION_EVENT_SQL },
+      { retentionClass: 'action', retentionMs: policy.actionEventsMs },
       {
         retentionClass: 'security',
         retentionMs: policy.securityEventsMs,
-        predicate: SECURITY_EVENT_SQL,
       },
     ];
     const eventsDeleted: Record<EventRetentionClass, number> = {
@@ -199,20 +164,28 @@ export function runRetentionMaintenance(
         'events',
         'occurred_at_ms',
         asOfMs - eventPolicy.retentionMs,
-        eventPolicy.predicate,
+        'retention_class = ?',
         batchSize,
+        [eventPolicy.retentionClass],
       );
     }
 
-    const terminalActionIntentsDeleted = deleteBatch(
-      db,
-      'action_intents',
-      'COALESCE(finished_at_ms, updated_at_ms)',
-      asOfMs - policy.terminalActionIntentsMs,
-      `state IN (${TERMINAL_INTENT_STATES.map(() => '?').join(', ')})`,
-      batchSize,
-      TERMINAL_INTENT_STATES,
-    );
+    // Exact-state probes can walk the age index without sorting all terminal
+    // states together. Preserve one shared per-table batch limit.
+    let terminalActionIntentsDeleted = 0;
+    for (const state of TERMINAL_INTENT_STATES) {
+      const remaining = batchSize - terminalActionIntentsDeleted;
+      if (remaining === 0) break;
+      terminalActionIntentsDeleted += deleteBatch(
+        db,
+        'action_intents',
+        'COALESCE(finished_at_ms, updated_at_ms)',
+        asOfMs - policy.terminalActionIntentsMs,
+        'state = ?',
+        remaining,
+        [state],
+      );
+    }
 
     const totalDeleted =
       windowSamplesDeleted +
@@ -269,7 +242,7 @@ function deleteBatch(
          SELECT ${idColumn} FROM ${table}
          WHERE ${timestampExpression} < ?
            AND (${predicate})
-         ORDER BY ${idColumn}
+         ORDER BY ${timestampExpression}, ${idColumn}
          LIMIT ?
        )`,
     )

@@ -169,6 +169,7 @@ function setup(targetWindowKind: string, triggerOutput: string) {
   addIntent('agy-intent', targetWindowKind);
   resources.push({ db, dir });
   const executor = new ActionExecutor({
+    isProviderRuntimeChanging: () => false,
     clock,
     db,
     repositories,

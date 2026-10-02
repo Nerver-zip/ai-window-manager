@@ -11,6 +11,88 @@ afterEach(() => {
 });
 
 describe('openDatabase', () => {
+  it('upgrades schema 11 with open legacy intents and cleanup without fabricating read history', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-read-backoff-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'v11');
+    fs.mkdirSync(migrationsDir);
+    for (const name of fs
+      .readdirSync('migrations')
+      .filter((name) => Number(name.split('_')[0]) <= 11))
+      fs.copyFileSync(path.join('migrations', name), path.join(migrationsDir, name));
+    const file = path.join(dir, 'awm.db');
+    const old = openDatabase(file, { migrationsDir });
+    old.exec(`INSERT INTO providers (id, kind, enabled, mode, poll_interval_seconds, config_json, config_version, created_at_ms, updated_at_ms)
+      VALUES ('codex', 'codex', 1, 'automation', 30, '{}', 1, 1, 1);
+      INSERT INTO action_intents (id, provider_id, action_type, dedupe_key, state, scheduled_for_ms, attempt_count, reason_code, explanation_json, created_at_ms, updated_at_ms)
+      VALUES ('legacy', 'codex', 'trigger_window', 'synthetic-legacy-dedupe', 'uncertain', 1, 1, 'ACTION_DISPATCH_UNCERTAIN', '{}', 1, 1);
+      INSERT INTO provider_cleanup_jobs (id, provider_id, artifact_kind, external_id, state, not_before_ms, created_at_ms, updated_at_ms)
+      VALUES ('cleanup', 'codex', 'codex_thread', 'synthetic-thread', 'pending', 1, 1, 1);
+      INSERT INTO settings (key, value_json, updated_at_ms) VALUES ('operator-preference', 'false', 1);`);
+    const intent = old.prepare('SELECT * FROM action_intents').get();
+    const cleanup = old.prepare('SELECT * FROM provider_cleanup_jobs').get();
+    const preference = old.prepare('SELECT * FROM settings').get();
+    old.close();
+    const upgraded = openDatabase(file);
+    expect(upgraded.prepare('SELECT * FROM action_intents').get()).toEqual(intent);
+    expect(upgraded.prepare('SELECT * FROM provider_cleanup_jobs').get()).toEqual(cleanup);
+    expect(upgraded.prepare('SELECT * FROM settings').get()).toEqual(preference);
+    expect(upgraded.prepare('SELECT COUNT(*) AS count FROM provider_read_backoff').get()).toEqual({
+      count: 0,
+    });
+    expect(upgraded.pragma('foreign_key_check')).toEqual([]);
+    upgraded.close();
+  });
+
+  it('upgrades schema 9 retention indexes without changing intents, cleanup, preferences or event data', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-retention-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'v9');
+    fs.mkdirSync(migrationsDir);
+    for (const name of fs.readdirSync('migrations').filter((name) => /^00[1-9]_/.test(name))) {
+      fs.copyFileSync(path.join('migrations', name), path.join(migrationsDir, name));
+    }
+    const file = path.join(dir, 'awm.db');
+    const old = openDatabase(file, { migrationsDir });
+    old.exec(`
+      INSERT INTO providers (id, kind, enabled, mode, poll_interval_seconds, config_json, config_version, created_at_ms, updated_at_ms)
+      VALUES ('codex', 'codex', 1, 'automation', 30, '{}', 1, 1, 1);
+      INSERT INTO action_intents (id, provider_id, action_type, dedupe_key, state, scheduled_for_ms, attempt_count, reason_code, explanation_json, created_at_ms, updated_at_ms)
+      VALUES ('pending', 'codex', 'trigger_window', 'original-dedupe', 'uncertain', 1, 1, 'ACTION_DISPATCH_UNCERTAIN', '{}', 1, 1);
+      INSERT INTO events (provider_id, type, occurred_at_ms, data_json)
+      VALUES ('codex', 'provider_inspected', 1, '{"synthetic":true}');
+      INSERT INTO settings (key, value_json, updated_at_ms)
+      VALUES ('operator-preference', '{"enabled":false}', 1);
+      INSERT INTO provider_cleanup_jobs (id, provider_id, artifact_kind, external_id, state, not_before_ms, created_at_ms, updated_at_ms)
+      VALUES ('pending-cleanup', 'codex', 'codex_thread', 'synthetic-artifact', 'pending', 1, 1, 1);
+    `);
+    const intent = old.prepare('SELECT * FROM action_intents').get();
+    const cleanup = old.prepare('SELECT * FROM provider_cleanup_jobs').get();
+    const preference = old.prepare('SELECT * FROM settings').get();
+    const event = old
+      .prepare('SELECT id, provider_id, type, occurred_at_ms, data_json FROM events')
+      .get();
+    old.close();
+    const upgraded = openDatabase(file);
+    expect(upgraded.prepare('SELECT * FROM action_intents').get()).toEqual(intent);
+    expect(upgraded.prepare('SELECT * FROM provider_cleanup_jobs').get()).toEqual(cleanup);
+    expect(upgraded.prepare('SELECT * FROM settings').get()).toEqual(preference);
+    expect(
+      upgraded.prepare('SELECT id, provider_id, type, occurred_at_ms, data_json FROM events').get(),
+    ).toEqual(event);
+    expect(upgraded.prepare('SELECT retention_class FROM events').get()).toEqual({
+      retention_class: 'lifecycle',
+    });
+    expect(upgraded.pragma('foreign_key_check')).toEqual([]);
+    upgraded.close();
+    const reopened = openDatabase(file);
+    expect(
+      reopened.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 10').get(),
+    ).toEqual({ count: 1 });
+    expect(reopened.prepare('SELECT * FROM action_intents').get()).toEqual(intent);
+    reopened.close();
+  });
+
   it('adds durable confirmation backoff to a v8 database without changing unresolved intents', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-confirmation-migration-'));
     dirs.push(dir);
@@ -51,7 +133,7 @@ describe('openDatabase', () => {
     });
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 9,
+        version: 12,
       },
     );
     upgraded.close();
@@ -99,7 +181,7 @@ describe('openDatabase', () => {
   it('opens an in-memory database without creating a filesystem directory', () => {
     const db = openDatabase(':memory:');
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
-      version: 9,
+      version: 12,
     });
     db.close();
   });
@@ -123,6 +205,9 @@ describe('openDatabase', () => {
       { version: 7, applied_at_ms: appliedAtMs },
       { version: 8, applied_at_ms: appliedAtMs },
       { version: 9, applied_at_ms: appliedAtMs },
+      { version: 10, applied_at_ms: appliedAtMs },
+      { version: 11, applied_at_ms: appliedAtMs },
+      { version: 12, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -141,7 +226,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(9);
+    ).toBe(12);
     reopened.close();
   });
 
@@ -255,6 +340,9 @@ describe('openDatabase', () => {
       { version: 7 },
       { version: 8 },
       { version: 9 },
+      { version: 10 },
+      { version: 11 },
+      { version: 12 },
     ]);
     expect(
       upgraded
@@ -295,7 +383,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toHaveLength(9);
+    ).toHaveLength(12);
     expect(
       upgraded
         .prepare(

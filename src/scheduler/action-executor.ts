@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { ReadPurpose } from '../providers/read-backoff-policy.js';
 import { parseProviderObservation } from '../domain/schemas.js';
 import type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
@@ -13,12 +14,16 @@ import type { ProviderInspectionCoordinator } from '../providers/inspection-coor
 import type { Clock } from './clock.js';
 import type {
   ActionIntentRecord,
+  ActionResolutionRequest,
   EventRecord,
   StorageRepositories,
 } from '../storage/repositories.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import { withTransaction } from '../storage/repositories.js';
 import { trackWindowCycles } from './window-cycle.js';
+import { actionDeadlineExpired as intentExpired } from '../domain/action-deadline.js';
+import { DispatchAuthorizationError } from '../providers/dispatch-authorization.js';
+import { assessActionResolution } from './action-resolution-policy.js';
 
 export const ActionReasonCode = {
   IntentExpired: 'ACTION_INTENT_EXPIRED',
@@ -36,6 +41,7 @@ export const ActionReasonCode = {
   PolicyChanged: 'ACTION_POLICY_CHANGED',
   TargetWindowMissing: 'ACTION_TARGET_WINDOW_MISSING',
   CycleChanged: 'ACTION_WINDOW_CYCLE_CHANGED',
+  RuntimeChanging: 'ACTION_PROVIDER_RUNTIME_CHANGING',
 } as const;
 
 export type ActionReasonCode = (typeof ActionReasonCode)[keyof typeof ActionReasonCode];
@@ -119,6 +125,11 @@ export class ActionExecutor {
         // Existing outcomes must be resolved before a sibling family may run.
         // Even if confirmation succeeds now, the sibling is reconsidered next tick.
         handledProviderIds.add(current.providerId);
+        const resolution = this.input.repositories.actionIntents.resolutionRequest(current.id);
+        if (resolution?.state === 'pending') {
+          await this.resolveUnknown(current, resolution);
+          continue;
+        }
         if (current.confirmationNotBeforeMs !== null && nowMs < current.confirmationNotBeforeMs) {
           continue;
         }
@@ -162,7 +173,7 @@ export class ActionExecutor {
     report: ActionExecutorReport,
   ): Promise<void> {
     if (this.input.isProviderRuntimeChanging?.(intent.providerId)) return;
-    const nowMs = this.input.clock.now().getTime();
+    let nowMs = this.input.clock.now().getTime();
     if (intent.expiresAtMs !== null && intentExpired(intent, nowMs)) {
       if (
         this.input.repositories.actionIntents.markSkippedIfPlannedOrRetryable(
@@ -203,11 +214,19 @@ export class ActionExecutor {
       return;
     }
 
+    if (this.input.inspections?.isDeferred(intent.providerId, 'preflight')) return;
     const preflight = await this.inspect(adapter, true);
+    nowMs = this.input.clock.now().getTime();
+    const rejection = this.dispatchRejection(intent, adapter);
+    if (rejection) {
+      this.markSkipped(intent, nowMs, rejection, report);
+      return;
+    }
     if (!preflight.observation) {
       this.markRetryable(intent, nowMs, preflight.failureCode ?? 'INSPECTION_FAILED', report);
       return;
     }
+    const dispatchObservation = preflight.observation;
     if (!policyStillCurrent(this.input.repositories, intent, preflight.observation)) {
       this.markSkipped(intent, nowMs, ActionReasonCode.PolicyChanged, report);
       return;
@@ -228,6 +247,22 @@ export class ActionExecutor {
       return;
     }
 
+    if (asRecord(intent.explanation).observedCycleAt === undefined) {
+      const cycle = this.input.repositories.windowCycles.get(intent.providerId, targetWindowKind);
+      if (!cycle) {
+        this.markSkipped(intent, nowMs, ActionReasonCode.CycleChanged, report);
+        return;
+      }
+      const bound = this.input.repositories.actionIntents.bindObservedCycle(
+        intent,
+        targetWindowKind,
+        cycle.cycleAtMs,
+        nowMs,
+      );
+      if (!bound) return;
+      intent = bound;
+    }
+
     const claimed =
       intent.state === 'planned'
         ? this.input.repositories.actionIntents.claimPlanned(intent.id, nowMs)
@@ -243,8 +278,11 @@ export class ActionExecutor {
     );
     let result: ProviderActionResult;
     try {
+      this.assertDispatchAllowed(claimed, adapter, dispatchObservation);
       result = await adapter.triggerWindow(
         {
+          assertDispatchAllowed: () =>
+            this.assertDispatchAllowed(claimed, adapter, dispatchObservation),
           registerCleanupArtifact: (artifact: ProviderCleanupArtifact) =>
             Promise.resolve().then(() => {
               const registeredAtMs = this.input.clock.now().getTime();
@@ -273,6 +311,20 @@ export class ActionExecutor {
         },
       );
     } catch (error) {
+      if (error instanceof DispatchAuthorizationError) {
+        const rejectedAtMs = this.input.clock.now().getTime();
+        if (
+          this.input.repositories.actionIntents.markSkippedBeforeDispatch(
+            claimed.id,
+            rejectedAtMs,
+            error.reasonCode,
+          )
+        ) {
+          report.skippedIntentIds.push(claimed.id);
+          this.appendEventOnce(this.actionEvent(claimed, 'action_skipped', error.reasonCode));
+        }
+        return;
+      }
       this.input.inspections?.markActionCompleted(claimed.providerId);
       this.input.onTrigger?.(claimed.providerId, 'uncertain');
       this.handleDispatchException(claimed, error, report);
@@ -282,6 +334,7 @@ export class ActionExecutor {
     this.input.inspections?.markActionCompleted(claimed.providerId);
     this.input.onTrigger?.(claimed.providerId, result.status);
     await this.phase('after_dispatch_before_result', claimed);
+    nowMs = this.input.clock.now().getTime();
     if (result.status === 'succeeded') {
       if (!this.input.repositories.actionIntents.markSucceededIfExecuting(claimed.id, nowMs))
         return;
@@ -336,6 +389,56 @@ export class ActionExecutor {
     }
   }
 
+  private dispatchRejection(
+    intent: ActionIntentRecord,
+    adapter: ProviderAdapter,
+  ): ActionReasonCode | undefined {
+    const nowMs = this.input.clock.now().getTime();
+    if (intentExpired(intent, nowMs)) return ActionReasonCode.IntentExpired;
+    try {
+      if (this.input.isProviderRuntimeChanging?.(intent.providerId) !== false) {
+        return ActionReasonCode.RuntimeChanging;
+      }
+    } catch {
+      return ActionReasonCode.RuntimeChanging;
+    }
+    const provider = this.input.repositories.providers.get(intent.providerId);
+    if (
+      !provider?.enabled ||
+      provider.mode !== 'automation' ||
+      this.input.adapters.get(intent.providerId) !== adapter
+    ) {
+      return ActionReasonCode.ProviderUnavailable;
+    }
+    if (!policyStillCurrent(this.input.repositories, intent)) return ActionReasonCode.PolicyChanged;
+    if (!this.cycleStillCurrent(intent)) return ActionReasonCode.CycleChanged;
+    const target = windowKindFor(intent);
+    if (
+      !target ||
+      !triggerCapabilityAvailable(adapter, target) ||
+      typeof adapter.triggerWindow !== 'function'
+    ) {
+      return ActionReasonCode.CapabilityUnavailable;
+    }
+    return undefined;
+  }
+
+  private assertDispatchAllowed(
+    intent: ActionIntentRecord,
+    adapter: ProviderAdapter,
+    observation: ProviderObservation,
+  ): void {
+    const reason = this.dispatchRejection(intent, adapter);
+    if (reason) throw new DispatchAuthorizationError(reason);
+    const ageMs = this.input.clock.now().getTime() - Date.parse(observation.observedAt);
+    if (ageMs < 0 || ageMs > observation.staleAfterSeconds * 1000) {
+      throw new DispatchAuthorizationError(ActionReasonCode.PreflightRejected);
+    }
+    if (this.input.repositories.actionIntents.get(intent.id)?.state !== 'executing') {
+      throw new DispatchAuthorizationError(ActionReasonCode.DispatchRejected);
+    }
+  }
+
   private handleDispatchException(
     intent: ActionIntentRecord,
     error: unknown,
@@ -361,12 +464,130 @@ export class ActionExecutor {
     }
   }
 
+  private async resolveUnknown(
+    intent: ActionIntentRecord,
+    request: ActionResolutionRequest,
+  ): Promise<void> {
+    const finish = (reasonCode: string) =>
+      withTransaction(this.input.db, () => {
+        const changed = this.input.repositories.actionIntents.completeResolutionRequest(
+          request,
+          this.input.clock.now().getTime(),
+          reasonCode,
+        );
+        if (changed)
+          this.input.repositories.events.append(
+            this.actionEvent(intent, 'action_resolution_reviewed', reasonCode),
+          );
+        return changed;
+      });
+    const adapter = this.input.adapters.get(intent.providerId);
+    const readAllowed = () => {
+      try {
+        return (
+          adapter !== undefined &&
+          this.input.adapters.get(intent.providerId) === adapter &&
+          this.input.repositories.providers.get(intent.providerId)?.enabled === true &&
+          this.input.isProviderRuntimeChanging?.(intent.providerId) === false
+        );
+      } catch {
+        return false;
+      }
+    };
+    if (!adapter || !readAllowed()) {
+      finish('ACTION_RESOLUTION_READ_BLOCKED');
+      return;
+    }
+    if (this.input.inspections?.isDeferred(intent.providerId, 'resolution')) return;
+    const readStartedAtMs = this.input.clock.now().getTime();
+    const inspection = await this.inspect(adapter, true, 'resolution');
+    if (!readAllowed()) {
+      finish('ACTION_RESOLUTION_READ_BLOCKED');
+      return;
+    }
+    if (!inspection.observation) {
+      finish('ACTION_RESOLUTION_OBSERVATION_UNAVAILABLE');
+      return;
+    }
+    const nowMs = this.input.clock.now().getTime();
+    const explanation = asRecord(intent.explanation);
+    const target = windowKindFor(intent);
+    const cycleAt =
+      typeof explanation.observedCycleAt === 'string'
+        ? Date.parse(explanation.observedCycleAt)
+        : NaN;
+    const window = inspection.observation.windows.find(
+      (candidate) => candidate.windowKind === target,
+    );
+    const newlyObserved =
+      Date.parse(inspection.observation.observedAt) >= readStartedAtMs &&
+      window !== undefined &&
+      Date.parse(window.observedAt) >= readStartedAtMs &&
+      Date.parse(window.phase.observedAt) >= readStartedAtMs &&
+      Date.parse(window.observedAt) <= nowMs &&
+      Date.parse(window.phase.observedAt) <= nowMs;
+    // Fresh evidence of the same active cycle still follows normal confirmation.
+    if (
+      Number.isSafeInteger(cycleAt) &&
+      newlyObserved &&
+      this.cycleStillCurrent(intent) &&
+      isSatisfied(inspection.observation, intent)
+    ) {
+      withTransaction(this.input.db, () => {
+        if (
+          this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+            intent.id,
+            nowMs,
+          )
+        ) {
+          this.appendEventOnce(
+            this.actionEvent(intent, 'action_recovery_confirmed', ActionReasonCode.Confirmed),
+          );
+        }
+        finish(ActionReasonCode.Confirmed);
+      });
+      return;
+    }
+    const closure =
+      target && Number.isSafeInteger(cycleAt)
+        ? this.input.repositories.windowCycles.getClosure(intent.providerId, target, cycleAt)
+        : undefined;
+    const currentCycle = target
+      ? this.input.repositories.windowCycles.get(intent.providerId, target)
+      : undefined;
+    const decision = assessActionResolution({
+      intent,
+      observation: inspection.observation,
+      nowMs,
+      readStartedAtMs,
+      ...(closure ? { closure } : {}),
+      ...(currentCycle ? { currentCycle } : {}),
+    });
+    withTransaction(this.input.db, () => {
+      const resolved =
+        decision.allowed &&
+        this.input.repositories.actionIntents.resolveUnknownIfUncertain(
+          intent,
+          nowMs,
+          Date.parse(inspection.observation!.observedAt),
+        );
+      finish(
+        resolved
+          ? 'ACTION_OUTCOME_UNKNOWN'
+          : decision.allowed
+            ? 'ACTION_RESOLUTION_CONFLICT'
+            : decision.reasonCode,
+      );
+    });
+  }
+
   private async confirmExisting(
     intent: ActionIntentRecord,
     report: ActionExecutorReport,
   ): Promise<void> {
     const adapter = this.input.adapters.get(intent.providerId);
     if (!adapter) return;
+    if (this.input.inspections?.isDeferred(intent.providerId, 'confirmation')) return;
     await this.phase('during_confirmation', intent);
     const nowMs = this.input.clock.now().getTime();
     const current = this.input.repositories.actionIntents.get(intent.id);
@@ -379,7 +600,7 @@ export class ActionExecutor {
     );
     if (!claimed) return;
 
-    const inspection = await this.inspect(adapter, true);
+    const inspection = await this.inspect(adapter, true, 'confirmation');
     if (
       inspection.observation &&
       this.cycleStillCurrent(intent) &&
@@ -438,12 +659,16 @@ export class ActionExecutor {
     return Math.min(maxBackoffMs, Math.min(baseIntervalMs, maxBackoffMs) * 2 ** exponent);
   }
 
-  private async inspect(adapter: ProviderAdapter, fresh = false): Promise<FreshInspection> {
+  private async inspect(
+    adapter: ProviderAdapter,
+    fresh = false,
+    purpose: ReadPurpose = 'preflight',
+  ): Promise<FreshInspection> {
     try {
       const rawObservation = this.input.inspections
         ? await (fresh
-            ? this.input.inspections.inspectFresh(adapter)
-            : this.input.inspections.inspect(adapter))
+            ? this.input.inspections.inspectFresh(adapter, {}, purpose)
+            : this.input.inspections.inspect(adapter, {}, purpose))
         : await adapter.inspect({});
       const observation = parseProviderObservation(rawObservation);
       if (
@@ -477,7 +702,9 @@ export class ActionExecutor {
 
   private cycleStillCurrent(intent: ActionIntentRecord): boolean {
     const expected = asRecord(intent.explanation).observedCycleAt;
-    if (typeof expected !== 'string') return true;
+    if (expected === undefined)
+      return intent.state === 'planned' || intent.state === 'failed_retryable';
+    if (typeof expected !== 'string' || !Number.isSafeInteger(Date.parse(expected))) return false;
     const target = windowKindFor(intent)!;
     const cycle = this.input.repositories.windowCycles.get(intent.providerId, target);
     return cycle !== undefined && cycle.cycleAtMs === Date.parse(expected);
@@ -591,15 +818,6 @@ function safeIntentData(intent: ActionIntentRecord): Record<string, unknown> {
     state: intent.state,
     dedupeKey: intent.dedupeKey,
   };
-}
-
-function intentExpired(intent: ActionIntentRecord, nowMs: number): boolean {
-  if (intent.expiresAtMs === null || nowMs < intent.expiresAtMs) return false;
-
-  // A zero-tolerance policy is an exact instant, so the deadline itself is
-  // still dispatchable. All positive tolerances use an exclusive deadline.
-  const explanation = asRecord(intent.explanation);
-  return !(explanation.toleranceSeconds === 0 && nowMs === intent.expiresAtMs);
 }
 
 function isEligibleForTrigger(

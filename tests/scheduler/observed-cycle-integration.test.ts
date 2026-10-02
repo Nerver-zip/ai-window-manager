@@ -111,6 +111,7 @@ function setup() {
       adapters: new Map([['codex', adapter]]),
     }),
     executor: new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       db,
       repositories,
       clock,

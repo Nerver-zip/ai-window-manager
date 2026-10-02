@@ -48,6 +48,9 @@ const PHASE_LABELS: Readonly<Record<string, string>> = {
 };
 
 const EVENT_LABELS: Readonly<Record<string, string>> = {
+  action_resolution_requested: 'Unknown outcome review requested',
+  action_resolution_reviewed: 'Unknown outcome reviewed',
+  action_resolved_unknown: 'Old action closed with unknown outcome',
   action_claimed: 'Automatic action started',
   action_confirmed: 'Automatic action confirmed',
   action_dispatch_started: 'Automatic action started',
@@ -85,6 +88,10 @@ const EVENT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
+  action_resolution_requested:
+    'A read-only check was requested; the old prompt will not be repeated.',
+  action_resolved_unknown:
+    'The old cycle ended. Its action outcome remains unknown; pending cleanup is still required.',
   action_claimed: 'The scheduled start was sent to the provider.',
   action_confirmed: 'A fresh provider update confirmed the new window.',
   action_dispatch_started: 'The provider is processing the scheduled start.',
@@ -123,6 +130,21 @@ const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
 };
 
 const REASON_LABELS: Readonly<Record<string, string>> = {
+  ACTION_OUTCOME_UNKNOWN:
+    'The old cycle ended; the action outcome is unknown and the old prompt will not be repeated.',
+  ACTION_RESOLUTION_READ_BLOCKED:
+    'Review is blocked while the provider is disabled, signing in, or changing its client. Try again after that operation finishes.',
+  ACTION_RESOLUTION_CYCLE_UNIDENTIFIED:
+    'The old cycle cannot be identified safely. It remains blocked; no outcome was guessed.',
+  ACTION_RESOLUTION_EVIDENCE_MISSING:
+    'There is no durable evidence that this exact old cycle ended. The action remains blocked.',
+  ACTION_RESOLUTION_OBSERVATION_UNAVAILABLE:
+    'A fresh valid provider observation is required. Restore the connection and request review again.',
+  ACTION_RESOLUTION_CYCLE_NOT_CLOSED:
+    'The old cycle has not been proven closed. The action remains blocked.',
+  ACTION_RESOLUTION_CONFLICT:
+    'The action changed during review. Refresh to see its persisted outcome.',
+  ACTION_RESOLUTION_NOT_UNCERTAIN: 'This action is no longer awaiting an unknown-outcome review.',
   TARGET_RESET_WINDOW_MATCH: 'The window can start before the target reset.',
   TARGET_NOT_DUE: 'It is not time yet.',
   TARGET_MISSED: 'The planned time has passed, so nothing was started unexpectedly.',

@@ -153,6 +153,7 @@ function createManager(
     events?: AuthSessionEvent[];
     requestReconcile?: { count: number };
     onEvent?: (event: AuthSessionEvent) => void;
+    onAuthenticationReadRequested?: (providerId: AuthProviderId, phase: 'check' | 'verify') => void;
   } = {},
 ) {
   const driver = input.driver ?? new FakeDriver();
@@ -166,6 +167,9 @@ function createManager(
     verificationAttempts: input.verificationAttempts ?? 3,
     verificationIntervalMs: input.verificationIntervalMs ?? 10,
     onEvent: input.onEvent ?? ((event) => events.push(event)),
+    ...(input.onAuthenticationReadRequested
+      ? { onAuthenticationReadRequested: input.onAuthenticationReadRequested }
+      : {}),
     requestReconcile: () => {
       if (input.requestReconcile) input.requestReconcile.count += 1;
     },
@@ -182,6 +186,25 @@ async function flushMicrotasks(): Promise<void> {
 afterEach(() => vi.useRealTimers());
 
 describe('AuthSessionManager', () => {
+  it('authorizes one read per explicit auth phase, not every verification retry', async () => {
+    vi.useFakeTimers();
+    const driver = new FakeDriver();
+    driver.verification = [false, false, true];
+    const authorize = vi.fn();
+    const { manager } = createManager({ driver, onAuthenticationReadRequested: authorize });
+    manager.start('codex');
+    await flushMicrotasks();
+    expect(authorize.mock.calls).toEqual([['codex', 'check']]);
+    driver.process.exit(0);
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(manager.status('codex').state).toBe('SUCCEEDED');
+    expect(authorize.mock.calls).toEqual([
+      ['codex', 'check'],
+      ['codex', 'verify'],
+    ]);
+  });
+
   it('captures a complete device code from a PTY prompt without a trailing newline', async () => {
     const { manager, driver } = createManager();
     manager.start('codex');

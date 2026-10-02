@@ -84,7 +84,7 @@ export class Reconciler {
     return this.running;
   }
 
-  async reconcile(): Promise<ReconcileReport> {
+  async reconcile(hints: ReadonlySet<string> = new Set()): Promise<ReconcileReport> {
     const startedAtMs = this.input.clock.now().getTime();
     if (this.running) {
       return {
@@ -99,13 +99,13 @@ export class Reconciler {
 
     this.running = true;
     try {
-      return await this.run(startedAtMs);
+      return await this.run(startedAtMs, hints);
     } finally {
       this.running = false;
     }
   }
 
-  private async run(startedAtMs: number): Promise<ReconcileReport> {
+  private async run(startedAtMs: number, hints: ReadonlySet<string>): Promise<ReconcileReport> {
     const now = this.input.clock.now();
     const nowMs = now.getTime();
     const inspectedProviderIds: string[] = [];
@@ -115,20 +115,21 @@ export class Reconciler {
     for (const provider of this.input.repositories.providers.list()) {
       if (!provider.enabled) continue;
       if (this.isProviderRuntimeChanging(provider.id)) continue;
+      if (this.input.inspections?.isDeferred(provider.id)) continue;
 
       const adapter = this.input.adapters.get(provider.id);
       const previousState = this.input.repositories.providerState.get(provider.id);
       let state = previousState;
       let inspectionFailed = false;
 
-      if (this.isDue(provider, previousState, nowMs)) {
+      if (hints.has(provider.id) || this.isDue(provider, previousState, nowMs)) {
         inspectedProviderIds.push(provider.id);
         if (!adapter) {
           this.recordFailure(provider, previousState, nowMs, 'PROVIDER_UNAVAILABLE');
           this.input.onInspection?.(provider.id, 'provider_unavailable');
           inspectionFailed = true;
         } else {
-          const inspection = await this.inspect(adapter);
+          const inspection = await this.inspect(adapter, hints.has(provider.id));
           if (inspection.ok) {
             state = this.persistObservation(provider, inspection.observation, nowMs, previousState);
             this.input.onInspection?.(provider.id, 'success');
@@ -451,12 +452,15 @@ export class Reconciler {
 
   private async inspect(
     adapter: ProviderAdapter,
+    fresh = false,
   ): Promise<
     { ok: true; observation: ProviderObservation } | { ok: false; code: InspectionFailureCode }
   > {
     try {
       const rawObservation = this.input.inspections
-        ? await this.input.inspections.inspect(adapter)
+        ? await (fresh
+            ? this.input.inspections.inspectFresh(adapter, {}, 'reconcile')
+            : this.input.inspections.inspect(adapter))
         : await adapter.inspect({});
       const observation = parseProviderObservation(rawObservation);
       if (observation.providerId !== adapter.id) {

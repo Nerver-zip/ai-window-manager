@@ -2,6 +2,52 @@
 
 The scheduler is a deterministic policy engine wrapped by a periodic reconciler.
 
+## Shared read-failure backoff
+
+Read coordination persists a bounded record per provider/purpose. Reconcile,
+preflight, confirmation and manual resolution share the most restrictive pending
+read deadline and failure streak, so changing purpose or issuing inspect hints
+cannot bypass an outage. A deferred read starts no client process, does not count
+as another failure, does not consume a pending hint, and cannot extend an action's
+deadline. Uncertain actions remain unresolved and are never redispatched.
+
+Ordinary failure delay starts at the larger of 30 seconds and the configured
+provider poll interval (capped at five minutes), doubles to a five-minute ceiling,
+and adds injected 0–20% jitter without exceeding that ceiling. Auth-required starts
+at 15 minutes and doubles to one hour. The absolute read deadline and streak survive
+restart; backwards wall-clock movement does not erase protection. Successful,
+canonical fresh matching-provider observations reset the provider's read failures.
+
+Explicit login status/verification have separately bounded purpose gates. A new
+authenticated, rate-limited login phase may authorize one read-only probe without
+erasing failure history; verification retries do not receive further permits.
+Verified authentication resets protection and queues an exact-provider refresh.
+Cancellation/failure revokes unused permits. This narrow read-only recovery path
+does not permit actions or make an unverified login successful. Cleanup retry
+history remains independent.
+
+The delay policy accepts only normalized numeric retry-after from a validated
+official surface, rejecting invalid values and capping it at one hour. Current
+inspection adapters expose no such supported retry-after metadata; no endpoint,
+raw error payload or browser input is consulted to manufacture it. The existing
+bounded confirmation-intent cadence remains in addition to this provider gate.
+
+Operator inspection requests queue a bounded per-provider hint and wake the
+reconciler asynchronously. A hint bypasses the normal poll-due calculation,
+not provider enabled state or authentication/executable-update coordination.
+Hints use generations: a request arriving during a read remains pending for a
+subsequent read rather than being consumed by the older inspection. Bursts before
+work starts coalesce, and only one reconciliation runs at a time. Deferred hints
+remain for periodic recovery without a self-rescheduling busy loop. At most 64
+configured provider IDs may have hints; unconfigured IDs are rejected.
+
+The wakeup creates no provider I/O inside HTTP handlers. It does not execute a
+prompt directly; intents still pass through the normal action executor. Shutdown
+waits for in-flight reconciliation and cancels queued wakeups. These in-memory
+hints are not durable commands: restart resumes periodic reconciliation, and
+the operator may request another read. Backoff integration is a separate gate,
+not an authorization to repeat an uncertain action.
+
 The implemented pure entry point is `planWindowAction`. It receives the current
 instant, provider/policy IDs, selected normalized window, current observed
 window state, observation freshness, trigger capability and automation
@@ -67,6 +113,19 @@ reset target into an activation anchor because those two local times have
 different meanings.
 
 ## Modes in the MVP
+
+### Reviewing an unknown outcome
+
+Overview exposes a native review form for `uncertain` starts. It queues a
+persisted request; only the executor reads the provider. A fresh canonical
+observation plus intent-linked lifecycle closure evidence is required to end
+the old action as `resolved_unknown`. This does not assert success/failure or
+repeat the prompt. Same-cycle active evidence can confirm normally. Missing
+cycle identity, stale data, unavailable provider, or unproven closure leaves
+the block intact with an explanation. Requests survive restart and coalesce;
+checked requests are not automatically retried. Future actions still pass all
+normal gates, including provider-wide serialization and protected cleanup.
+See [ADR-008](adr/008-unknown-action-resolution.md).
 
 ### Manual
 
@@ -193,6 +252,18 @@ Auto preflight and confirmation also check the recorded cycle identity: a
 different later cycle cannot satisfy an old action. An ambiguous pre-dispatch
 read may be retried within the intent deadline; an ambiguous dispatched action
 may not.
+
+The executor re-reads the clock, provider mode, policy, exact cycle, capability
+and runtime coordination after preflight. Before the actual quota-affecting
+write, the adapter synchronously calls the executor's authorization gate again,
+after registering any created artifact. Expired opportunities and changes to
+automation authorization stop the send with an explicit `skipped` reason;
+cleanup remains independently durable. Positive tolerances have an exclusive
+deadline; zero tolerance admits only the exact scheduled instant. Stale
+preflight evidence also prevents sending after slow preparation. No SQLite
+transaction spans provider I/O. Once sent, expiry or pause cannot undo quota:
+the real result is recorded with current transition timestamps and confirmed
+or left uncertain without repeating the prompt.
 
 Confirmation reads are coordinated with reconciliation and authentication
 reads, but a completed observation is never cached. Before each confirmation

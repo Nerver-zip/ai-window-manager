@@ -1,6 +1,9 @@
 import client from 'prom-client';
 import type { ProviderActionStatus, ProviderObservation } from '../domain/types.js';
 import type { ActionIntentState } from '../storage/repositories.js';
+import { RETENTION_BUCKETS, type RetentionObservation } from '../storage/retention-observation.js';
+import type { RetentionProgress } from '../storage/retention-worker.js';
+import { LOOP_NAMES, type LoopMonitor } from '../scheduler/loop-monitor.js';
 
 client.collectDefaultMetrics({ prefix: 'ai_window_process_' });
 
@@ -69,6 +72,121 @@ export const lastSuccessfulInspectionTimestampSeconds = new client.Gauge({
 
 export const registry = client.register;
 
+const loopRunning = new client.Gauge({
+  name: 'ai_window_loop_running',
+  help: 'Daemon loop currently running.',
+  labelNames: ['loop'] as const,
+});
+const loopHealthy = new client.Gauge({
+  name: 'ai_window_loop_healthy',
+  help: 'Loop progress is within diagnostic tolerance.',
+  labelNames: ['loop'] as const,
+});
+const loopDuration = new client.Gauge({
+  name: 'ai_window_loop_duration_seconds',
+  help: 'Current or last loop duration.',
+  labelNames: ['loop'] as const,
+});
+const loopFailures = new client.Gauge({
+  name: 'ai_window_loop_consecutive_failures',
+  help: 'Unhandled consecutive daemon loop failures.',
+  labelNames: ['loop'] as const,
+});
+const loopCompleted = new client.Gauge({
+  name: 'ai_window_loop_completed_timestamp_seconds',
+  help: 'Last completed loop timestamp.',
+  labelNames: ['loop'] as const,
+});
+const loopSuccess = new client.Gauge({
+  name: 'ai_window_loop_success_timestamp_seconds',
+  help: 'Last successful loop timestamp.',
+  labelNames: ['loop'] as const,
+});
+const loopStarted = new client.Gauge({
+  name: 'ai_window_loop_started_timestamp_seconds',
+  help: 'Last started loop timestamp.',
+  labelNames: ['loop'] as const,
+});
+
+export function recordLoopProgress(snapshot: ReturnType<LoopMonitor['snapshot']>): void {
+  for (const loop of snapshot.loops) {
+    if (!LOOP_NAMES.includes(loop.name)) throw new Error('invalid loop metric label');
+    const labels = { loop: loop.name };
+    loopRunning.set(labels, loop.running ? 1 : 0);
+    loopHealthy.set(labels, loop.status === 'ok' || loop.status === 'starting' ? 1 : 0);
+    loopDuration.set(labels, loop.durationMs / 1000);
+    loopFailures.set(labels, loop.consecutiveFailures);
+    for (const [metric, timestamp] of [
+      [loopCompleted, loop.completedAtMs],
+      [loopSuccess, loop.lastSuccessAtMs],
+      [loopStarted, loop.startedAtMs],
+    ] as const) {
+      if (timestamp === null) metric.remove(labels);
+      else metric.set(labels, timestamp / 1000);
+    }
+  }
+}
+
+const retentionBacklog = new client.Gauge({
+  name: 'ai_window_retention_backlog_rows',
+  help: 'Cached eligible rows, capped at 1000 per bucket; a lower estimate when capped.',
+  labelNames: ['bucket'] as const,
+});
+const retentionBacklogCapped = new client.Gauge({
+  name: 'ai_window_retention_backlog_capped',
+  help: 'Whether the cached eligible-row estimate is capped.',
+  labelNames: ['bucket'] as const,
+});
+const retentionOldest = new client.Gauge({
+  name: 'ai_window_retention_oldest_age_seconds',
+  help: 'Cached age of oldest eligible row, zero when no eligible row exists.',
+  labelNames: ['bucket'] as const,
+});
+const retentionMeasured = new client.Gauge({
+  name: 'ai_window_retention_measured_timestamp_seconds',
+  help: 'Unix timestamp when retention backlog and file sizes were measured.',
+});
+const retentionDuration = new client.Gauge({
+  name: 'ai_window_retention_duration_seconds',
+  help: 'Duration of the latest maintenance pass.',
+});
+const retentionDeleted = new client.Gauge({
+  name: 'ai_window_retention_deleted_rows',
+  help: 'Rows removed during the latest maintenance pass.',
+});
+const retentionPending = new client.Gauge({
+  name: 'ai_window_retention_pending',
+  help: 'Whether bounded maintenance needs another pass.',
+});
+const storageBytes = new client.Gauge({
+  name: 'ai_window_storage_bytes',
+  help: 'Cached database/WAL file sizes when available.',
+  labelNames: ['file'] as const,
+});
+
+export function recordRetention(
+  progress: RetentionProgress,
+  observation: RetentionObservation,
+): void {
+  for (const bucket of RETENTION_BUCKETS) {
+    const sample = observation.buckets[bucket];
+    retentionBacklog.set({ bucket }, sample.count);
+    retentionBacklogCapped.set({ bucket }, Number(sample.capped));
+    retentionOldest.set({ bucket }, sample.oldestAgeSeconds);
+  }
+  retentionMeasured.set(observation.measuredAtMs / 1000);
+  retentionDuration.set(progress.durationMs / 1000);
+  retentionDeleted.set(progress.totalDeleted);
+  retentionPending.set(Number(progress.pending));
+  for (const [file, bytes] of [
+    ['database', observation.databaseBytes],
+    ['wal', observation.walBytes],
+  ] as const) {
+    if (bytes === null) storageBytes.remove({ file });
+    else storageBytes.set({ file }, bytes);
+  }
+}
+
 export const InspectionResult = {
   Success: 'success',
   AuthRequired: 'auth_required',
@@ -95,6 +213,7 @@ const actionIntentStates: readonly ActionIntentState[] = [
   'succeeded',
   'confirmed',
   'uncertain',
+  'resolved_unknown',
   'skipped',
   'canceled',
   'failed_retryable',
@@ -239,6 +358,24 @@ export function clearActionIntentMetrics(providerId: string): void {
 }
 
 export function resetMetricState(): void {
+  for (const metric of [
+    loopRunning,
+    loopHealthy,
+    loopDuration,
+    loopFailures,
+    loopCompleted,
+    loopSuccess,
+    loopStarted,
+    retentionBacklog,
+    retentionBacklogCapped,
+    retentionOldest,
+    retentionMeasured,
+    retentionDuration,
+    retentionDeleted,
+    retentionPending,
+    storageBytes,
+  ])
+    metric.reset();
   providerUp.reset();
   usageRatio.reset();
   remainingRatio.reset();

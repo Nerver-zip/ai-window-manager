@@ -9,6 +9,10 @@ import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
 import { Reconciler, type ReconcilerInput } from '../../src/scheduler/reconciler.js';
+import { ReconcileWorker } from '../../src/scheduler/reconcile-worker.js';
+import { ProviderInspectionCoordinator } from '../../src/providers/inspection-coordinator.js';
+import { createCommandApi } from '../../src/web/api-commands.js';
+import { ProviderReadBackoff } from '../../src/storage/provider-read-backoff.js';
 import { openDatabase } from '../../src/storage/database.js';
 import {
   createRepositories,
@@ -102,6 +106,103 @@ function setup(initial = '2026-09-14T07:59:00.000Z') {
 }
 
 describe('Reconciler', () => {
+  it('retains a manual hint during shared outage backoff and reads once after recovery', async () => {
+    const context = setup();
+    const backoff = new ProviderReadBackoff({
+      db: context.db,
+      clock: context.clock,
+      random: () => 0,
+      pollIntervalMs: () => 30_000,
+    });
+    const inspections = new ProviderInspectionCoordinator({ backoff });
+    const reconciler = context.reconciler({ inspections });
+    const worker = new ReconcileWorker({
+      providerIds: ['fake'],
+      intervalMs: 30_000,
+      work: async (hints) => (await reconciler.reconcile(hints)).inspectedProviderIds,
+      onError: () => {},
+    });
+    backoff.failed('fake', 'confirmation', 'unavailable');
+    for (let n = 0; n < 100; n++) worker.request('fake');
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(0);
+    expect(worker.pendingProviderIds()).toEqual(['fake']);
+    context.clock.advanceMs(30_000);
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(1);
+    expect(worker.pendingProviderIds()).toEqual([]);
+    expect(backoff.retryAtMs('fake', 'preflight')).toBe(0);
+    await worker.stop();
+    await inspections.close();
+  });
+
+  it('consumes an accepted inspect command through asynchronous wakeup even when not due', async () => {
+    const context = setup();
+    const inspections = new ProviderInspectionCoordinator();
+    const reconciler = context.reconciler({ inspections });
+    const errors: unknown[] = [];
+    const worker = new ReconcileWorker({
+      providerIds: ['fake'],
+      intervalMs: 30_000,
+      work: async (hints) => (await reconciler.reconcile(hints)).inspectedProviderIds,
+      onError: (error) => errors.push(error),
+    });
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(1);
+    context.clock.advanceMs(1000);
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(1);
+    worker.start();
+    const commands = createCommandApi({
+      clock: context.clock,
+      repositories: context.repositories,
+      adapters: new Map([['fake', context.adapter]]),
+      requestReconcile: (id) => {
+        worker.request(id);
+      },
+    });
+    expect(commands.inspect('fake').statusCode).toBe(202);
+    expect(context.inspectCount).toBe(1);
+    await worker.runOnce();
+    for (let n = 0; n < 15; n++) await Promise.resolve();
+    expect(context.inspectCount).toBe(2);
+    expect(worker.pendingProviderIds()).toEqual([]);
+    expect(context.repositories.providerState.get('fake')?.observedAtMs).toBe(
+      context.clock.now().getTime(),
+    );
+    expect(context.triggerCount).toBe(0);
+    expect(errors).toEqual([]);
+    await worker.stop();
+    await inspections.close();
+  });
+
+  it('keeps forced-read hints deferred while disabled or auth/runtime coordination is active', async () => {
+    const context = setup();
+    let changing = true;
+    const reconciler = context.reconciler({ isProviderRuntimeChanging: () => changing });
+    const worker = new ReconcileWorker({
+      providerIds: ['fake'],
+      intervalMs: 30_000,
+      work: async (hints) => (await reconciler.reconcile(hints)).inspectedProviderIds,
+      onError: () => {},
+    });
+    worker.request('fake');
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(0);
+    expect(worker.pendingProviderIds()).toEqual(['fake']);
+    changing = false;
+    const provider = context.repositories.providers.get('fake')!;
+    context.repositories.providers.upsert({ ...provider, enabled: false });
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(0);
+    expect(worker.pendingProviderIds()).toEqual(['fake']);
+    context.repositories.providers.upsert(provider);
+    await worker.runOnce();
+    expect(context.inspectCount).toBe(1);
+    expect(worker.pendingProviderIds()).toEqual([]);
+    await worker.stop();
+  });
+
   it('evaluates Antigravity families independently but plans only one provider-wide action', async () => {
     const context = setup();
     const provider = context.repositories.providers.get('fake');

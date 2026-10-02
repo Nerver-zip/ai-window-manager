@@ -120,6 +120,7 @@ describe('activation policy integration', () => {
     await service.reconcile();
 
     const executor = new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       clock: context.clock,
       db: context.db,
       repositories: context.repositories,
@@ -153,6 +154,7 @@ describe('activation policy integration', () => {
     context.fake.setPhase('ACTIVE');
 
     const executor = new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       clock: context.clock,
       db: context.db,
       repositories: context.repositories,
@@ -180,6 +182,7 @@ describe('activation policy integration', () => {
     await service.reconcile();
 
     const executor = new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       clock: context.clock,
       db: context.db,
       repositories: context.repositories,
@@ -236,6 +239,7 @@ describe('activation policy integration', () => {
     expect(planned.createdIntentIds).toEqual(['planned-intent']);
 
     const executor = new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       clock: context.clock,
       db: context.db,
       repositories: context.repositories,
@@ -364,6 +368,7 @@ describe('activation policy integration', () => {
     });
 
     const executor = new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
       clock: context.clock,
       db: context.db,
       repositories: context.repositories,

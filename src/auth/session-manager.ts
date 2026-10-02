@@ -134,7 +134,11 @@ export class AuthSessionManager {
       verificationIntervalMs?: number;
       processStopGraceMs?: number;
       onEvent?: (event: AuthSessionEvent) => void;
-      requestReconcile?: () => void;
+      requestReconcile?: (providerId: AuthProviderId) => void;
+      onAuthenticationReadRequested?: (
+        providerId: AuthProviderId,
+        phase: 'check' | 'verify',
+      ) => void;
     },
   ) {}
 
@@ -238,6 +242,7 @@ export class AuthSessionManager {
 
   private async begin(session: Session, driver: ProviderAuthDriver): Promise<void> {
     try {
+      this.options.onAuthenticationReadRequested?.(session.providerId, 'check');
       const alreadyAuthenticated = await driver.isAlreadyAuthenticated(
         session.abortController.signal,
       );
@@ -379,6 +384,12 @@ export class AuthSessionManager {
   private beginVerification(session: Session, driver: ProviderAuthDriver): void {
     const run = ++session.verificationRun;
     if (session.state !== 'VERIFYING') this.transition(session, 'VERIFYING');
+    try {
+      this.options.onAuthenticationReadRequested?.(session.providerId, 'verify');
+    } catch {
+      this.finish(session, 'FAILED', 'AUTH_VERIFICATION_FAILED');
+      return;
+    }
     void this.verifyUntilComplete(session, driver, run);
   }
 
@@ -395,7 +406,7 @@ export class AuthSessionManager {
         if (await driver.verify(session.abortController.signal)) {
           if (this.isActive(session) && session.verificationRun === run) {
             this.finish(session, 'SUCCEEDED', null);
-            this.options.requestReconcile?.();
+            this.options.requestReconcile?.(session.providerId);
           }
           return;
         }

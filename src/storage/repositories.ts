@@ -12,6 +12,7 @@ import type { UsageInterval, UsageSampleInput, UsageSeriesState } from '../usage
 import type { ProviderCleanupArtifactKind } from '../domain/provider-cleanup.js';
 import type { SqliteDatabase } from './database.js';
 import { WindowCycleRepository } from './window-cycles.js';
+import { ACTION_DEADLINE_SQL } from '../domain/action-deadline.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
 export type SchedulePolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'legacy';
@@ -23,6 +24,7 @@ export type ActionIntentState =
   | 'succeeded'
   | 'confirmed'
   | 'uncertain'
+  | 'resolved_unknown'
   | 'skipped'
   | 'canceled'
   | 'failed_retryable'
@@ -949,6 +951,61 @@ export class ProviderCleanupJobRepository {
 export class ActionIntentRepository {
   constructor(private readonly db: SqliteDatabase) {}
 
+  resolutionRequest(id: string): ActionResolutionRequest | undefined {
+    return this.db
+      .prepare(
+        `SELECT intent_id AS intentId, generation, state, reason_code AS reasonCode,
+      requested_at_ms AS requestedAtMs, checked_at_ms AS checkedAtMs
+      FROM action_resolution_requests WHERE intent_id = ?`,
+      )
+      .get(id) as ActionResolutionRequest | undefined;
+  }
+
+  requestResolution(
+    id: string,
+    nowMs: number,
+  ): { created: boolean; request: ActionResolutionRequest } {
+    return withTransaction(this.db, () => {
+      const intent = this.get(id);
+      if (!intent || intent.state !== 'uncertain') throw new Error('intent is not uncertain');
+      const result = this.db
+        .prepare(
+          `INSERT INTO action_resolution_requests
+        (intent_id, state, reason_code, requested_at_ms)
+        VALUES (?, 'pending', 'ACTION_RESOLUTION_REQUESTED', ?)
+        ON CONFLICT(intent_id) DO UPDATE SET generation = generation + 1, state = 'pending',
+          reason_code = 'ACTION_RESOLUTION_REQUESTED', requested_at_ms = excluded.requested_at_ms, checked_at_ms = NULL
+        WHERE action_resolution_requests.state = 'checked'
+          AND action_resolution_requests.checked_at_ms <= excluded.requested_at_ms - 30000`,
+        )
+        .run(id, nowMs);
+      if (result.changes === 1)
+        this.db
+          .prepare(
+            `INSERT INTO events
+        (occurred_at_ms, provider_id, type, severity, reason_code, data_json)
+        VALUES (?, ?, 'action_resolution_requested', 'warn', 'ACTION_RESOLUTION_REQUESTED', ?)`,
+          )
+          .run(nowMs, intent.providerId, stringifyJson({ intentId: id }));
+      return { created: result.changes === 1, request: this.resolutionRequest(id)! };
+    });
+  }
+
+  completeResolutionRequest(
+    request: ActionResolutionRequest,
+    nowMs: number,
+    reasonCode: string,
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE action_resolution_requests SET state = 'checked', checked_at_ms = ?, reason_code = ?
+      WHERE intent_id = ? AND generation = ? AND state = 'pending'`,
+        )
+        .run(nowMs, reasonCode, request.intentId, request.generation).changes === 1
+    );
+  }
+
   createIfAbsent(intent: ActionIntentRecord): { created: boolean; intent: ActionIntentRecord } {
     return withTransaction(this.db, () => {
       const result = this.db
@@ -1016,6 +1073,43 @@ export class ActionIntentRepository {
     return this.claim(id, 'planned', nowMs);
   }
 
+  /** Bind only an unsent intent; never reconstruct a legacy side effect's cycle. */
+  bindObservedCycle(
+    intent: ActionIntentRecord,
+    windowKind: string,
+    cycleAtMs: number,
+    nowMs: number,
+  ): ActionIntentRecord | undefined {
+    if (!Number.isSafeInteger(cycleAtMs) || !Number.isSafeInteger(nowMs))
+      throw new RangeError('invalid observed cycle timestamp');
+    const result = this.db
+      .prepare(
+        `UPDATE action_intents SET
+          explanation_json = json_set(explanation_json, '$.observedCycleAt', @cycleAtIso),
+          updated_at_ms = @nowMs
+        WHERE id = @id AND provider_id = @providerId
+          AND state IN ('planned', 'failed_retryable')
+          AND updated_at_ms = @expectedUpdated
+          AND explanation_json = @expectedExplanation
+          AND json_type(explanation_json, '$.observedCycleAt') IS NULL
+          AND json_extract(explanation_json, '$.windowKind') = @windowKind
+          AND EXISTS (SELECT 1 FROM observed_window_cycles
+            WHERE provider_id = @providerId AND window_kind = @windowKind
+              AND cycle_at_ms = @cycleAtMs)`,
+      )
+      .run({
+        id: intent.id,
+        providerId: intent.providerId,
+        expectedUpdated: intent.updatedAtMs,
+        expectedExplanation: stringifyJson(intent.explanation),
+        windowKind,
+        cycleAtMs,
+        cycleAtIso: new Date(cycleAtMs).toISOString(),
+        nowMs,
+      });
+    return result.changes === 1 ? this.get(intent.id) : undefined;
+  }
+
   claimRetryable(id: string, nowMs: number): ActionIntentRecord | undefined {
     return this.claim(id, 'failed_retryable', nowMs);
   }
@@ -1045,6 +1139,64 @@ export class ActionIntentRepository {
       finishedAtMs: updatedAtMs,
       lastErrorCode: null,
       confirmationNotBeforeMs: null,
+    });
+  }
+
+  /** Service must first verify a fresh matching closed-cycle observation. */
+  resolveUnknownIfUncertain(
+    intent: ActionIntentRecord,
+    resolvedAtMs: number,
+    verifiedAtMs: number,
+  ): boolean {
+    if (
+      !Number.isSafeInteger(resolvedAtMs) ||
+      !Number.isSafeInteger(verifiedAtMs) ||
+      verifiedAtMs > resolvedAtMs
+    )
+      throw new RangeError('invalid action resolution timestamp');
+    return withTransaction(this.db, () => {
+      const closure = this.db
+        .prepare(
+          `SELECT cycle_at_ms AS cycleAtMs, ended_at_ms AS endedAtMs,
+        observed_at_ms AS observedAtMs, window_kind AS windowKind
+        FROM observed_cycle_closures WHERE intent_id = ? AND provider_id = ?`,
+        )
+        .get(intent.id, intent.providerId) as
+        | { cycleAtMs: number; endedAtMs: number; observedAtMs: number; windowKind: string }
+        | undefined;
+      if (!closure || verifiedAtMs < closure.observedAtMs) return false;
+      const result = this.db
+        .prepare(
+          `UPDATE action_intents SET state = 'resolved_unknown',
+        finished_at_ms = @resolvedAtMs, updated_at_ms = @resolvedAtMs, confirmation_not_before_ms = NULL
+        WHERE id = @id AND state = 'uncertain' AND updated_at_ms = @expectedUpdated
+          AND confirmation_attempt_count = @expectedAttempts`,
+        )
+        .run({
+          id: intent.id,
+          resolvedAtMs,
+          expectedUpdated: intent.updatedAtMs,
+          expectedAttempts: intent.confirmationAttemptCount,
+        });
+      if (result.changes !== 1) return false;
+      this.db
+        .prepare(
+          `INSERT INTO events (occurred_at_ms, provider_id, type, severity, reason_code, data_json)
+        VALUES (?, ?, 'action_resolved_unknown', 'warn', 'ACTION_OUTCOME_UNKNOWN', ?)`,
+        )
+        .run(
+          resolvedAtMs,
+          intent.providerId,
+          stringifyJson({
+            intentId: intent.id,
+            windowKind: closure.windowKind,
+            cycleAtMs: closure.cycleAtMs,
+            endedAtMs: closure.endedAtMs,
+            verifiedAtMs,
+            outcome: 'unknown',
+          }),
+        );
+      return true;
     });
   }
 
@@ -1098,6 +1250,13 @@ export class ActionIntentRepository {
     return this.transition(id, ['executing'], 'failed_terminal', updatedAtMs, {
       finishedAtMs: updatedAtMs,
       lastErrorCode,
+    });
+  }
+
+  markSkippedBeforeDispatch(id: string, updatedAtMs: number, reasonCode: string): boolean {
+    return this.transition(id, ['executing'], 'skipped', updatedAtMs, {
+      finishedAtMs: updatedAtMs,
+      lastErrorCode: reasonCode,
     });
   }
 
@@ -1177,15 +1336,7 @@ export class ActionIntentRepository {
              )
            )
            AND (not_before_ms IS NULL OR not_before_ms <= @nowMs)
-           AND (
-             expires_at_ms IS NULL
-             OR expires_at_ms > @nowMs
-             OR (
-               expires_at_ms = scheduled_for_ms
-               AND expires_at_ms = @nowMs
-               AND json_extract(explanation_json, '$.toleranceSeconds') = 0
-             )
-           )`,
+           AND ${ACTION_DEADLINE_SQL}`,
       )
       .run({ id, expectedState, nowMs });
     return result.changes === 1 ? this.get(id) : undefined;
@@ -1268,6 +1419,15 @@ export class ActionIntentRepository {
       });
     return result.changes === 1;
   }
+}
+
+export interface ActionResolutionRequest {
+  intentId: string;
+  generation: number;
+  state: 'pending' | 'checked';
+  reasonCode: string;
+  requestedAtMs: number;
+  checkedAtMs: number | null;
 }
 
 interface ProviderRow {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProviderObservation, WindowSnapshot } from '../../src/domain/types.js';
 import { openDatabase } from '../../src/storage/database.js';
+import { trackWindowCycles } from '../../src/scheduler/window-cycle.js';
 import {
   createRepositories,
   withTransaction,
@@ -154,6 +155,87 @@ function intent(overrides: Partial<ActionIntentRecord> = {}): ActionIntentRecord
 }
 
 describe('storage repositories', () => {
+  it('conditionally binds an unsent cycle without rewriting a side effect or changed intent', () => {
+    const { db, repositories } = openTestDatabase();
+    repositories.providers.upsert(provider());
+    repositories.schedulePolicies.upsert(policy());
+    trackWindowCycles(observation(), repositories);
+    const original = intent({
+      explanation: { windowKind: 'five_hour', reasonCode: 'MANUAL_TRIGGER_REQUESTED' },
+    });
+    repositories.actionIntents.createIfAbsent(original);
+    const cycle = repositories.windowCycles.get('fake', 'five_hour')!;
+    expect(
+      repositories.actionIntents.bindObservedCycle(
+        original,
+        'five_hour',
+        cycle.cycleAtMs + 1,
+        observedAtMs,
+      ),
+    ).toBeUndefined();
+    expect(
+      repositories.actionIntents.bindObservedCycle(
+        original,
+        'weekly',
+        cycle.cycleAtMs,
+        observedAtMs,
+      ),
+    ).toBeUndefined();
+    const bound = repositories.actionIntents.bindObservedCycle(
+      original,
+      'five_hour',
+      cycle.cycleAtMs,
+      observedAtMs,
+    )!;
+    expect(bound.explanation).toEqual({
+      ...(original.explanation as object),
+      observedCycleAt: new Date(cycle.cycleAtMs).toISOString(),
+    });
+    expect(bound.dedupeKey).toBe(original.dedupeKey);
+    expect(
+      repositories.actionIntents.bindObservedCycle(
+        original,
+        'five_hour',
+        cycle.cycleAtMs,
+        observedAtMs,
+      ),
+    ).toBeUndefined();
+    const legacy = intent({
+      id: 'legacy',
+      dedupeKey: 'legacy-unidentified',
+      explanation: { windowKind: 'five_hour' },
+      state: 'uncertain',
+    });
+    repositories.actionIntents.createIfAbsent(legacy);
+    expect(
+      repositories.actionIntents.bindObservedCycle(
+        legacy,
+        'five_hour',
+        cycle.cycleAtMs,
+        observedAtMs,
+      ),
+    ).toBeUndefined();
+    const changed = intent({
+      id: 'changed',
+      dedupeKey: 'changed',
+      explanation: { windowKind: 'five_hour' },
+    });
+    repositories.actionIntents.createIfAbsent(changed);
+    repositories.actionIntents.setState(changed.id, 'planned', observedAtMs + 1);
+    expect(
+      repositories.actionIntents.bindObservedCycle(
+        changed,
+        'five_hour',
+        cycle.cycleAtMs,
+        observedAtMs,
+      ),
+    ).toBeUndefined();
+    expect(() =>
+      repositories.actionIntents.bindObservedCycle(original, 'five_hour', NaN, observedAtMs),
+    ).toThrow(RangeError);
+    db.close();
+  });
+
   it('persists providers and cascades current state/history on delete', () => {
     const { db, repositories } = openTestDatabase();
     repositories.providers.upsert(provider());
@@ -333,6 +415,135 @@ describe('storage repositories', () => {
         offset: 1,
       }),
     ).toEqual([expect.objectContaining({ occurredAtMs: observedAtMs })]);
+    db.close();
+  });
+
+  it('records closure evidence only after a real observed lifecycle boundary for an unresolved intent', () => {
+    const { db, repositories } = openTestDatabase();
+    repositories.providers.upsert(provider());
+    repositories.schedulePolicies.upsert(policy());
+    repositories.actionIntents.createIfAbsent(
+      intent({
+        state: 'uncertain',
+        explanation: {
+          windowKind: 'five_hour',
+          observedCycleAt: observedAt,
+        },
+      }),
+    );
+    withTransaction(db, () => trackWindowCycles(observation(), repositories));
+    expect(repositories.windowCycles.getClosure('fake', 'five_hour', observedAtMs)).toBeUndefined();
+    const next = observation();
+    const nextAt = '2026-09-19T17:00:00.000Z';
+    next.observedAt = nextAt;
+    next.windows = [sample('fake', nextAt)];
+    next.windows[0]!.resetAt!.value = '2026-09-19T22:00:00.000Z';
+    withTransaction(db, () => trackWindowCycles(next, repositories));
+    expect(repositories.windowCycles.getClosure('fake', 'five_hour', observedAtMs)).toEqual({
+      providerId: 'fake',
+      windowKind: 'five_hour',
+      cycleAtMs: observedAtMs,
+      endedAtMs: Date.parse('2026-09-19T16:00:00.000Z'),
+      observedAtMs: Date.parse(nextAt),
+      evidenceKind: 'anchored_boundary',
+    });
+    db.close();
+  });
+
+  it('resolves unknown outcomes conditionally with durable evidence, audit and preserved dedupe', () => {
+    const { db, repositories } = openTestDatabase();
+    repositories.providers.upsert(provider());
+    repositories.schedulePolicies.upsert(policy());
+    const original = intent({
+      state: 'uncertain',
+      attemptCount: 1,
+      lastErrorCode: 'UNKNOWN_RESULT',
+      explanation: { windowKind: 'five_hour', observedCycleAt: observedAt },
+    });
+    repositories.actionIntents.createIfAbsent(original);
+    expect(
+      repositories.actionIntents.resolveUnknownIfUncertain(
+        original,
+        observedAtMs + 2000,
+        observedAtMs + 1000,
+      ),
+    ).toBe(false);
+    const closure = {
+      providerId: 'fake',
+      windowKind: 'five_hour',
+      cycleAtMs: observedAtMs,
+      endedAtMs: observedAtMs + 500,
+      observedAtMs: observedAtMs + 1000,
+      evidenceKind: 'anchored_boundary' as const,
+    };
+    repositories.windowCycles.recordClosure(closure);
+    repositories.windowCycles.recordClosure(closure);
+    expect(repositories.windowCycles.getClosure('fake', 'five_hour', observedAtMs)).toEqual(
+      closure,
+    );
+    expect(
+      repositories.actionIntents.resolveUnknownIfUncertain(
+        original,
+        observedAtMs + 2000,
+        observedAtMs,
+      ),
+    ).toBe(false);
+    expect(
+      repositories.actionIntents.resolveUnknownIfUncertain(
+        original,
+        observedAtMs + 2000,
+        observedAtMs + 1000,
+      ),
+    ).toBe(true);
+    expect(repositories.actionIntents.get(original.id)).toEqual({
+      ...original,
+      state: 'resolved_unknown',
+      finishedAtMs: observedAtMs + 2000,
+      updatedAtMs: observedAtMs + 2000,
+    });
+    expect(repositories.actionIntents.listOpen()).toEqual([]);
+    expect(
+      repositories.actionIntents.resolveUnknownIfUncertain(
+        original,
+        observedAtMs + 3000,
+        observedAtMs + 1000,
+      ),
+    ).toBe(false);
+    expect(
+      repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+        original.id,
+        observedAtMs + 3000,
+      ),
+    ).toBe(false);
+    expect(
+      repositories.actionIntents.createIfAbsent({ ...original, id: 'duplicate' }).created,
+    ).toBe(false);
+    expect(repositories.events.list('fake')).toHaveLength(1);
+    expect(repositories.events.list('fake')[0]).toMatchObject({
+      type: 'action_resolved_unknown',
+      reasonCode: 'ACTION_OUTCOME_UNKNOWN',
+    });
+    const race = { ...original, id: 'race', dedupeKey: 'race-key' };
+    repositories.actionIntents.createIfAbsent(race);
+    repositories.windowCycles.recordClosure(closure);
+    expect(
+      repositories.actionIntents.markConfirmedIfSucceededOrUncertain(race.id, observedAtMs + 1500),
+    ).toBe(true);
+    expect(
+      repositories.actionIntents.resolveUnknownIfUncertain(
+        race,
+        observedAtMs + 2000,
+        observedAtMs + 1000,
+      ),
+    ).toBe(false);
+    expect(repositories.actionIntents.get(race.id)?.state).toBe('confirmed');
+    expect(() => repositories.actionIntents.resolveUnknownIfUncertain(original, 0, 1)).toThrow(
+      RangeError,
+    );
+    db.prepare('DELETE FROM action_intents').run();
+    expect(db.prepare('SELECT COUNT(*) AS count FROM observed_cycle_closures').get()).toEqual({
+      count: 0,
+    });
     db.close();
   });
 

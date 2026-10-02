@@ -18,6 +18,8 @@ import {
   runRetentionMaintenance,
   type RetentionPolicy,
 } from '../../src/storage/retention.js';
+import { RetentionWorker } from '../../src/storage/retention-worker.js';
+import { observeRetention } from '../../src/storage/retention-observation.js';
 
 const NOW = Date.parse('2026-09-19T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,6 +43,162 @@ describe('event retention classification', () => {
 });
 
 describe('retention maintenance', () => {
+  it('measures bounded backlog without counting protected samples or uncertain intents', () => {
+    const { db, repositories } = openTestDatabase();
+    const clock = new FakeClock(new Date(NOW));
+    const old = NOW - 366 * DAY_MS;
+    for (let index = 0; index < 4; index += 1)
+      appendEvent(repositories.events, 'provider_inspected', old + index);
+    repositories.windowSamples.insert(sample(old));
+    repositories.actionIntents.createIfAbsent(actionIntent('protected', 'uncertain', old));
+    repositories.actionIntents.createIfAbsent(actionIntent('terminal', 'confirmed', old));
+    const observed = observeRetention(db, clock, 2);
+    expect(observed.buckets.lifecycle).toEqual({
+      count: 2,
+      capped: true,
+      oldestAgeSeconds: (366 * DAY_MS) / 1000,
+    });
+    expect(observed.buckets.samples.count).toBe(0);
+    expect(observed.buckets.intents.count).toBe(1);
+    expect(observed.databaseBytes).toBeGreaterThan(0);
+    expect(observed.walBytes).toBeGreaterThan(0);
+    repositories.usageAggregation.advanceCheckpoint(
+      repositories.usageAggregation.maxSampleId(),
+      NOW,
+    );
+    expect(observeRetention(db, clock).buckets.samples.count).toBe(1);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM events').get()).toEqual({ count: 4 });
+  });
+
+  it('omits unavailable memory-database sizes and validates observation limits and time', () => {
+    const db = openDatabase(':memory:');
+    databases.push(db);
+    const clock = new FakeClock(new Date(NOW));
+    expect(observeRetention(db, clock)).toMatchObject({ databaseBytes: null, walBytes: null });
+    for (const cap of [0, -1, 1.5, 10_001])
+      expect(() => observeRetention(db, clock, cap)).toThrow(RangeError);
+    expect(() => observeRetention(db, { now: () => new Date(Number.NaN) })).toThrow(RangeError);
+  });
+
+  it('uses indexed event eligibility and the canonical classification without changing history', () => {
+    const { db, repositories } = openTestDatabase();
+    const names = [
+      'usage_sampled',
+      'provider_inspected',
+      'ACTION_CONFIRMED',
+      'csrf_rejected',
+      'provider_auth_required',
+      '  auth_failed  ',
+      'manual_trigger_requested',
+      'providerXordinary',
+      'inspection_failed',
+      'reconcile_finished',
+    ];
+    for (const name of names) appendEvent(repositories.events, name, NOW);
+    expect(db.prepare('SELECT type, retention_class FROM events ORDER BY id').all()).toEqual(
+      names.map((type) => ({ type, retention_class: classifyEventType(type) })),
+    );
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM events
+       WHERE occurred_at_ms < ? AND retention_class = ?
+       ORDER BY occurred_at_ms, id LIMIT ?`,
+      )
+      .all(NOW, 'lifecycle', 500) as Array<{ detail: string }>;
+    expect(plan.some(({ detail }) => detail.includes('idx_events_retention_class_time'))).toBe(
+      true,
+    );
+    expect(plan.some(({ detail }) => /SCAN events|TEMP B-TREE/.test(detail))).toBe(false);
+    const intentsPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT id FROM action_intents
+       WHERE COALESCE(finished_at_ms, updated_at_ms) < ? AND state = ?
+       ORDER BY COALESCE(finished_at_ms, updated_at_ms), id LIMIT ?`,
+      )
+      .all(NOW, 'confirmed', 500) as Array<{ detail: string }>;
+    expect(intentsPlan.some(({ detail }) => detail.includes('idx_action_intents_retention'))).toBe(
+      true,
+    );
+    expect(intentsPlan.some(({ detail }) => /SCAN action_intents|TEMP B-TREE/.test(detail))).toBe(
+      false,
+    );
+  });
+
+  it('drains daily expired input above nominal through bounded default worker passes', async () => {
+    const { db } = openTestDatabase();
+    const clock = new FakeClock(new Date(NOW));
+    const deleted: number[] = [];
+    const worker = new RetentionWorker({
+      clock,
+      idleIntervalMs: 86_400_000,
+      processBatch: () => {
+        const result = runRetentionMaintenance(db, { clock });
+        deleted.push(result.eventsDeleted.lifecycle);
+        return result;
+      },
+      onError: (error) => {
+        throw error;
+      },
+      yieldBetweenBatches: () => Promise.resolve(),
+    });
+    for (let day = 0; day < 3; day += 1) {
+      db.prepare(
+        `WITH RECURSIVE rows(n) AS (
+          SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 24000
+        )
+        INSERT INTO events (provider_id, type, occurred_at_ms, data_json)
+        SELECT 'fake', 'provider_inspected', ?, '{}' FROM rows`,
+      ).run(NOW - 366 * DAY_MS);
+      for (let pass = 0; pass < 4; pass += 1) await worker.runPass();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM events').get()).toEqual({ count: 0 });
+      clock.advanceMs(DAY_MS);
+    }
+    expect(deleted.every((count) => count <= 500)).toBe(true);
+    await worker.stop();
+  });
+
+  it('keeps up with sample input above nominal and resumes remaining SQL rows after worker restart', async () => {
+    const { db, repositories } = openTestDatabase();
+    const clock = new FakeClock(new Date(NOW));
+    const makeWorker = (maxBatchesPerPass?: number) =>
+      new RetentionWorker({
+        clock,
+        idleIntervalMs: 86_400_000,
+        ...(maxBatchesPerPass === undefined ? {} : { maxBatchesPerPass }),
+        processBatch: () => runRetentionMaintenance(db, { clock }),
+        yieldBetweenBatches: () => Promise.resolve(),
+        onError: (error) => {
+          throw error;
+        },
+      });
+    for (let day = 0; day < 3; day += 1) {
+      db.prepare(
+        `WITH RECURSIVE rows(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 18000
+      ) INSERT INTO window_samples (provider_id, window_kind, observed_at_ms, phase)
+        SELECT 'fake', 'five_hour', ?, 'unknown' FROM rows`,
+      ).run(NOW - 91 * DAY_MS);
+      repositories.usageAggregation.advanceCheckpoint(
+        repositories.usageAggregation.maxSampleId(),
+        NOW,
+      );
+      const first = makeWorker(2);
+      await first.runPass();
+      await first.stop();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({
+        count: 17_000,
+      });
+      // A replacement worker does not need the previous worker's in-memory progress.
+      const restarted = makeWorker();
+      for (let pass = 0; pass < 2; pass += 1) await restarted.runPass();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({
+        count: 0,
+      });
+      await restarted.stop();
+      clock.advanceMs(DAY_MS);
+    }
+  });
+
   it('deletes old samples/events and terminal intents while preserving current state and open intents', () => {
     const { db, repositories } = openTestDatabase();
     const oldOrdinary = NOW - 91 * DAY_MS;
@@ -86,6 +244,7 @@ describe('retention maintenance', () => {
       'skipped',
       'canceled',
       'failed_terminal',
+      'resolved_unknown',
     ] as const) {
       repositories.actionIntents.createIfAbsent(
         actionIntent(`old-terminal-${state}`, state, oldImportant, {
@@ -110,9 +269,9 @@ describe('retention maintenance', () => {
         action: 1,
         security: 1,
       },
-      terminalActionIntentsDeleted: 4,
+      terminalActionIntentsDeleted: 5,
     });
-    expect(result.totalDeleted).toBe(9);
+    expect(result.totalDeleted).toBe(10);
     expect(repositories.windowSamples.list('fake')).toHaveLength(1);
     expect(repositories.events.list('fake', { limit: 1000 })).toHaveLength(4);
     expect(repositories.providerState.get('fake')).toEqual(providerState());
@@ -126,7 +285,13 @@ describe('retention maintenance', () => {
       state: 'pending',
       artifactKind: 'codex_thread',
     });
-    for (const state of ['confirmed', 'skipped', 'canceled', 'failed_terminal'] as const) {
+    for (const state of [
+      'confirmed',
+      'skipped',
+      'canceled',
+      'failed_terminal',
+      'resolved_unknown',
+    ] as const) {
       expect(repositories.actionIntents.get(`old-terminal-${state}`)).toBeUndefined();
     }
     expect(repositories.actionIntents.get('old-terminal-succeeded')?.state).toBe('succeeded');

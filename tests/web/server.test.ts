@@ -11,6 +11,7 @@ import type {
 } from '../../src/domain/types.js';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
+import { LoopMonitor } from '../../src/scheduler/loop-monitor.js';
 import { openDatabase, type SqliteDatabase } from '../../src/storage/database.js';
 import {
   createRepositories,
@@ -47,6 +48,7 @@ function createApp(
   adapter: ProviderAdapter | undefined = inspectionSpy('fake'),
   requestReconcile?: () => void,
   fakeProviderEnabled = true,
+  monitorFactory?: (clock: FakeClock) => LoopMonitor,
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-web-'));
   const dbPath = path.join(dir, 'awm.db');
@@ -66,6 +68,7 @@ function createApp(
     adapters: adapter ? new Map([[adapter.id, adapter]]) : new Map(),
     clock,
     operatorAuth,
+    ...(monitorFactory ? { loopMonitor: monitorFactory(clock) } : {}),
     ...(requestReconcile ? { requestReconcile } : {}),
   });
   attachDefaultTestSession(app, operatorAuth.sessions.create().token);
@@ -241,6 +244,148 @@ function automationInspectionSpy(id: string): ProviderAdapter {
 }
 
 describe('web server persisted overview', () => {
+  it('keeps liveness public and operational progress private, independent of provider outage', async () => {
+    let monitor!: LoopMonitor;
+    const inspected = { count: 0 };
+    const { app, clock } = createApp(
+      (repositories) => {
+        repositories.providers.upsert(providerRecord());
+        repositories.providerState.upsert({
+          providerId: 'fake',
+          health: 'UNAVAILABLE',
+          observedAtMs: null,
+          staleAfterMs: null,
+          observation: null,
+          lastSuccessAtMs: null,
+          lastErrorCode: 'PROVIDER_UNAVAILABLE',
+          updatedAtMs: Date.parse(NOW),
+        });
+      },
+      inspectionSpy('fake', inspected),
+      undefined,
+      true,
+      (clock) => {
+        monitor = new LoopMonitor(clock);
+        monitor.register('reconcile', { intervalMs: 30_000, maxRunMs: 60_000 });
+        monitor.begin('reconcile');
+        monitor.finish('reconcile', true);
+        return monitor;
+      },
+    );
+    const denied = await app.inject({ url: '/api/v1/diagnostics', headers: { cookie: '' } });
+    expect(denied.statusCode).toBe(401);
+    expect(denied.body).not.toContain('reconcile');
+    const healthy = await app.inject('/api/v1/diagnostics');
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.json()).toMatchObject({
+      status: 'ready',
+      providers: [{ health: 'UNAVAILABLE' }],
+    });
+    clock.advanceMs(120_001);
+    const degraded = await app.inject('/api/v1/diagnostics');
+    expect(degraded.statusCode).toBe(503);
+    expect(degraded.json()).toMatchObject({ status: 'degraded', loops: [{ status: 'overdue' }] });
+    expect(degraded.headers['cache-control']).toBe('no-store');
+    expect(degraded.body).not.toContain('syntheticSecret');
+    const liveness = await app.inject({ url: '/healthz', headers: { cookie: '' } });
+    expect(liveness.statusCode).toBe(200);
+    expect(liveness.json()).toEqual({ status: 'ok' });
+    const metrics = await app.inject('/metrics');
+    expect(metrics.body).toContain('ai_window_loop_healthy{loop="reconcile"} 0');
+    expect(inspected.count).toBe(0);
+  });
+
+  it('does not claim operational readiness when no monitor is wired', async () => {
+    const { app } = createApp(() => {});
+    const response = await app.inject('/api/v1/diagnostics');
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ status: 'unavailable' });
+  });
+
+  it('queues unknown-outcome review through authenticated native forms without provider I/O', async () => {
+    const inspected = { count: 0 };
+    const { app, repositories } = createApp(
+      (repo, clock) => {
+        repo.providers.upsert(providerRecord());
+        const at = clock.now().getTime();
+        repo.actionIntents.createIfAbsent({
+          id: 'synthetic-pending',
+          providerId: 'fake',
+          policyId: null,
+          actionType: 'trigger_window',
+          dedupeKey: 'synthetic-pending-cycle',
+          state: 'uncertain',
+          scheduledForMs: at,
+          notBeforeMs: null,
+          expiresAtMs: at,
+          attemptCount: 1,
+          confirmationAttemptCount: 1,
+          confirmationNotBeforeMs: null,
+          reasonCode: 'ACTION_DISPATCH_UNCERTAIN',
+          explanation: { windowKind: '<script>synthetic</script>', observedCycleAt: NOW },
+          lastErrorCode: 'EOF',
+          createdAtMs: at,
+          startedAtMs: at,
+          finishedAtMs: null,
+          updatedAtMs: at,
+        });
+      },
+      inspectionSpy('fake', inspected),
+    );
+    const page = await app.inject({ url: '/' });
+    expect(page.body).toContain('Unresolved start outcome');
+    expect(page.body).toContain('action="/actions/synthetic-pending/resolve-unknown"');
+    expect(page.body).toContain('unknown outcome, not success or failure');
+    expect(page.body).not.toContain('<script>synthetic</script>');
+    const rawCookie = page.headers['set-cookie'];
+    const cookie = (Array.isArray(rawCookie) ? rawCookie[0] : rawCookie)?.split(';')[0] ?? '';
+    const token = cookie.split('=')[1] ?? '';
+    for (const url of [
+      '/actions/synthetic-pending/resolve-unknown',
+      '/api/v1/actions/synthetic-pending/resolve-unknown',
+    ]) {
+      expect((await app.inject({ method: 'POST', url, headers: { cookie: '' } })).statusCode).toBe(
+        401,
+      );
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url,
+            headers: { origin: 'https://evil.example', cookie },
+          })
+        ).statusCode,
+      ).toBe(403);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url,
+            headers: { origin: 'http://localhost:8787', host: 'localhost:8787', cookie },
+          })
+        ).statusCode,
+      ).toBe(403);
+    }
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/actions/synthetic-pending/resolve-unknown',
+      headers: {
+        origin: 'http://localhost:8787',
+        host: 'localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: new URLSearchParams({ csrfToken: token }).toString(),
+    });
+    expect(accepted.statusCode).toBe(303);
+    expect(repositories.actionIntents.resolutionRequest('synthetic-pending')?.state).toBe(
+      'pending',
+    );
+    expect(repositories.actionIntents.get('synthetic-pending')?.state).toBe('uncertain');
+    expect((await app.inject({ url: '/' })).body).toContain('Review queued');
+    expect(inspected.count).toBe(0);
+  });
+
   it('renders an empty workspace with useful navigation', async () => {
     const { app } = createApp(() => {});
     const response = await app.inject('/');

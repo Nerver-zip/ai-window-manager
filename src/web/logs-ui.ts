@@ -722,6 +722,7 @@ function classifyLogEvent(
   const manualTrigger = type.startsWith('manual_trigger_');
   const alertEvent =
     type === 'action_uncertain' ||
+    type === 'action_resolved_unknown' ||
     type.startsWith('action_failed_') ||
     type === 'provider_auth_required' ||
     type === 'provider_auth_failed' ||

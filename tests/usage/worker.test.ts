@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UsageAggregationWorker } from '../../src/usage/worker.js';
 import type { AggregationBatchResult } from '../../src/usage/service.js';
+import { LoopMonitor } from '../../src/scheduler/loop-monitor.js';
+import { FakeClock } from '../../src/scheduler/clock.js';
 
 const emptyBatch: AggregationBatchResult = { processed: 0, lastSampleId: 0, pending: false };
 
@@ -13,6 +15,48 @@ afterEach(() => {
 });
 
 describe('UsageAggregationWorker', () => {
+  it('reports a whole draining run, failure and recovery to the operational monitor', async () => {
+    vi.useFakeTimers();
+    const clock = new FakeClock('2026-10-02T00:00:00Z');
+    const monitor = new LoopMonitor(clock);
+    monitor.register('aggregation', { intervalMs: 60_000, maxRunMs: 60_000 });
+    let fail = false;
+    let blocked = true;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const worker = new UsageAggregationWorker({
+      processBatch: () => {
+        if (fail) throw new Error('synthetic failure');
+        return { ...emptyBatch, pending: blocked };
+      },
+      yieldBetweenBatches: async () => {
+        await barrier;
+        blocked = false;
+      },
+      onError: vi.fn(),
+      onRunStart: () => monitor.begin('aggregation'),
+      onRunFinish: (success) => monitor.finish('aggregation', success),
+    });
+    worker.start();
+    await flushMicrotasks();
+    expect(monitor.snapshot().loops[0]?.running).toBe(true);
+    clock.advanceMs(1000);
+    release();
+    await flushMicrotasks();
+    expect(monitor.snapshot().loops[0]).toMatchObject({ running: false, durationMs: 1000 });
+    fail = true;
+    worker.request();
+    await flushMicrotasks();
+    expect(monitor.snapshot().loops[0]?.consecutiveFailures).toBe(1);
+    fail = false;
+    worker.request();
+    await flushMicrotasks();
+    expect(monitor.snapshot().loops[0]?.consecutiveFailures).toBe(0);
+    await worker.stop();
+  });
+
   it('defers pre-start requests, coalesces bursts, and keeps an idle fallback at 60 seconds', async () => {
     vi.useFakeTimers();
     const processBatch = vi.fn(() => emptyBatch);

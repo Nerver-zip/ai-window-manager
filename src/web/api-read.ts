@@ -34,6 +34,7 @@ const DECISION_EVENT_TYPES = new Set([
   'schedule_missed',
 ]);
 const EXPLANATION_KEYS = new Set([
+  'observedCycleAt',
   'decision',
   'reasonCode',
   'providerId',
@@ -60,6 +61,11 @@ const EXPLANATION_KEYS = new Set([
   'dstAdjustment',
 ]);
 const EVENT_DATA_KEYS = new Set([
+  'windowKind',
+  'cycleAtMs',
+  'endedAtMs',
+  'verifiedAtMs',
+  'outcome',
   'actionType',
   'dedupeKey',
   'errorCode',
