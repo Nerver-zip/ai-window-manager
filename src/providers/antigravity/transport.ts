@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import type { ProviderCleanupArtifact } from '../provider.js';
+import { DispatchAuthorizationError } from '../dispatch-authorization.js';
 
 const MAX_STDOUT_BYTES = 512 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -74,6 +75,7 @@ export interface AntigravityTriggerCommandOptions {
   cleanupUnregisteredConversation: (conversationId: string) => Promise<void>;
   spawnProcess?: AntigravityProcessFactory;
   signal?: AbortSignal;
+  assertDispatchAllowed?: () => void;
 }
 
 function defaultSpawn(
@@ -251,7 +253,10 @@ export async function runAntigravityTriggerCommand(
           options.signal.removeEventListener('abort', abortListener);
       };
 
-      const finish = (error?: AntigravityActionTransportError, value?: string): void => {
+      const finish = (
+        error?: AntigravityActionTransportError | DispatchAuthorizationError,
+        value?: string,
+      ): void => {
         if (settled) return;
         settled = true;
         cleanup();
@@ -311,6 +316,17 @@ export async function runAntigravityTriggerCommand(
             return;
           }
           if (settled || options.signal?.aborted) return;
+          try {
+            options.assertDispatchAllowed?.();
+          } catch (error) {
+            terminate();
+            finish(
+              error instanceof DispatchAuthorizationError
+                ? error
+                : actionFailure('PROCESS_START_FAILED', 'failed'),
+            );
+            return;
+          }
           conversationId = event.conversation_id;
           promptSent = true;
           try {

@@ -18,6 +18,7 @@ import type {
   ProviderActionResult,
 } from '../../domain/types.js';
 import type { ProviderAdapter, ProviderCleanupArtifact, ProviderContext } from '../provider.js';
+import { DispatchAuthorizationError } from '../dispatch-authorization.js';
 import {
   CodexAppServerClient,
   CodexTransportError,
@@ -356,9 +357,11 @@ export class CodexProvider implements ProviderAdapter {
         this.triggerWorkspace,
         ctx.registerCleanupArtifact,
         ctx.signal,
+        ctx.assertDispatchAllowed,
       );
       return actionResult('succeeded', undefined, 'CODEX_TURN_COMPLETED', occurredAt);
     } catch (error) {
+      if (error instanceof DispatchAuthorizationError) throw error;
       return triggerFailureResult(error, occurredAt);
     }
   }

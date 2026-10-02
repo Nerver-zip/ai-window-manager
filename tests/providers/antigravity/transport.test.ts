@@ -11,6 +11,7 @@ import {
   streamingActionProcessFactory,
   type FakeAntigravityProcess,
 } from './support.js';
+import { DispatchAuthorizationError } from '../../../src/providers/dispatch-authorization.js';
 
 const validJson = '{"status":"ERROR","error":"Authentication required"}';
 const validActionJson = '{"status":"SUCCESS","response":"Hello.","num_turns":1}';
@@ -224,6 +225,32 @@ describe('Antigravity CLI transport', () => {
 });
 
 describe('Antigravity action transport', () => {
+  it('checks authorization after durable conversation registration and before writing the prompt', async () => {
+    let registered = false;
+    let prompts = 0;
+    await expect(
+      runAntigravityTriggerCommand({
+        executable: '/opt/agy',
+        model: 'gemini-3.8-flash-low',
+        timeoutMs: 1_000,
+        registerCleanupArtifact: () => {
+          registered = true;
+          return Promise.resolve();
+        },
+        cleanupUnregisteredConversation: () => Promise.resolve(),
+        assertDispatchAllowed: () => {
+          expect(registered).toBe(true);
+          throw new DispatchAuthorizationError('ACTION_PROVIDER_UNAVAILABLE');
+        },
+        spawnProcess: streamingActionProcessFactory(validActionJson, () => {
+          prompts += 1;
+        }),
+      }),
+    ).rejects.toMatchObject({ reasonCode: 'ACTION_PROVIDER_UNAVAILABLE' });
+    expect(prompts).toBe(0);
+    expect(registered).toBe(true);
+  });
+
   const defaults = {
     executable: '/opt/agy',
     model: 'gemini-3.8-flash-low',

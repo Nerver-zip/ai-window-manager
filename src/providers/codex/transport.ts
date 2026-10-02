@@ -148,6 +148,7 @@ export class CodexAppServerClient {
     workspace: string,
     registerCleanupArtifact: (artifact: ProviderCleanupArtifact) => Promise<void>,
     signal?: AbortSignal,
+    assertDispatchAllowed?: () => void,
   ): Promise<void> {
     this.start();
     const actionTimeoutMs = this.options.actionTimeoutMs ?? this.options.requestTimeoutMs;
@@ -192,6 +193,7 @@ export class CodexAppServerClient {
         throw new CodexTransportError('CLEANUP_REGISTRATION_FAILED', 'thread_start');
       }
 
+      assertDispatchAllowed?.();
       const turnResponse = await this.request(
         'turn/start',
         {

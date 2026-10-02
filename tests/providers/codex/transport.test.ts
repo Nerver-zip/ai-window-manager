@@ -5,6 +5,7 @@ import {
 } from '../../../src/providers/codex/transport.js';
 import { fakeProcessFactory } from './support.js';
 import type { FakeCodexProcess } from './support.js';
+import { DispatchAuthorizationError } from '../../../src/providers/dispatch-authorization.js';
 
 const clientOptions = {
   executable: 'codex-test-double',
@@ -15,6 +16,38 @@ const clientOptions = {
 const registerCleanupArtifact = (): Promise<void> => Promise.resolve();
 
 describe('Codex app-server JSONL transport', () => {
+  it('checks authorization after durable thread registration and before turn/start', async () => {
+    const methods: string[] = [];
+    let registered = false;
+    const client = new CodexAppServerClient({
+      ...clientOptions,
+      spawnProcess: fakeProcessFactory((message, process) => {
+        if (message.method) methods.push(message.method);
+        if (message.method === 'initialize' && message.id !== undefined)
+          process.send({ id: message.id, result: {} });
+        if (message.method === 'thread/start' && message.id !== undefined)
+          process.send({ id: message.id, result: { thread: { id: 'synthetic-thread' } } });
+      }),
+    });
+    await expect(
+      client.sendMessage(
+        'Hi!',
+        '/tmp/awm-codex-workspace',
+        () => {
+          registered = true;
+          return Promise.resolve();
+        },
+        undefined,
+        () => {
+          expect(registered).toBe(true);
+          throw new DispatchAuthorizationError('ACTION_INTENT_EXPIRED');
+        },
+      ),
+    ).rejects.toMatchObject({ reasonCode: 'ACTION_INTENT_EXPIRED' });
+    expect(methods).not.toContain('turn/start');
+    expect(registered).toBe(true);
+  });
+
   it('starts an ephemeral thread, sends a turn, waits for completion, and cleans up', async () => {
     const methods: Array<string | undefined> = [];
     const lifecycle: string[] = [];

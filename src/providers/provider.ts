@@ -11,6 +11,8 @@ export type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
 
 export interface ProviderContext {
   signal?: AbortSignal;
+  /** Executor-owned synchronous gate; call immediately before the quota-affecting write. */
+  assertDispatchAllowed?: () => void;
   /** Persist a provider-side artifact ID before a quota-affecting turn is dispatched. */
   registerCleanupArtifact?: (artifact: ProviderCleanupArtifact) => Promise<void>;
 }

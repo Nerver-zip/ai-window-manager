@@ -18,6 +18,7 @@ import type {
   WindowSnapshot,
 } from '../../domain/types.js';
 import type { ProviderAdapter, ProviderCleanupArtifact, ProviderContext } from '../provider.js';
+import { DispatchAuthorizationError } from '../dispatch-authorization.js';
 import {
   AntigravityOutputError,
   containsAuthenticationMarker,
@@ -312,6 +313,7 @@ export class AntigravityProvider implements ProviderAdapter {
         model,
         timeoutMs: this.actionTimeoutSeconds * 1_000,
         registerCleanupArtifact: ctx.registerCleanupArtifact,
+        ...(ctx.assertDispatchAllowed ? { assertDispatchAllowed: ctx.assertDispatchAllowed } : {}),
         cleanupUnregisteredConversation: (conversationId) =>
           deleteAntigravityConversation(this.antigravityHome, conversationId),
         ...(this.spawnProcess ? { spawnProcess: this.spawnProcess } : {}),
@@ -333,6 +335,7 @@ export class AntigravityProvider implements ProviderAdapter {
       // deliberately uncertain and must never be retried blindly.
       return actionResult('uncertain', 'AGY_TRIGGER_OUTCOME_UNKNOWN', occurredAt);
     } catch (error) {
+      if (error instanceof DispatchAuthorizationError) throw error;
       if (error instanceof AntigravityActionTransportError) {
         if (error.code === 'CLEANUP_REGISTRATION_FAILED') {
           return actionResult('rejected', 'AGY_CLEANUP_REGISTRATION_FAILED', occurredAt);

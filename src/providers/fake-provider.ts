@@ -168,7 +168,7 @@ export class FakeProvider implements ProviderAdapter {
     ctx: ProviderContext,
     request: TriggerWindowRequest,
   ): Promise<ProviderActionResult> {
-    void ctx;
+    ctx.assertDispatchAllowed?.();
     void request;
     const occurredAt = this.clock.now().toISOString();
     if (this.currentHealth() !== 'UP') {
