@@ -63,6 +63,8 @@ function intent(overrides: Partial<ActionIntentRecord> = {}): ActionIntentRecord
     notBeforeMs: null,
     expiresAtMs: nowMs + 60_000,
     attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
     reasonCode: 'TARGET_RESET_WINDOW_MATCH',
     explanation: { windowKind: 'five_hour' },
     lastErrorCode: null,
@@ -131,5 +133,75 @@ describe('atomic action intent transitions', () => {
       lastErrorCode: 'ACTION_RECOVERY_REQUIRED',
     });
     expect(repositories.actionIntents.markUncertainIfExecuting('intent-1', nowMs + 2)).toBe(false);
+  });
+
+  it('claims confirmation attempts once and persists a due instant across reopen', () => {
+    const { db, repositories } = setup();
+    repositories.actionIntents.createIfAbsent(intent({ state: 'uncertain' }));
+
+    const first = repositories.actionIntents.claimConfirmationAttempt(
+      'intent-1',
+      nowMs,
+      nowMs + 30_000,
+    );
+    expect(first).toMatchObject({
+      confirmationAttemptCount: 1,
+      confirmationNotBeforeMs: nowMs + 30_000,
+    });
+    expect(
+      repositories.actionIntents.claimConfirmationAttempt(
+        'intent-1',
+        nowMs + 5_000,
+        nowMs + 35_000,
+      ),
+    ).toBeUndefined();
+    expect(
+      repositories.actionIntents.claimConfirmationAttempt(
+        'intent-1',
+        nowMs + 30_000,
+        nowMs + 90_000,
+      ),
+    ).toMatchObject({
+      confirmationAttemptCount: 2,
+      confirmationNotBeforeMs: nowMs + 90_000,
+    });
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    db.close();
+
+    const reopened = openDatabase(path.join(resources.at(-1)!.dir, 'awm.db'));
+    const reopenedRepositories = createRepositories(reopened);
+    expect(
+      reopenedRepositories.actionIntents.claimConfirmationAttempt(
+        'intent-1',
+        nowMs + 60_000,
+        nowMs + 120_000,
+      ),
+    ).toBeUndefined();
+    expect(
+      reopenedRepositories.actionIntents.claimConfirmationAttempt(
+        'intent-1',
+        nowMs + 90_000,
+        nowMs + 210_000,
+      ),
+    ).toMatchObject({
+      confirmationAttemptCount: 3,
+      confirmationNotBeforeMs: nowMs + 210_000,
+    });
+    reopened.close();
+  });
+
+  it('clears the next confirmation instant only after success is confirmed', () => {
+    const { repositories } = setup();
+    repositories.actionIntents.createIfAbsent(intent({ state: 'succeeded' }));
+    repositories.actionIntents.claimConfirmationAttempt('intent-1', nowMs, nowMs + 30_000);
+
+    expect(
+      repositories.actionIntents.markConfirmedIfSucceededOrUncertain('intent-1', nowMs + 1),
+    ).toBe(true);
+    expect(repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'confirmed',
+      confirmationAttemptCount: 1,
+      confirmationNotBeforeMs: null,
+    });
   });
 });

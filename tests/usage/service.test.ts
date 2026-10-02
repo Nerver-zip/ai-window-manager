@@ -7,6 +7,7 @@ import {
   createRepositories,
   type ProviderRecord,
   type StorageRepositories,
+  withTransaction,
 } from '../../src/storage/repositories.js';
 import { processUsageAggregationBatch, readUsagePageData } from '../../src/usage/service.js';
 import type { WindowSnapshot } from '../../src/domain/types.js';
@@ -415,13 +416,20 @@ describe('usage aggregation persistence', () => {
   });
 
   it('bounds a dense selected month while retaining both time ends and reset boundaries', () => {
-    const { repositories } = database();
+    const { db, repositories } = database();
     const start = now - 30 * 24 * 60 * 60_000;
     const count = 2_000;
-    for (let index = 0; index < count; index += 1) {
-      const ratio = index < 1_000 ? index / 1_000 : (index - 1_000) / 1_000;
-      repositories.windowSamples.insert(weeklySample(start + index * 60_000, ratio));
-    }
+    const insert = db.prepare(
+      `INSERT INTO window_samples (
+        provider_id, window_kind, observed_at_ms, phase, usage_ratio
+      ) VALUES ('codex', 'weekly', ?, 'ACTIVE', ?)`,
+    );
+    withTransaction(db, () => {
+      for (let index = 0; index < count; index += 1) {
+        const ratio = index < 1_000 ? index / 1_000 : (index - 1_000) / 1_000;
+        insert.run(start + index * 60_000, ratio);
+      }
+    });
     const points = repositories.windowSamples.chartPoints(
       'codex',
       'weekly',

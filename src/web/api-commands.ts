@@ -141,6 +141,8 @@ function triggerProvider(
     notBeforeMs: null,
     expiresAtMs: nowMs + 5 * 60 * 1000,
     attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
     reasonCode: 'MANUAL_TRIGGER_REQUESTED',
     explanation: {
       decision: 'manual_trigger',

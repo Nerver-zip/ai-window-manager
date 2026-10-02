@@ -21,6 +21,9 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
   daily usage in the saved timezone.
 - `events`: append-only human/metric history, not the source of truth for reconstructing all state.
 - `action_intents`: durable side-effect state and duplicate prevention.
+  Confirmation attempts and their next eligible timestamps are persisted on the
+  intent so an unresolved result is not inspected on every executor tick or
+  reset to an immediate retry after restart.
 - `provider_cleanup_jobs`: durable deletion obligations for disposable provider
   artifacts created by AWM actions. An opaque external ID remains only until
   cleanup succeeds; it is not exposed in ordinary history, metrics or read APIs.
@@ -149,6 +152,10 @@ The forward-only schema currently consists of:
   and restart-safe reset evidence. Existing intents, keys and provider state
   are preserved; fresh inspections populate the new table. Back up before
   upgrading; migrations remain forward-only.
+- `migrations/009_action_confirmation_backoff.sql` for per-intent confirmation
+  attempt counts and restart-safe confirmation deadlines. Existing action
+  outcomes and dedupe keys are preserved; prior intents begin with no recorded
+  confirmation backoff.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

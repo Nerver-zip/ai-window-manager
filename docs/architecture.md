@@ -148,6 +148,21 @@ action synchronously.
 
 The daemon wakes every configurable interval (default 30 seconds), loads runtime config/current state/open intents, inspects due providers, computes decisions, and advances intents. Scheduling correctness comes from persisted state + current time, not from a `setTimeout` expected to survive restarts.
 
+All in-process consumers of provider inspections share a per-provider coordinator.
+It coalesces concurrent reads only; completed observations are never cached.
+At most one fresh read is queued behind an older in-flight read. Action completion
+invalidates the read epoch, so the confirmation barrier cannot mistake a
+pre-action result for post-action evidence. Caller cancellation does not cancel
+another consumer's shared read, and a provider executable replacement cannot
+coalesce reads across client identities. The coordinator is deliberately
+in-memory; restart recovery still begins with a new reconciliation.
+
+Usage aggregation is a separate bounded worker. It is requested after a
+successful observation and its samples have committed, runs one startup sweep to
+recover missed notifications, and retains a 60-second idle fallback. Each batch
+is capped at 500 samples and yields between batches; errors retry with bounded
+backoff. It does not wake on a one-second polling timer.
+
 After a provider trigger's artifact ID is known, the adapter persists a
 `provider_cleanup_jobs` obligation before sending the prompt. A bounded worker
 retries only idempotent deletion with backoff. Cleanup is independent from

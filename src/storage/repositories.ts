@@ -89,6 +89,8 @@ export interface ActionIntentRecord {
   notBeforeMs: number | null;
   expiresAtMs: number | null;
   attemptCount: number;
+  confirmationAttemptCount: number;
+  confirmationNotBeforeMs: number | null;
   reasonCode: string;
   explanation: unknown;
   lastErrorCode: string | null;
@@ -954,11 +956,13 @@ export class ActionIntentRepository {
           `INSERT INTO action_intents (
             id, provider_id, policy_id, action_type, dedupe_key, state,
             scheduled_for_ms, not_before_ms, expires_at_ms, attempt_count,
+            confirmation_attempt_count, confirmation_not_before_ms,
             reason_code, explanation_json, last_error_code, created_at_ms,
             started_at_ms, finished_at_ms, updated_at_ms
           ) VALUES (
             @id, @providerId, @policyId, @actionType, @dedupeKey, @state,
             @scheduledForMs, @notBeforeMs, @expiresAtMs, @attemptCount,
+            @confirmationAttemptCount, @confirmationNotBeforeMs,
             @reasonCode, @explanation, @lastErrorCode, @createdAtMs,
             @startedAtMs, @finishedAtMs, @updatedAtMs
           ) ON CONFLICT(dedupe_key) DO NOTHING`,
@@ -1040,7 +1044,30 @@ export class ActionIntentRepository {
     return this.transition(id, ['succeeded', 'uncertain'], 'confirmed', updatedAtMs, {
       finishedAtMs: updatedAtMs,
       lastErrorCode: null,
+      confirmationNotBeforeMs: null,
     });
+  }
+
+  claimConfirmationAttempt(
+    id: string,
+    nowMs: number,
+    nextEligibleAtMs: number,
+  ): ActionIntentRecord | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE action_intents SET
+          confirmation_attempt_count = confirmation_attempt_count + 1,
+          confirmation_not_before_ms = @nextEligibleAtMs,
+          updated_at_ms = @nowMs
+         WHERE id = @id
+           AND state IN ('succeeded', 'uncertain')
+           AND (
+             confirmation_not_before_ms IS NULL
+             OR confirmation_not_before_ms <= @nowMs
+           )`,
+      )
+      .run({ id, nowMs, nextEligibleAtMs });
+    return result.changes === 1 ? this.get(id) : undefined;
   }
 
   markRetryableIfExecuting(
@@ -1172,6 +1199,7 @@ export class ActionIntentRepository {
     details: {
       lastErrorCode?: string | null;
       notBeforeMs?: number | null;
+      confirmationNotBeforeMs?: number | null;
       finishedAtMs?: number | null;
     } = {},
   ): boolean {
@@ -1181,6 +1209,9 @@ export class ActionIntentRepository {
         `UPDATE action_intents SET
           state = @nextState,
           not_before_ms = CASE WHEN @hasNotBefore = 1 THEN @notBeforeMs ELSE not_before_ms END,
+          confirmation_not_before_ms = CASE
+            WHEN @hasConfirmationNotBefore = 1 THEN @confirmationNotBeforeMs
+            ELSE confirmation_not_before_ms END,
           last_error_code = CASE WHEN @hasLastError = 1 THEN @lastErrorCode ELSE last_error_code END,
           finished_at_ms = CASE WHEN @hasFinishedAt = 1 THEN @finishedAtMs ELSE finished_at_ms END,
           updated_at_ms = @updatedAtMs
@@ -1192,6 +1223,8 @@ export class ActionIntentRepository {
         updatedAtMs,
         hasNotBefore: Object.hasOwn(details, 'notBeforeMs') ? 1 : 0,
         notBeforeMs: details.notBeforeMs ?? null,
+        hasConfirmationNotBefore: Object.hasOwn(details, 'confirmationNotBeforeMs') ? 1 : 0,
+        confirmationNotBeforeMs: details.confirmationNotBeforeMs ?? null,
         hasLastError: Object.hasOwn(details, 'lastErrorCode') ? 1 : 0,
         lastErrorCode: details.lastErrorCode ?? null,
         hasFinishedAt: Object.hasOwn(details, 'finishedAtMs') ? 1 : 0,
@@ -1333,6 +1366,8 @@ interface ActionIntentRow {
   not_before_ms: number | null;
   expires_at_ms: number | null;
   attempt_count: number;
+  confirmation_attempt_count: number;
+  confirmation_not_before_ms: number | null;
   reason_code: string;
   explanation_json: string;
   last_error_code: string | null;
@@ -1542,6 +1577,8 @@ function actionIntentFromRow(row: ActionIntentRow): ActionIntentRecord {
     notBeforeMs: row.not_before_ms,
     expiresAtMs: row.expires_at_ms,
     attemptCount: row.attempt_count,
+    confirmationAttemptCount: row.confirmation_attempt_count,
+    confirmationNotBeforeMs: row.confirmation_not_before_ms,
     reasonCode: row.reason_code,
     explanation: parseJson(row.explanation_json),
     lastErrorCode: row.last_error_code,

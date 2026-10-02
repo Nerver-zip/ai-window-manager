@@ -169,6 +169,8 @@ function intent(overrides: Partial<ActionIntentRecord> = {}): ActionIntentRecord
     notBeforeMs: null,
     expiresAtMs: at + 30_000,
     attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
     reasonCode: 'TARGET_RESET_WINDOW_MATCH',
     explanation: {
       decision: 'create_intent',

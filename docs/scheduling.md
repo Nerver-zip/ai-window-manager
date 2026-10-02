@@ -194,6 +194,19 @@ different later cycle cannot satisfy an old action. An ambiguous pre-dispatch
 read may be retried within the intent deadline; an ambiguous dispatched action
 may not.
 
+Confirmation reads are coordinated with reconciliation and authentication
+reads, but a completed observation is never reused as fresh confirmation.
+Before each confirmation inspection, the executor atomically claims and persists
+that confirmation attempt and its next eligible time. The first confirmation is
+attempted immediately after a reported success, or on the next executor tick for
+an uncertain outcome. Failed confirmations then back off from the configured
+reconcile interval (capped at five minutes, doubling up to the cap); the attempt
+count/deadline survive restart. This delays read-only checks only. It never
+re-dispatches a quota-consuming trigger, which remains provider-wide serialized
+until confirmed or otherwise safely resolved. The executor may still wake on
+its independent short interval, but intervening ticks skip the provider read
+until the persisted confirmation deadline.
+
 Trigger-created conversations are disposable artifacts. Their exact provider
 identifier is persisted as a cleanup obligation before prompt dispatch where
 the official protocol exposes it. Cleanup failures retry deletion only and do
@@ -202,6 +215,8 @@ not alter, reopen or redispatch the trigger intent.
 ## Retries
 
 - Read-only inspection: bounded exponential backoff + jitter, reset after success.
+- Post-action confirmation: persisted per-intent backoff, initially immediate,
+  then based on the reconcile interval and capped at five minutes.
 - Auth errors: no tight retry; transition to `AUTH_REQUIRED`.
 - 429: honor official retry information when available; otherwise bounded backoff.
 - Trigger rejected before dispatch: retry only if error is explicitly safe/retryable and intent remains within schedule tolerance.

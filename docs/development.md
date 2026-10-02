@@ -47,6 +47,15 @@ pnpm validate
 
 `pnpm validate` is the canonical completion gate. It runs format checking, lint, strict typechecking, the coverage-enforced test suite, the build, and Gitleaks. Install Gitleaks before running it locally. `pnpm test:coverage` requires at least 90% global lines, statements, functions, and branches and writes text/LCOV reports under the ignored `coverage/` directory.
 
+`node --max-old-space-size=96 scripts/performance-benchmark.mjs` runs the
+synthetic local benchmark after `pnpm build`. It measures idle aggregation
+batch cadence, retained-history heatmap queries, and concurrent/fresh-barrier
+inspection coordination. See [`performance.md`](performance.md) for the
+isolated Node 24 runtime and heap-limit comparison methodology and results.
+The fixture does not invoke packaged provider clients, use credentials, or send
+provider requests; its child-process RSS is not an estimate of Codex or
+Antigravity memory use.
+
 Pull requests also run `actionlint` against every workflow. Dependency Review
 runs on pull requests once the repository is public (GitHub restricts this
 feature for private repositories unless Code Security is enabled). Dependabot

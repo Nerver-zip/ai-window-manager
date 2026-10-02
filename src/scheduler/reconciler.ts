@@ -3,6 +3,7 @@ import { parseProviderObservation } from '../domain/schemas.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
 import type { ProviderObservation } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
+import type { ProviderInspectionCoordinator } from '../providers/inspection-coordinator.js';
 import { decideTargetReset, type SchedulerDecision } from './decision.js';
 import { deriveCurrentWindow, deriveCurrentWindowForTarget } from './current-window.js';
 import { planWindowAction, PlannerReasonCode, type PlannerDecision } from './planner.js';
@@ -40,6 +41,7 @@ export interface ReconcilerInput {
   db: SqliteDatabase;
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
+  inspections?: ProviderInspectionCoordinator;
   isProviderRuntimeChanging?: (providerId: string) => boolean;
   resolveTargetResetAt?: TargetResetResolver;
   idFactory?: () => string;
@@ -453,7 +455,10 @@ export class Reconciler {
     { ok: true; observation: ProviderObservation } | { ok: false; code: InspectionFailureCode }
   > {
     try {
-      const observation = parseProviderObservation(await adapter.inspect({}));
+      const rawObservation = this.input.inspections
+        ? await this.input.inspections.inspect(adapter)
+        : await adapter.inspect({});
+      const observation = parseProviderObservation(rawObservation);
       if (observation.providerId !== adapter.id) {
         return { ok: false, code: 'INVALID_PROVIDER_RESPONSE' };
       }
@@ -590,6 +595,8 @@ export class Reconciler {
       notBeforeMs: null,
       expiresAtMs: scheduledForMs + decision.explanation.toleranceSeconds * 1000,
       attemptCount: 0,
+      confirmationAttemptCount: 0,
+      confirmationNotBeforeMs: null,
       reasonCode: decision.reasonCode,
       explanation: decision.explanation,
       lastErrorCode: null,
@@ -625,6 +632,8 @@ export class Reconciler {
       notBeforeMs: decision.notBefore ? Date.parse(decision.notBefore) : null,
       expiresAtMs: decision.validUntil ? Date.parse(decision.validUntil) : null,
       attemptCount: 0,
+      confirmationAttemptCount: 0,
+      confirmationNotBeforeMs: null,
       reasonCode: decision.reasonCode,
       explanation,
       lastErrorCode: null,

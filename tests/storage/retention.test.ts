@@ -399,6 +399,8 @@ function actionIntent(
     notBeforeMs: null,
     expiresAtMs: timestampMs + DAY_MS,
     attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
     reasonCode: 'TEST',
     explanation: { test: true },
     lastErrorCode: null,

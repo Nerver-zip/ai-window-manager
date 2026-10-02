@@ -9,6 +9,7 @@ import type {
   ProviderObservation,
 } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
+import type { ProviderInspectionCoordinator } from '../providers/inspection-coordinator.js';
 import type { Clock } from './clock.js';
 import type {
   ActionIntentRecord,
@@ -51,6 +52,9 @@ export interface ActionExecutorInput {
   db: SqliteDatabase;
   repositories: StorageRepositories;
   adapters: ReadonlyMap<string, ProviderAdapter>;
+  inspections?: ProviderInspectionCoordinator;
+  confirmationBaseIntervalMs?: number;
+  confirmationMaxBackoffMs?: number;
   /** Defers provider reads/actions while its executable is being replaced or rolled back. */
   isProviderRuntimeChanging?: (providerId: string) => boolean;
   retryDelayMs?: number;
@@ -80,6 +84,8 @@ const definitelyPreDispatchErrors = new Set([
   'PROVIDER_UNAVAILABLE',
   'CLEANUP_REGISTRATION_FAILED',
 ]);
+const DEFAULT_CONFIRMATION_BASE_INTERVAL_MS = 30_000;
+const DEFAULT_CONFIRMATION_MAX_BACKOFF_MS = 300_000;
 
 export class ActionExecutor {
   private running = false;
@@ -113,6 +119,9 @@ export class ActionExecutor {
         // Existing outcomes must be resolved before a sibling family may run.
         // Even if confirmation succeeds now, the sibling is reconsidered next tick.
         handledProviderIds.add(current.providerId);
+        if (current.confirmationNotBeforeMs !== null && nowMs < current.confirmationNotBeforeMs) {
+          continue;
+        }
         await this.confirmExisting(current, report);
         continue;
       }
@@ -194,7 +203,7 @@ export class ActionExecutor {
       return;
     }
 
-    const preflight = await this.inspect(adapter);
+    const preflight = await this.inspect(adapter, true);
     if (!preflight.observation) {
       this.markRetryable(intent, nowMs, preflight.failureCode ?? 'INSPECTION_FAILED', report);
       return;
@@ -264,11 +273,13 @@ export class ActionExecutor {
         },
       );
     } catch (error) {
+      this.input.inspections?.markActionCompleted(claimed.providerId);
       this.input.onTrigger?.(claimed.providerId, 'uncertain');
       this.handleDispatchException(claimed, error, report);
       return;
     }
 
+    this.input.inspections?.markActionCompleted(claimed.providerId);
     this.input.onTrigger?.(claimed.providerId, result.status);
     await this.phase('after_dispatch_before_result', claimed);
     if (result.status === 'succeeded') {
@@ -357,15 +368,29 @@ export class ActionExecutor {
     const adapter = this.input.adapters.get(intent.providerId);
     if (!adapter) return;
     await this.phase('during_confirmation', intent);
-    const inspection = await this.inspect(adapter);
+    const nowMs = this.input.clock.now().getTime();
+    const current = this.input.repositories.actionIntents.get(intent.id);
+    if (!current || (current.state !== 'succeeded' && current.state !== 'uncertain')) return;
+    const delayMs = this.confirmationDelay(current);
+    const claimed = this.input.repositories.actionIntents.claimConfirmationAttempt(
+      intent.id,
+      nowMs,
+      nowMs + delayMs,
+    );
+    if (!claimed) return;
+
+    const inspection = await this.inspect(adapter, true);
     if (
       inspection.observation &&
       this.cycleStillCurrent(intent) &&
       isSatisfied(inspection.observation, intent)
     ) {
-      const nowMs = this.input.clock.now().getTime();
+      const confirmedAtMs = this.input.clock.now().getTime();
       if (
-        this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(intent.id, nowMs)
+        this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+          intent.id,
+          confirmedAtMs,
+        )
       ) {
         report.confirmedIntentIds.push(intent.id);
         this.appendEventOnce(
@@ -380,11 +405,11 @@ export class ActionExecutor {
     }
 
     if (intent.state === 'succeeded') {
-      const nowMs = this.input.clock.now().getTime();
+      const uncertainAtMs = this.input.clock.now().getTime();
       if (
         this.input.repositories.actionIntents.markUncertainIfSucceeded(
           intent.id,
-          nowMs,
+          uncertainAtMs,
           inspection.failureCode ?? ActionReasonCode.ConfirmationFailed,
         )
       ) {
@@ -396,9 +421,31 @@ export class ActionExecutor {
     }
   }
 
-  private async inspect(adapter: ProviderAdapter): Promise<FreshInspection> {
+  private confirmationDelay(intent: ActionIntentRecord): number {
+    const baseIntervalMs =
+      this.input.confirmationBaseIntervalMs ?? DEFAULT_CONFIRMATION_BASE_INTERVAL_MS;
+    const maxBackoffMs = this.input.confirmationMaxBackoffMs ?? DEFAULT_CONFIRMATION_MAX_BACKOFF_MS;
+    if (
+      !Number.isSafeInteger(baseIntervalMs) ||
+      baseIntervalMs < 1 ||
+      !Number.isSafeInteger(maxBackoffMs) ||
+      maxBackoffMs < 1
+    ) {
+      throw new RangeError('confirmation backoff configuration is invalid');
+    }
+    const attempt = intent.confirmationAttemptCount + 1;
+    const exponent = Math.min(attempt - 1, 30);
+    return Math.min(maxBackoffMs, Math.min(baseIntervalMs, maxBackoffMs) * 2 ** exponent);
+  }
+
+  private async inspect(adapter: ProviderAdapter, fresh = false): Promise<FreshInspection> {
     try {
-      const observation = parseProviderObservation(await adapter.inspect({}));
+      const rawObservation = this.input.inspections
+        ? await (fresh
+            ? this.input.inspections.inspectFresh(adapter)
+            : this.input.inspections.inspect(adapter))
+        : await adapter.inspect({});
+      const observation = parseProviderObservation(rawObservation);
       if (
         observation.providerId !== adapter.id ||
         observation.health !== 'UP' ||

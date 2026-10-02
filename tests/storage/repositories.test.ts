@@ -140,6 +140,8 @@ function intent(overrides: Partial<ActionIntentRecord> = {}): ActionIntentRecord
     notBeforeMs: null,
     expiresAtMs: observedAtMs + 60_000,
     attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
     reasonCode: 'TARGET_RESET',
     explanation: { target: '2026-09-19T12:00:00.000Z' },
     lastErrorCode: null,

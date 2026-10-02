@@ -10,6 +10,11 @@
 - Require fresh window evidence after a Codex turn completes; unconfirmed
   effects remain uncertain without retrying the prompt. Surface recorded-cycle
   decisions explicitly in scheduling reads and history.
+- Serialize and coalesce overlapping read-only provider inspections, while
+  retaining a fresh post-action confirmation barrier and persisted bounded
+  confirmation backoff.
+- Replace the one-second usage aggregation poll with commit-triggered bounded
+  work, startup recovery and a one-minute idle fallback.
 
 ## [0.1.0] - 2026-09-27
 

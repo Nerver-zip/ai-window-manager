@@ -155,6 +155,8 @@ function setup(targetWindowKind: string, triggerOutput: string) {
       notBeforeMs: null,
       expiresAtMs: nowMs + 60_000,
       attemptCount: 0,
+      confirmationAttemptCount: 0,
+      confirmationNotBeforeMs: null,
       reasonCode: 'TARGET_RESET_WINDOW_MATCH',
       explanation: { windowKind, policyUpdatedAtMs: nowMs },
       lastErrorCode: null,
@@ -176,6 +178,7 @@ function setup(targetWindowKind: string, triggerOutput: string) {
   return {
     db,
     repositories,
+    clock,
     executor,
     addIntent,
     setTargetActive(value: boolean) {
@@ -242,8 +245,13 @@ describe('Antigravity trigger through the durable executor', () => {
 
     await context.executor.executeDue();
     expect(context.dispatchCount).toBe(1);
+    expect(context.repositories.actionIntents.get('agy-intent')).toMatchObject({
+      confirmationAttemptCount: 1,
+      confirmationNotBeforeMs: context.clock.now().getTime() + 30_000,
+    });
 
     context.setTargetActive(true);
+    context.clock.advanceMs(30_000);
     await expect(context.executor.executeDue()).resolves.toMatchObject({
       confirmedIntentIds: ['agy-intent'],
     });

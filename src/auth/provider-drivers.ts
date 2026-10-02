@@ -1,4 +1,5 @@
 import type { ProviderAdapter } from '../providers/provider.js';
+import type { ProviderInspectionCoordinator } from '../providers/inspection-coordinator.js';
 import type { AuthCommandRunner, AuthProcessFactory } from './process.js';
 import { captureAuthCommand, providerProcessEnvironment, spawnAuthProcess } from './process.js';
 import type {
@@ -10,6 +11,7 @@ import type {
 
 export interface ProviderAuthDriverOptions {
   adapters: ReadonlyMap<string, ProviderAdapter>;
+  inspections?: ProviderInspectionCoordinator;
   codexHome: string;
   codexExecutable: string;
   antigravityHome: string;
@@ -94,7 +96,9 @@ class CodexAuthDriver implements ProviderAuthDriver {
   }
 
   async verify(signal: AbortSignal): Promise<boolean> {
-    const observation = await this.adapter.inspect({ signal });
+    const observation = await (this.options.inspections
+      ? this.options.inspections.inspectFresh(this.adapter, { signal })
+      : this.adapter.inspect({ signal }));
     return observation.health === 'UP' || observation.health === 'DEGRADED';
   }
 }
@@ -123,7 +127,9 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
   ) {}
 
   async isAlreadyAuthenticated(signal: AbortSignal): Promise<boolean | undefined> {
-    const observation = await this.adapter.inspect({ signal });
+    const observation = await (this.options.inspections
+      ? this.options.inspections.inspectFresh(this.adapter, { signal })
+      : this.adapter.inspect({ signal }));
     if (observation.health === 'AUTH_REQUIRED') return false;
     if (observation.health === 'UP' || observation.health === 'DEGRADED') return true;
     return undefined;
@@ -231,7 +237,9 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
   }
 
   async verify(signal: AbortSignal): Promise<boolean> {
-    const observation = await this.adapter.inspect({ signal });
+    const observation = await (this.options.inspections
+      ? this.options.inspections.inspectFresh(this.adapter, { signal })
+      : this.adapter.inspect({ signal }));
     return observation.health === 'UP' || observation.health === 'DEGRADED';
   }
 }

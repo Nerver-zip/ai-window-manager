@@ -27,10 +27,12 @@ import { resolveLocalOccurrence } from './scheduler/time.js';
 import { Reconciler } from './scheduler/reconciler.js';
 import { ActionExecutor } from './scheduler/action-executor.js';
 import { ProviderCleanupWorker } from './scheduler/provider-cleanup.js';
+import { ProviderInspectionCoordinator } from './providers/inspection-coordinator.js';
 import { openDatabase } from './storage/database.js';
 import { createRepositories, type SchedulePolicyRecord } from './storage/repositories.js';
 import { runRetentionMaintenance } from './storage/retention.js';
 import { processUsageAggregationBatch } from './usage/service.js';
+import { UsageAggregationWorker } from './usage/worker.js';
 import { buildServer } from './web/server.js';
 import { seedBootstrapProviderDefaults } from './bootstrap/provider-defaults.js';
 import { ProviderClientRuntimeStore } from './provider-clients/runtime-store.js';
@@ -66,17 +68,23 @@ registerFakeProvider();
 registerCodexProvider();
 registerAntigravityProvider();
 hydrateMetricsFromState();
+const providerInspections = new ProviderInspectionCoordinator();
+let requestUsageAggregation = (): void => undefined;
 
 const reconciler = new Reconciler({
   clock,
   db,
   repositories,
   adapters,
+  inspections: providerInspections,
   resolveTargetResetAt,
   isProviderRuntimeChanging: (providerId) =>
     (providerId === 'codex' || providerId === 'antigravity') &&
     (providerClientUpdateTasks?.isRuntimeChanging(providerId) ?? false),
-  onObservation: recordObservation,
+  onObservation: (observation) => {
+    recordObservation(observation);
+    requestUsageAggregation();
+  },
   onInspectionFailure: recordProviderHealth,
   onInspection: recordInspection,
   onSchedulerDecision: recordSchedulerDecision,
@@ -91,6 +99,7 @@ const authSessions = new AuthSessionManager({
   clock,
   drivers: createProviderAuthDrivers({
     adapters,
+    inspections: providerInspections,
     codexHome: config.AWM_CODEX_HOME,
     codexExecutable: providerExecutables.codex,
     antigravityHome: config.AWM_ANTIGRAVITY_HOME,
@@ -144,6 +153,9 @@ const executor = new ActionExecutor({
   db,
   repositories,
   adapters,
+  inspections: providerInspections,
+  confirmationBaseIntervalMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
+  retryDelayMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
   isProviderRuntimeChanging: (providerId) => {
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
     return clientId ? (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false) : false;
@@ -187,11 +199,15 @@ const app = buildServer({
   },
   ...(providerClientUpdateControls ? { providerClientUpdates: providerClientUpdateControls } : {}),
 });
+const usageAggregationWorker = new UsageAggregationWorker({
+  processBatch: () => processUsageAggregationBatch(db, repositories, clock.now().getTime()),
+  onError: (error) => app.log.error({ error }, 'usage aggregation failed'),
+});
+requestUsageAggregation = () => usageAggregationWorker.request();
 let reconcileTimer: NodeJS.Timeout | undefined;
 let executorTimer: NodeJS.Timeout | undefined;
 let retentionTimer: NodeJS.Timeout | undefined;
 let providerClientUpdateTimer: NodeJS.Timeout | undefined;
-const usageAggregationTimer: { current?: NodeJS.Timeout } = {};
 let reconcileInFlight: Promise<unknown> | undefined;
 let executorInFlight: Promise<unknown> | undefined;
 let stopping = false;
@@ -263,17 +279,6 @@ function startRetentionLoop(): void {
   }, config.AWM_RETENTION_INTERVAL_SECONDS * 1000);
 }
 
-function processUsageAggregation(): void {
-  if (stopping) return;
-  try {
-    const result = processUsageAggregationBatch(db, repositories, clock.now().getTime());
-    if (result.pending)
-      app.log.debug({ processed: result.processed }, 'usage aggregation backlog remains');
-  } catch (error) {
-    app.log.error({ error }, 'usage aggregation failed');
-  }
-}
-
 async function shutdown(signal: string): Promise<void> {
   if (stopping) return;
   stopping = true;
@@ -282,11 +287,12 @@ async function shutdown(signal: string): Promise<void> {
   if (executorTimer) clearInterval(executorTimer);
   if (retentionTimer) clearInterval(retentionTimer);
   if (providerClientUpdateTimer) clearInterval(providerClientUpdateTimer);
-  if (usageAggregationTimer.current) clearInterval(usageAggregationTimer.current);
   if (reconcileInFlight) await reconcileInFlight;
   if (executorInFlight) await executorInFlight;
   if (providerClientUpdateTasks) await providerClientUpdateTasks.close();
   await authSessions.shutdown();
+  await providerInspections.close();
+  await usageAggregationWorker.stop();
   operatorAuth.clearSessions();
   await app.close();
   db.close();
@@ -373,6 +379,7 @@ function providerIsBusy(providerId: ProviderClientId): boolean {
     authentication === 'VERIFYING';
   return (
     activeAuthentication ||
+    providerInspections.isInspecting(providerId) ||
     reconciler.isRunning() ||
     repositories.actionIntents.listOpen(providerId).length > 0 ||
     repositories.providerCleanupJobs.hasOpenForProvider(providerId)
@@ -594,11 +601,10 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 await reconciler.reconcile();
 await executeActionsAndCleanup();
 refreshRuntimeMetrics();
-processUsageAggregation();
 runRetentionMaintenance(db, { clock });
 startReconcileLoop();
 startExecutorLoop();
 startRetentionLoop();
-usageAggregationTimer.current = setInterval(processUsageAggregation, 1_000);
+usageAggregationWorker.start();
 await app.listen({ host: config.AWM_BIND, port: config.AWM_PORT });
 startAutomaticProviderClientUpdates();

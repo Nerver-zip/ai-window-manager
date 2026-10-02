@@ -87,6 +87,8 @@ function setup(
     notBeforeMs: null,
     expiresAtMs: nowMs + 30_000,
     attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
     reasonCode: 'TARGET_RESET_WINDOW_MATCH',
     explanation:
       options.targetWindowKind === null
@@ -1010,6 +1012,48 @@ describe('ActionExecutor', () => {
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
   });
 
+  it('honors a persisted confirmation deadline after reopening the database', async () => {
+    const context = setup();
+    const nowMs = context.clock.now().getTime();
+    context.fake.setPhase('ACTIVE');
+    context.db
+      .prepare(
+        `UPDATE action_intents
+         SET state = 'uncertain', attempt_count = 1,
+             confirmation_attempt_count = 2,
+             confirmation_not_before_ms = ?, updated_at_ms = ?
+         WHERE id = 'intent-1'`,
+      )
+      .run(nowMs + 30_000, nowMs);
+    context.db.close();
+
+    const reopenedDb = openDatabase(path.join(context.dir, 'awm.db'));
+    const reopenedRepositories = createRepositories(reopenedDb);
+    resources.push({ db: reopenedDb, dir: context.dir });
+    let inspections = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: (ctx) => {
+        inspections += 1;
+        return context.fake.inspect(ctx);
+      },
+    };
+    const executor = context.executor({
+      db: reopenedDb,
+      repositories: reopenedRepositories,
+      adapters: new Map([['fake', adapter]]),
+    });
+
+    await executor.executeDue();
+    expect(inspections).toBe(0);
+    expect(context.triggerCount).toBe(0);
+    context.clock.advanceMs(30_000);
+    await executor.executeDue();
+    expect(inspections).toBe(1);
+    expect(context.triggerCount).toBe(0);
+    expect(reopenedRepositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
   it('turns a failed confirmation into uncertain and later confirms by observation', async () => {
     const context = setup();
     let inspections = 0;
@@ -1025,10 +1069,73 @@ describe('ActionExecutor', () => {
 
     await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+    expect(inspections).toBe(2);
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+    expect(inspections).toBe(2);
+    context.clock.advanceMs(29_999);
+    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+    expect(inspections).toBe(2);
+    context.clock.advanceMs(1);
     await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
 
+    expect(inspections).toBe(3);
     expect(context.triggerCount).toBe(1);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+  });
+
+  it('backs off pending confirmations to a configured cap without redispatching', async () => {
+    const context = setup({ triggerResult: 'uncertain' });
+    let inspections = 0;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: (ctx) => {
+        inspections += 1;
+        return context.fake.inspect(ctx);
+      },
+    };
+    const executor = context.executor({
+      adapters: new Map([['fake', adapter]]),
+      confirmationBaseIntervalMs: 30_000,
+      confirmationMaxBackoffMs: 90_000,
+    });
+
+    await executor.executeDue();
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      confirmationAttemptCount: 0,
+      confirmationNotBeforeMs: null,
+    });
+    await executor.executeDue();
+    expect(inspections).toBe(2);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      confirmationAttemptCount: 1,
+      confirmationNotBeforeMs: context.clock.now().getTime() + 30_000,
+    });
+
+    context.clock.advanceMs(30_000);
+    await executor.executeDue();
+    expect(inspections).toBe(3);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      confirmationAttemptCount: 2,
+      confirmationNotBeforeMs: context.clock.now().getTime() + 60_000,
+    });
+
+    context.clock.advanceMs(60_000);
+    await executor.executeDue();
+    expect(inspections).toBe(4);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      confirmationAttemptCount: 3,
+      confirmationNotBeforeMs: context.clock.now().getTime() + 90_000,
+    });
+
+    context.clock.advanceMs(90_000);
+    await executor.executeDue();
+    expect(inspections).toBe(5);
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      confirmationAttemptCount: 4,
+      confirmationNotBeforeMs: context.clock.now().getTime() + 90_000,
+    });
+    expect(context.triggerCount).toBe(1);
   });
 
   it('recovers a crash during confirmation without redispatching', async () => {
