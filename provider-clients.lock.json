@@ -3,16 +3,16 @@
   "providers": {
     "codex": {
       "repository": "openai/codex",
-      "version": "0.159.3",
-      "tag": "rust-v0.159.3",
+      "version": "0.160.0",
+      "tag": "rust-v0.160.0",
       "assets": {
         "amd64": {
           "name": "codex-package-x86_64-unknown-linux-musl.tar.gz",
-          "sha256": "3930f31ac5fca861ea3e444e2683f261190d96b63fba58e0a40a879174369cdf"
+          "sha256": "4fcc47ab57f52ff75363951a8761146cd10c8288bd86fed45487dbb204a16b71"
         },
         "arm64": {
           "name": "codex-package-aarch64-unknown-linux-musl.tar.gz",
-          "sha256": "20b7d673cf2b64b6c6208fa4fda06feb9dac0572da9987294b48cde1dab9d001"
+          "sha256": "7f0fe42ff22ecfa3a47bc4a34f5b22c4218b431a4ec0aba51c7d98299f07900c"
         }
       }
     },
