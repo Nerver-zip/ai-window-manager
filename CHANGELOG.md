@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Update the transitive `source-map-js` dependency to `1.2.2` to address
+  GHSA-68fv-2mgg-jv7q without suppressing dependency audit findings.
 - Drain expired history incrementally with bounded, yielding passes instead of
   one daily batch. Add forward-only retention indexes and cached low-cardinality
   backlog/age, maintenance progress and DB/WAL size metrics. Keep unaggregated
