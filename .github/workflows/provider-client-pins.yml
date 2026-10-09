@@ -2,7 +2,7 @@ name: Provider client source pins
 
 on:
   schedule:
-    - cron: '23 7 * * *'
+    - cron: '23 7 * * 1'
   workflow_dispatch:
 
 permissions: {}
@@ -12,8 +12,46 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check-and-propose:
+  cadence:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      due: ${{ steps.cadence.outputs.due }}
+    steps:
+      - name: Check provider update cadence
+        id: cadence
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == 'workflow_dispatch' ]]; then
+            echo 'due=true' >> "${GITHUB_OUTPUT}"
+            echo 'Manual dispatch bypasses the scheduled cadence.'
+            exit 0
+          fi
+
+          # Anchor the first biweekly check to Monday, 2026-10-12 (UTC).
+          anchor_epoch="$(date -u -d '2026-10-12 00:00:00 UTC' +%s)"
+          today_epoch="$(date -u +%s)"
+          elapsed_days=$(( (today_epoch - anchor_epoch) / 86400 ))
+          if (( elapsed_days < 0 )); then
+            due=false
+          else
+            elapsed_weeks=$(( elapsed_days / 7 ))
+            (( elapsed_weeks % 2 == 0 )) && due=true || due=false
+          fi
+
+          echo "due=${due}" >> "${GITHUB_OUTPUT}"
+          if [[ "${due}" == 'true' ]]; then
+            echo 'This is a provider-update week.'
+          else
+            echo 'Skipping provider release checks this week.'
+          fi
+
+  check-and-propose:
+    needs: cadence
+    if: github.ref == 'refs/heads/main' && needs.cadence.outputs.due == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
