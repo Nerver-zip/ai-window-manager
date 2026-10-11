@@ -13,12 +13,13 @@ Closure requires read-only observation by the application, canonical validation,
 freshness after the requested read began, an exact target/cycle identity and
 durable evidence that the old attempt is no longer actionable. An observed
 transition beyond an anchored cycle boundary or a supported active-to-inactive
-transition is sufficient. For a cycle that never acquired an anchor, the
+transition is sufficient. For a cycle with no unexpired anchor, the
 operator may instead close after a full target duration has elapsed since a
 persisted post-dispatch/recovery event and two fresh, high-confidence inactive
 readings at least 15 seconds apart show the reset moving with elapsed time.
 Both readings must have zero usage and agree with the reported duration within
-five seconds. This records an unknown outcome, including when no window ever
+five seconds. A retained anchor at or before the observed cycle identity is
+expired and does not block this path. This records an unknown outcome, including when no window ever
 started. A local deadline, TTL, rounded quota value or isolated reset timestamp
 remains insufficient.
 

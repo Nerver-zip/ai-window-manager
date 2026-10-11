@@ -119,8 +119,11 @@ export function assessActionResolution(input: ActionResolutionInput): {
     currentCycle.windowKind !== target ||
     previousCycle.cycleAtMs !== cycleAt ||
     currentCycle.cycleAtMs !== cycleAt ||
-    previousCycle.anchoredResetAtMs !== null ||
-    currentCycle.anchoredResetAtMs !== null ||
+    (previousCycle.anchoredResetAtMs !== null &&
+      previousCycle.anchoredResetAtMs > previousCycle.cycleAtMs) ||
+    (currentCycle.anchoredResetAtMs !== null &&
+      currentCycle.anchoredResetAtMs > currentCycle.cycleAtMs) ||
+    previousCycle.anchoredResetAtMs !== currentCycle.anchoredResetAtMs ||
     previousCycle.phase !== 'INACTIVE' ||
     currentCycle.phase !== 'INACTIVE' ||
     !actionable(previousCycle.phaseConfidence) ||

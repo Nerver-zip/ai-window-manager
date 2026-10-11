@@ -9,6 +9,7 @@ import {
 } from '../../../src/providers/antigravity/index.js';
 import { AntigravityProvider } from '../../../src/providers/antigravity/provider.js';
 import { AntigravityOutputError } from '../../../src/providers/antigravity/protocol.js';
+import { observeWindowCycle } from '../../../src/scheduler/window-cycle.js';
 import {
   hangingStreamingActionProcessFactory,
   outputProcessFactory,
@@ -47,6 +48,48 @@ function providerFor(
 }
 
 describe('AntigravityProvider', () => {
+  it('timestamps a slow usage response when it completes so rolling resets stay actionable', async () => {
+    const startedAtMs = Date.parse(observedAt);
+    const durationMs = 18_000_000;
+    const times = [0, 7_000, 30_000, 37_000].map((offset) => startedAtMs + offset);
+    const outputs = [7_000, 37_000].map((offset) =>
+      fixture('usage-json.success.json').replaceAll(
+        '2029-12-31T17:00:00Z',
+        new Date(startedAtMs + offset + durationMs).toISOString(),
+      ),
+    );
+    let clockIndex = 0;
+    let outputIndex = 0;
+    const provider = providerFor(outputs[0]!, {
+      now: () => new Date(times[clockIndex++]!),
+      spawnProcess: (executable, args, options) =>
+        outputProcessFactory(outputs[outputIndex++]!)(executable, args, options),
+    });
+
+    const first = await provider.inspect({});
+    const second = await provider.inspect({});
+    const firstWindow = first.windows.find(
+      (window) => window.windowKind === 'antigravity_gemini_five_hour',
+    );
+    const secondWindow = second.windows.find(
+      (window) => window.windowKind === 'antigravity_gemini_five_hour',
+    );
+    expect(first.observedAt).toBe(new Date(startedAtMs + 7_000).toISOString());
+    expect(second.observedAt).toBe(new Date(startedAtMs + 37_000).toISOString());
+    expect(firstWindow?.resetAt?.value).toBe(
+      new Date(startedAtMs + 7_000 + durationMs).toISOString(),
+    );
+    expect(secondWindow?.resetAt?.value).toBe(
+      new Date(startedAtMs + 37_000 + durationMs).toISOString(),
+    );
+    expect(firstWindow).toBeDefined();
+    expect(secondWindow).toBeDefined();
+    const baseline = observeWindowCycle(firstWindow!);
+    expect(observeWindowCycle(secondWindow!, baseline.cycle).window.phase).toMatchObject({
+      value: 'INACTIVE',
+      confidence: 'high',
+    });
+  });
   it('is exported from the provider boundary and keeps triggering disabled by default', () => {
     const provider = providerFor(fixture('usage-json.success.json'));
 

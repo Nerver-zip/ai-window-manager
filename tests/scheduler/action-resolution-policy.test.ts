@@ -115,6 +115,13 @@ describe('unknown outcome resolution policy', () => {
     value.outcomeRecordedAtMs = outcomeAt;
     value.observation.windows[0].resetAt!.value = iso(now + durationMs - 10_000);
     expect(assessActionResolution(value).allowed).toBe(false);
+    value.observation.windows[0].resetAt!.value = iso(now + durationMs);
+    // Tracking retains an old anchor even after its boundary advanced the cycle.
+    value.previousCycle.anchoredResetAtMs = value.previousCycle.cycleAtMs;
+    value.currentCycle.anchoredResetAtMs = value.currentCycle.cycleAtMs;
+    expect(assessActionResolution(value).allowed).toBe(true);
+    value.currentCycle.anchoredResetAtMs = now + durationMs;
+    expect(assessActionResolution(value).allowed).toBe(false);
   });
   it('accepts only a freshly verified later cycle backed by durable closure evidence', () => {
     expect(assessActionResolution(input())).toEqual({

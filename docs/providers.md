@@ -135,6 +135,12 @@ blindly retried.
   official architecture-specific SHA-256 digests. Its release-preparation
   compatibility probes were unauthenticated and did not consume quota; the
   sign-in transcript above remains evidence specific to the earlier CLI.
+- An operator's 2026-10-11 read-only observation showed a full five-hour quota
+  with a reset 6.209 seconds beyond the adapter's pre-CLI timestamp. That
+  exceeded the five-second rolling-reset inference tolerance and temporarily
+  produced `UNKNOWN` phase. Successful `/usage` reads now use the completion
+  time of the official CLI response for normalized facts; this is a local
+  timing correction, not a new provider lifecycle claim or quota action.
 - An operator-provided experiment on 2026-09-24 used one ordinary `Hi!` via
   official headless `agy` with `gemini-3.8-flash-low` and
   `claude-sonnet-4-6`. In each selected family, the five-hour reset changed

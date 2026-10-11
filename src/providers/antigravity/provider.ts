@@ -399,6 +399,12 @@ export class AntigravityProvider implements ProviderAdapter {
         throw new AntigravityOutputError();
       }
 
+      // The CLI may take several seconds to return a rolling now + duration
+      // reset. Stamp the completed read, not the time before the CLI ran.
+      const completedAt = this.now();
+      if (!Number.isFinite(completedAt.getTime())) throw new AntigravityOutputError();
+      observedAt = completedAt.toISOString();
+
       const windows = envelope.command.data.groups.flatMap((group, index) =>
         group.buckets.map((bucket) => normalizeBucket(this.id, group, index, bucket, observedAt)),
       );
