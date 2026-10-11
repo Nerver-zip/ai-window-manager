@@ -85,6 +85,24 @@ async function persistObservation(
 }
 
 describe('command API', () => {
+  it('rejects a manual start while an old provider action remains uncertain', async () => {
+    const context = setup();
+    await persistObservation(context);
+    const first = context.api.trigger('fake', { windowKind: 'five_hour' });
+    expect(first.statusCode).toBe(202);
+    context.repositories.actionIntents.setState(
+      'intent-1',
+      'uncertain',
+      context.clock.now().getTime(),
+      { attemptCount: 1 },
+    );
+    const result = context.api.trigger('fake', {
+      windowKind: 'five_hour',
+      idempotencyKey: 'new-request',
+    });
+    expect(result).toMatchObject({ statusCode: 409, body: { accepted: false } });
+    expect(context.repositories.actionIntents.listOpen('fake')).toHaveLength(1);
+  });
   it('does not accept commands for a provider hidden by environment configuration', () => {
     const context = setup();
     const api = createCommandApi({

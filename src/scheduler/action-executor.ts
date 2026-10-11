@@ -499,6 +499,10 @@ export class ActionExecutor {
       return;
     }
     if (this.input.inspections?.isDeferred(intent.providerId, 'resolution')) return;
+    const targetBeforeRead = windowKindFor(intent);
+    const previousCycle = targetBeforeRead
+      ? this.input.repositories.windowCycles.get(intent.providerId, targetBeforeRead)
+      : undefined;
     const readStartedAtMs = this.input.clock.now().getTime();
     const inspection = await this.inspect(adapter, true, 'resolution');
     if (!readAllowed()) {
@@ -555,6 +559,10 @@ export class ActionExecutor {
     const currentCycle = target
       ? this.input.repositories.windowCycles.get(intent.providerId, target)
       : undefined;
+    const outcomeRecordedAtMs = this.input.repositories.actionIntents.outcomeRecordedAt(
+      intent.id,
+      intent.providerId,
+    );
     const decision = assessActionResolution({
       intent,
       observation: inspection.observation,
@@ -562,6 +570,8 @@ export class ActionExecutor {
       readStartedAtMs,
       ...(closure ? { closure } : {}),
       ...(currentCycle ? { currentCycle } : {}),
+      ...(previousCycle ? { previousCycle } : {}),
+      ...(outcomeRecordedAtMs !== undefined ? { outcomeRecordedAtMs } : {}),
     });
     withTransaction(this.input.db, () => {
       const resolved =
@@ -570,6 +580,7 @@ export class ActionExecutor {
           intent,
           nowMs,
           Date.parse(inspection.observation!.observedAt),
+          decision.rollingEvidence,
         );
       finish(
         resolved

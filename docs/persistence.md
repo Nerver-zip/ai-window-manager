@@ -37,6 +37,9 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
 - `observed_cycle_closures`: exact lifecycle closure evidence linked to the
   unresolved intent that needs it. This does not assert a prompt outcome;
   terminal intent retention cascades requests and closure evidence.
+- `rolling_inactive_resolution_evidence`: two observed reset/usage readings and
+  the post-dispatch event time used by an explicit unknown-outcome review. It
+  records no provider response or prompt and cascades with its terminal intent.
 - `provider_cleanup_jobs`: durable deletion obligations for disposable provider
   artifacts created by AWM actions. An opaque external ID remains only until
   cleanup succeeds; it is not exposed in ordinary history, metrics or read APIs.
@@ -200,6 +203,10 @@ The forward-only schema currently consists of:
   per provider. Existing intents, cleanup, observations and preferences are
   unchanged. Normal read purposes share persisted protection across restart;
   ephemeral explicit-login probe permits are not restored.
+- `migrations/013_rolling_inactive_resolution.sql` adds intent-linked evidence
+  for old starts whose reset continued rolling without an anchored cycle. No
+  existing intent is rewritten or automatically closed. Back up before upgrade;
+  restoring a compatible backup is the schema rollback path.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

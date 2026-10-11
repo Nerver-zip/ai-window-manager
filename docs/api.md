@@ -74,8 +74,9 @@ from provider health. Repeated requests coalesce and do not authorize prompts.
 uncertain action, returning `202` without provider I/O in the handler. The
 native equivalent is `POST /actions/:id/resolve-unknown`, which uses PRG back to
 Overview. Both require operator session, Origin and CSRF. The executor performs
-a fresh read and requires durable evidence that the corresponding exact old
-cycle ended before recording `resolved_unknown`. Neither expiry nor browser
+a fresh read and requires exact-cycle closure evidence or repeated rolling
+inactive reset evidence after a full window duration before recording
+`resolved_unknown`. Neither expiry nor browser
 payload supplies that evidence. Duplicate pending requests coalesce; another
 explicit review after failure has a 30-second cooldown. Already confirmed or
 closed outcomes are returned without another transition. Executing actions
@@ -146,6 +147,9 @@ It is shown only when provider mode and exact target capability allow it.
 
 History and settings responses are bounded/allowlisted. No endpoint returns
 provider credentials, raw provider payloads, tokens, or secret configuration.
+
+Manual trigger requests return `409` when a provider already has an executing,
+unconfirmed, or uncertain start. No new intent is queued in that case.
 
 Provider auth status returns a bounded DTO containing lifecycle state, expiry,
 an allowlisted official sign-in URL, a one-time display code when provided by

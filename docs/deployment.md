@@ -232,9 +232,9 @@ Terms of Service and Privacy Policy. Review the CLI's settings for its opt-out;
 AWM does not configure or override that preference. Trigger prompts are normal
 provider interactions and may consume quota.
 
-## Stability upgrade to schema 12 (operator-run; not automatic deployment)
+## Stability upgrade to schema 13 (operator-run; not automatic deployment)
 
-1. Review the source diff, especially migrations 010–012 and
+1. Review the source diff, especially migrations 010–013 and
    [unknown-outcome semantics](adr/008-unknown-action-resolution.md). Run
    `pnpm validate`, `pnpm audit --audit-level moderate`, Compose config/build
    and the disposable smoke below before scheduling production downtime.
@@ -260,7 +260,7 @@ provider interactions and may consume quota.
      import Database from "better-sqlite3";
      const db = new Database("/data/window-manager.db", { readonly: true });
      const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version;
-     if (version !== 12 || db.pragma("integrity_check", { simple: true }) !== "ok"
+     if (version !== 13 || db.pragma("integrity_check", { simple: true }) !== "ok"
          || db.pragma("foreign_key_check").length !== 0) process.exitCode = 1;
      console.log({ schemaVersion: version, valid: process.exitCode !== 1 });
      db.close();
@@ -273,7 +273,8 @@ provider interactions and may consume quota.
    `uncertain`, never a new prompt. A legacy intent without an identifiable
    cycle remains blocked; do not fabricate identity or edit SQL to release it.
    Request unknown-outcome closure only when the UI shows the exact old target
-   and the service can freshly prove that cycle ended. Cleanup remains durable.
+   and the service can freshly establish exact-cycle closure or repeated rolling
+   inactive reset evidence after a full window duration. Cleanup remains durable.
 6. If desired, provision the optional metrics credential as described above,
    restart with only its digest configured, and check the scraper. Review
    retention backlog/progress over multiple passes; DELETE need not shrink
@@ -300,7 +301,7 @@ The smoke test proves health readiness, anonymous redirects/401s, login,
 session/CSRF enforcement, and SQLite persistence after restart and stop/up. For
 the normally deployed service, `/healthz` stays public for Docker healthchecks;
 dashboard/API requests require signing in. Metrics additionally supports the
-optional dedicated technical credential. The smoke also checks schema 12,
+optional dedicated technical credential. The smoke also checks schema 13,
 inspect wakeup/defer, private loop progress, executing recovery without
 redispatch, safe refusal to resolve an unidentified legacy cycle, metrics
 restart/revocation and credential-free logs. Only disposable fixtures are used.

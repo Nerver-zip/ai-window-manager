@@ -135,6 +135,88 @@ function setup(
 }
 
 describe('ActionExecutor', () => {
+  it('resolves an old never-active attempt from durable rolling reset evidence after restart', async () => {
+    const context = setup({ providerId: 'codex' });
+    const now = context.clock.now().getTime();
+    const durationMs = 18_000_000;
+    const outcomeAt = now - durationMs - 60_000;
+    const cycleAt = outcomeAt - 1000;
+    context.db.prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?').run(
+      JSON.stringify({
+        windowKind: 'five_hour',
+        observedCycleAt: new Date(cycleAt).toISOString(),
+      }),
+      context.intent.id,
+    );
+    context.repositories.actionIntents.setState(context.intent.id, 'uncertain', now, {
+      attemptCount: 1,
+      startedAtMs: cycleAt,
+    });
+    context.repositories.events.append({
+      occurredAtMs: outcomeAt,
+      providerId: context.providerId,
+      type: 'action_uncertain',
+      severity: 'warn',
+      reasonCode: 'ACTION_DISPATCH_UNCERTAIN',
+      data: { intentId: context.intent.id },
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs: cycleAt,
+      anchoredResetAtMs: null,
+      lastObservedAtMs: now - 20_000,
+      lastResetAtMs: now - 20_000 + durationMs,
+      phase: 'INACTIVE',
+      phaseConfidence: 'high',
+    });
+    context.repositories.actionIntents.requestResolution(context.intent.id, now);
+    context.db.close();
+    const reopened = openDatabase(path.join(context.dir, 'awm.db'));
+    try {
+      const repositories = createRepositories(reopened);
+      const adapter: ProviderAdapter = {
+        ...context.adapter,
+        inspect: async (ctx) => {
+          const observed = await context.adapter.inspect(ctx);
+          return {
+            ...observed,
+            windows: observed.windows.map((window) => ({
+              ...window,
+              phase: { ...window.phase, value: 'UNKNOWN' as const, source: 'inferred' as const },
+              resetAt: {
+                value: new Date(context.clock.now().getTime() + durationMs).toISOString(),
+                source: 'inferred' as const,
+                confidence: 'high' as const,
+                observedAt: context.clock.now().toISOString(),
+              },
+            })),
+          };
+        },
+      };
+      await new ActionExecutor({
+        clock: context.clock,
+        db: reopened,
+        repositories,
+        adapters: new Map([[context.providerId, adapter]]),
+        isProviderRuntimeChanging: () => false,
+      }).executeDue();
+      expect(repositories.actionIntents.resolutionRequest(context.intent.id)?.reasonCode).toBe(
+        'ACTION_OUTCOME_UNKNOWN',
+      );
+      expect(repositories.actionIntents.get(context.intent.id)?.state).toBe('resolved_unknown');
+      expect(
+        reopened
+          .prepare(
+            'SELECT duration_ms AS durationMs FROM rolling_inactive_resolution_evidence WHERE intent_id = ?',
+          )
+          .get(context.intent.id),
+      ).toEqual({ durationMs });
+      expect(context.triggerCount).toBe(0);
+    } finally {
+      reopened.close();
+    }
+  });
   it('confirms fresh same-cycle evidence during review instead of inventing an unknown closure', async () => {
     const context = setup();
     const now = context.clock.now().getTime();
