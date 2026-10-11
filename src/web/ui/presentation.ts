@@ -131,13 +131,13 @@ const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
 
 const REASON_LABELS: Readonly<Record<string, string>> = {
   ACTION_OUTCOME_UNKNOWN:
-    'The old cycle ended; the action outcome is unknown and the old prompt will not be repeated.',
+    'The old start is no longer actionable; its outcome remains unknown and the old prompt will not be repeated.',
   ACTION_RESOLUTION_READ_BLOCKED:
     'Review is blocked while the provider is disabled, signing in, or changing its client. Try again after that operation finishes.',
   ACTION_RESOLUTION_CYCLE_UNIDENTIFIED:
     'The old cycle cannot be identified safely. It remains blocked; no outcome was guessed.',
   ACTION_RESOLUTION_EVIDENCE_MISSING:
-    'There is no durable evidence that this exact old cycle ended. The action remains blocked.',
+    'There is not enough fresh, durable timing evidence to close this old start. The action remains blocked.',
   ACTION_RESOLUTION_OBSERVATION_UNAVAILABLE:
     'A fresh valid provider observation is required. Restore the connection and request review again.',
   ACTION_RESOLUTION_CYCLE_NOT_CLOSED:

@@ -168,6 +168,13 @@ function triggerProvider(
   const nowMs = input.clock.now().getTime();
   const manualKey = command.idempotencyKey ?? String(Math.floor(nowMs / (5 * 60 * 1000)));
   const dedupeKey = `${providerId}:trigger_window:manual:${exactWindowKind}:${manualKey}`;
+  if (
+    input.repositories.actionIntents
+      .listOpen(providerId)
+      .some((pending) => ['executing', 'succeeded', 'uncertain'].includes(pending.state))
+  ) {
+    return conflict('a previous provider start is still being confirmed or reviewed');
+  }
   const intent: ActionIntentRecord = {
     id: (input.idFactory ?? randomUUID)(),
     providerId,

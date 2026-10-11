@@ -66,6 +66,56 @@ function input(): ActionResolutionInput {
   };
 }
 describe('unknown outcome resolution policy', () => {
+  it('allows repeated rolling inactive evidence only after a full post-outcome duration', () => {
+    const value = input();
+    const durationMs = 5 * 60 * 60 * 1000;
+    const firstAt = now - 20_000;
+    const outcomeAt = now - durationMs - 60_000;
+    value.intent.startedAtMs = outcomeAt - 1000;
+    value.intent.explanation = { windowKind: 'primary', observedCycleAt: iso(outcomeAt - 1000) };
+    delete value.closure;
+    value.outcomeRecordedAtMs = outcomeAt;
+    value.previousCycle = {
+      providerId: 'codex',
+      windowKind: 'primary',
+      cycleAtMs: outcomeAt - 1000,
+      anchoredResetAtMs: null,
+      lastObservedAtMs: firstAt,
+      lastResetAtMs: firstAt + durationMs,
+      phase: 'INACTIVE',
+      phaseConfidence: 'high',
+    };
+    value.currentCycle = {
+      ...value.previousCycle,
+      lastObservedAtMs: now,
+      lastResetAtMs: now + durationMs,
+    };
+    value.observation.windows[0] = {
+      providerId: 'codex',
+      windowKind: 'primary',
+      observedAt: iso(now),
+      phase: { value: 'INACTIVE', source: 'inferred', confidence: 'high', observedAt: iso(now) },
+      usageRatio: { value: 0, source: 'observed', confidence: 'high', observedAt: iso(now) },
+      resetAt: {
+        value: iso(now + durationMs),
+        source: 'observed',
+        confidence: 'high',
+        observedAt: iso(now),
+      },
+      durationSeconds: {
+        value: durationMs / 1000,
+        source: 'observed',
+        confidence: 'high',
+        observedAt: iso(now),
+      },
+    };
+    expect(assessActionResolution(value).allowed).toBe(true);
+    value.outcomeRecordedAtMs = now - durationMs + 1;
+    expect(assessActionResolution(value).allowed).toBe(false);
+    value.outcomeRecordedAtMs = outcomeAt;
+    value.observation.windows[0].resetAt!.value = iso(now + durationMs - 10_000);
+    expect(assessActionResolution(value).allowed).toBe(false);
+  });
   it('accepts only a freshly verified later cycle backed by durable closure evidence', () => {
     expect(assessActionResolution(input())).toEqual({
       allowed: true,

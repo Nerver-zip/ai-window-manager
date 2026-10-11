@@ -11,13 +11,19 @@ intent ID, dedupe key, target, explanation, dispatch count and error history.
 
 Closure requires read-only observation by the application, canonical validation,
 freshness after the requested read began, an exact target/cycle identity and
-durable lifecycle evidence that the corresponding old cycle ended. Evidence is
-an observed transition beyond a previously anchored cycle boundary or a supported
-active-to-inactive lifecycle transition, not a local deadline, TTL, rounded quota
-value or isolated reset timestamp.
+durable evidence that the old attempt is no longer actionable. An observed
+transition beyond an anchored cycle boundary or a supported active-to-inactive
+transition is sufficient. For a cycle that never acquired an anchor, the
+operator may instead close after a full target duration has elapsed since a
+persisted post-dispatch/recovery event and two fresh, high-confidence inactive
+readings at least 15 seconds apart show the reset moving with elapsed time.
+Both readings must have zero usage and agree with the reported duration within
+five seconds. This records an unknown outcome, including when no window ever
+started. A local deadline, TTL, rounded quota value or isolated reset timestamp
+remains insufficient.
 
-Closure evidence is recorded only for unresolved side effects referencing that
-exact cycle. It survives restarts and raw-history pruning, and is removed by
+Closure or rolling-inactive evidence is recorded only for unresolved side effects
+referencing that exact cycle. It survives restarts and raw-history pruning, and is removed by
 cascade when the associated terminal intent reaches its audit retention period.
 Migration does not fabricate evidence for already-lost or unidentified cycles.
 Insufficient evidence leaves the provider blocked with an explicit reason.
@@ -56,3 +62,6 @@ uniqueness. `resolved_unknown` follows the 365-day terminal-intent retention
 policy. Back up first; restoring an earlier compatible backup is the schema
 rollback path. Upgrading an existing deployment requires the operator-run
 backup and migration procedure in [Deployment](../deployment.md).
+Migration 013 adds intent-linked rolling-inactive evidence. It does not infer
+or backfill evidence for old actions; a new explicit review must obtain a fresh
+second reading and a persisted post-dispatch/recovery event must still exist.

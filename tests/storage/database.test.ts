@@ -133,7 +133,7 @@ describe('openDatabase', () => {
     });
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 12,
+        version: 13,
       },
     );
     upgraded.close();
@@ -181,9 +181,36 @@ describe('openDatabase', () => {
   it('opens an in-memory database without creating a filesystem directory', () => {
     const db = openDatabase(':memory:');
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
-      version: 12,
+      version: 13,
     });
     db.close();
+  });
+
+  it('adds rolling resolution evidence to a version-12 database on reopen', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-rolling-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'v12');
+    fs.mkdirSync(migrationsDir);
+    for (const name of fs
+      .readdirSync('migrations')
+      .filter((name) => /^0(0[1-9]|1[0-2])_/.test(name))) {
+      fs.copyFileSync(path.join('migrations', name), path.join(migrationsDir, name));
+    }
+    const file = path.join(dir, 'awm.db');
+    openDatabase(file, { migrationsDir }).close();
+    const upgraded = openDatabase(file);
+    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
+      { version: 13 },
+    );
+    expect(
+      upgraded
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rolling_inactive_resolution_evidence'",
+        )
+        .get(),
+    ).toEqual({ name: 'rolling_inactive_resolution_evidence' });
+    expect(upgraded.pragma('foreign_key_check')).toEqual([]);
+    upgraded.close();
   });
 
   it('migrates a blank database with SQLite safety pragmas and can reopen it', () => {
@@ -208,6 +235,7 @@ describe('openDatabase', () => {
       { version: 10, applied_at_ms: appliedAtMs },
       { version: 11, applied_at_ms: appliedAtMs },
       { version: 12, applied_at_ms: appliedAtMs },
+      { version: 13, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -226,7 +254,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(12);
+    ).toBe(13);
     reopened.close();
   });
 
@@ -343,6 +371,7 @@ describe('openDatabase', () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
+      { version: 13 },
     ]);
     expect(
       upgraded
@@ -383,7 +412,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toHaveLength(12);
+    ).toHaveLength(13);
     expect(
       upgraded
         .prepare(

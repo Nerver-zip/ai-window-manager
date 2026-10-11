@@ -118,10 +118,11 @@ different meanings.
 
 Overview exposes a native review form for `uncertain` starts. It queues a
 persisted request; only the executor reads the provider. A fresh canonical
-observation plus intent-linked lifecycle closure evidence is required to end
+observation plus exact-cycle closure evidence, or repeated rolling-inactive
+reset evidence after a full post-outcome window duration, is required to end
 the old action as `resolved_unknown`. This does not assert success/failure or
 repeat the prompt. Same-cycle active evidence can confirm normally. Missing
-cycle identity, stale data, unavailable provider, or unproven closure leaves
+cycle identity, stale data, unavailable provider, or insufficient timing evidence leaves
 the block intact with an explanation. Requests survive restart and coalesce;
 checked requests are not automatically retried. Future actions still pass all
 normal gates, including provider-wide serialization and protected cleanup.
@@ -142,7 +143,9 @@ model. Its only implemented action is one ordinary `Hi!` through official
 `agy -p`; it consumes normal quota. A selected model family is targeted, but
 the provider may also account that request against the family's other window.
 The Overview does not add a separate warning before a manual start. A
-post-dispatch uncertain result is never blindly retried.
+post-dispatch uncertain result is never blindly retried. An unresolved or
+unconfirmed start across the provider rejects new manual requests with `409`
+until it is confirmed or safely resolved.
 
 Manual starts remain separate from saved automatic schedules: selecting a
 provider/window for the action does not alter that provider's saved policy or

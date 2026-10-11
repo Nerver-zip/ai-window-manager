@@ -226,7 +226,7 @@ const db = new Database('/data/window-manager.db');
 db.pragma('busy_timeout = 5000');
 const mode = process.argv[2];
 const now = Date.now();
-assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 12);
+assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 13);
 if (mode === 'before-hint') {
   db.prepare("UPDATE providers SET poll_interval_seconds = 86400 WHERE id = 'fake'").run();
   const before = db.prepare("SELECT observed_at_ms AS at FROM provider_state WHERE provider_id = 'fake'").get().at;

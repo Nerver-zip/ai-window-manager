@@ -13,6 +13,7 @@ import type { ProviderCleanupArtifactKind } from '../domain/provider-cleanup.js'
 import type { SqliteDatabase } from './database.js';
 import { WindowCycleRepository } from './window-cycles.js';
 import { ACTION_DEADLINE_SQL } from '../domain/action-deadline.js';
+import type { RollingInactiveEvidence } from '../scheduler/action-resolution-policy.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
 export type SchedulePolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'legacy';
@@ -951,6 +952,18 @@ export class ProviderCleanupJobRepository {
 export class ActionIntentRepository {
   constructor(private readonly db: SqliteDatabase) {}
 
+  /** A persisted post-dispatch/recovery event bounds when an old action could have occurred. */
+  outcomeRecordedAt(id: string, providerId: string): number | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT MIN(occurred_at_ms) AS atMs FROM events
+       WHERE provider_id = ? AND type IN ('action_uncertain', 'action_succeeded', 'action_recovery_started')
+         AND json_extract(data_json, '$.intentId') = ?`,
+      )
+      .get(providerId, id) as { atMs: number | null };
+    return row.atMs ?? undefined;
+  }
+
   resolutionRequest(id: string): ActionResolutionRequest | undefined {
     return this.db
       .prepare(
@@ -1142,11 +1155,12 @@ export class ActionIntentRepository {
     });
   }
 
-  /** Service must first verify a fresh matching closed-cycle observation. */
+  /** Service must first verify fresh exact-cycle closure or rolling-inactive evidence. */
   resolveUnknownIfUncertain(
     intent: ActionIntentRecord,
     resolvedAtMs: number,
     verifiedAtMs: number,
+    rollingEvidence?: RollingInactiveEvidence,
   ): boolean {
     if (
       !Number.isSafeInteger(resolvedAtMs) ||
@@ -1164,7 +1178,26 @@ export class ActionIntentRepository {
         .get(intent.id, intent.providerId) as
         | { cycleAtMs: number; endedAtMs: number; observedAtMs: number; windowKind: string }
         | undefined;
-      if (!closure || verifiedAtMs < closure.observedAtMs) return false;
+      if (rollingEvidence) {
+        const recordedAt = this.outcomeRecordedAt(intent.id, intent.providerId);
+        const explanation = intent.explanation as Record<string, unknown>;
+        if (
+          closure ||
+          recordedAt !== rollingEvidence.outcomeRecordedAtMs ||
+          !this.db
+            .prepare(
+              `SELECT 1 FROM observed_window_cycles
+             WHERE provider_id = ? AND window_kind = ? AND cycle_at_ms = ?`,
+            )
+            .get(
+              intent.providerId,
+              explanation.windowKind,
+              Date.parse(String(explanation.observedCycleAt)),
+            ) ||
+          verifiedAtMs < rollingEvidence.lastObservedAtMs
+        )
+          return false;
+      } else if (!closure || verifiedAtMs < closure.observedAtMs) return false;
       const result = this.db
         .prepare(
           `UPDATE action_intents SET state = 'resolved_unknown',
@@ -1179,6 +1212,29 @@ export class ActionIntentRepository {
           expectedAttempts: intent.confirmationAttemptCount,
         });
       if (result.changes !== 1) return false;
+      if (rollingEvidence) {
+        const explanation = intent.explanation as Record<string, unknown>;
+        this.db
+          .prepare(
+            `INSERT INTO rolling_inactive_resolution_evidence
+           (intent_id, provider_id, window_kind, cycle_at_ms, outcome_recorded_at_ms,
+            first_observed_at_ms, first_reset_at_ms, last_observed_at_ms, last_reset_at_ms,
+            duration_ms, verified_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            intent.id,
+            intent.providerId,
+            explanation.windowKind,
+            Date.parse(String(explanation.observedCycleAt)),
+            rollingEvidence.outcomeRecordedAtMs,
+            rollingEvidence.firstObservedAtMs,
+            rollingEvidence.firstResetAtMs,
+            rollingEvidence.lastObservedAtMs,
+            rollingEvidence.lastResetAtMs,
+            rollingEvidence.durationMs,
+            verifiedAtMs,
+          );
+      }
       this.db
         .prepare(
           `INSERT INTO events (occurred_at_ms, provider_id, type, severity, reason_code, data_json)
@@ -1189,9 +1245,12 @@ export class ActionIntentRepository {
           intent.providerId,
           stringifyJson({
             intentId: intent.id,
-            windowKind: closure.windowKind,
-            cycleAtMs: closure.cycleAtMs,
-            endedAtMs: closure.endedAtMs,
+            windowKind:
+              closure?.windowKind ?? (intent.explanation as Record<string, unknown>).windowKind,
+            cycleAtMs:
+              closure?.cycleAtMs ??
+              Date.parse(String((intent.explanation as Record<string, unknown>).observedCycleAt)),
+            ...(closure ? { endedAtMs: closure.endedAtMs } : { rollingInactive: true }),
             verifiedAtMs,
             outcome: 'unknown',
           }),

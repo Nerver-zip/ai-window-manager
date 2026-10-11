@@ -1697,7 +1697,10 @@ function pendingActionViews(
         createdAtMs: intent.createdAtMs,
         confirmationAttempts: intent.confirmationAttemptCount,
         lastCheckedAtMs:
-          request?.checkedAtMs ?? (intent.confirmationAttemptCount > 0 ? intent.updatedAtMs : null),
+          Math.max(
+            request?.checkedAtMs ?? 0,
+            intent.confirmationAttemptCount > 0 ? intent.updatedAtMs : 0,
+          ) || null,
         resolutionStatus: request
           ? request.state === 'pending'
             ? 'Review queued'
@@ -1997,9 +2000,9 @@ function renderProviderCard(
       (intent) => `<section class="notice"><h3>Unresolved start outcome</h3>
     <p>Window: ${escapeHtml(intent.windowKind)} · State: ${escapeHtml(intent.state)} · Age: ${Math.max(0, Math.floor((now.getTime() - intent.createdAtMs) / 60000))} minutes.</p>
     <p>Confirmation attempts: ${intent.confirmationAttempts}. Last check: ${intent.lastCheckedAtMs === null ? 'Not yet checked' : escapeHtml(new Date(intent.lastCheckedAtMs).toISOString())}.</p>
-    <p>This blocks automatic starts across this provider. Review performs a read-only check; closure records an unknown outcome, not success or failure. The old prompt is never repeated. Pending artifact cleanup remains required.</p>
+    <p>This blocks automatic starts across this provider. Review performs a read-only check; closure records an unknown outcome, not success or failure. The old prompt is never repeated. Any pending artifact cleanup remains required.</p>
     ${intent.resolutionStatus ? `<p role="status">${escapeHtml(intent.resolutionStatus)}</p>` : ''}
-    ${intent.state === 'uncertain' ? `<form method="post" action="/actions/${encodeURIComponent(intent.id)}/resolve-unknown"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><button class="button button-secondary" type="submit">Review and close only if the old cycle ended</button></form>` : ''}</section>`,
+    ${intent.state === 'uncertain' ? `<form method="post" action="/actions/${encodeURIComponent(intent.id)}/resolve-unknown"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><button class="button button-secondary" type="submit">Review whether this old start can be closed</button></form>` : ''}</section>`,
     )
     .join('');
   return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${onboardingAction}${selectedPolicy}${pendingActions}${windows}${details}</article>`;
