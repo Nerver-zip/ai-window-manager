@@ -92,6 +92,42 @@ function reload(context: TestContext): void {
   context.repositories = createRepositories(context.db);
 }
 
+async function seedAntigravityObservation(
+  context: TestContext,
+  windowKinds: readonly string[],
+): Promise<void> {
+  const fakeObservation = await persistObservation(context);
+  const baseWindow = fakeObservation.windows[0];
+  if (!baseWindow) throw new Error('expected FakeProvider observation window');
+  const observation: ProviderObservation = {
+    ...fakeObservation,
+    providerId: 'antigravity',
+    windows: windowKinds.map((windowKind) => ({
+      ...baseWindow,
+      providerId: 'antigravity',
+      windowKind,
+    })),
+  };
+  const atMs = Date.parse(observation.observedAt);
+  const provider = context.repositories.providers.get('fake');
+  const state = context.repositories.providerState.get('fake');
+  if (!provider || !state) throw new Error('expected persisted FakeProvider state');
+  context.repositories.providers.upsert({
+    ...provider,
+    id: 'antigravity',
+    kind: 'antigravity',
+    mode: 'monitor_only',
+  });
+  context.repositories.providerState.upsert({
+    ...state,
+    providerId: 'antigravity',
+    observation,
+    observedAtMs: atMs,
+    lastSuccessAtMs: atMs,
+    updatedAtMs: atMs,
+  });
+}
+
 describe('activation policy settings persistence', () => {
   it('rejects activation policies for a provider hidden by environment configuration', () => {
     const context = setup();
@@ -281,6 +317,84 @@ describe('activation policy settings persistence', () => {
       code: 'WINDOW_TARGET_REQUIRED',
     });
     expect(context.repositories.schedulePolicies.get('activation-fake')).toBeUndefined();
+  });
+
+  it('allows an untargeted manual Argon policy when only other families are observed', async () => {
+    const context = setup();
+    await seedAntigravityObservation(context, [
+      'antigravity_gemini_weekly',
+      'antigravity_claude_gpt_weekly',
+    ]);
+
+    const result = updateActivationPolicy(settingsInput(context), {
+      kind: 'manual',
+      enabled: true,
+      providerId: 'antigravity',
+      scope: 'argon',
+      timezone: 'UTC',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        scope: 'argon',
+        policy: { id: 'activation-antigravity-argon', kind: 'manual' },
+      },
+    });
+    expect(context.repositories.schedulePolicies.get('activation-antigravity-argon')).toMatchObject(
+      {
+        scope: 'argon',
+        kind: 'manual',
+        requiresReview: false,
+        config: {},
+      },
+    );
+  });
+
+  it('requires the exact Argon weekly target when it is reported and rejects another family', async () => {
+    const context = setup();
+    await seedAntigravityObservation(context, [
+      'antigravity_gemini_weekly',
+      'antigravity_argon_weekly',
+    ]);
+    const input = settingsInput(context);
+
+    expect(
+      updateActivationPolicy(input, {
+        kind: 'manual',
+        enabled: true,
+        providerId: 'antigravity',
+        scope: 'argon',
+        timezone: 'UTC',
+        windowKind: 'antigravity_gemini_weekly',
+      }),
+    ).toMatchObject({ ok: false, code: 'WINDOW_SCOPE_MISMATCH' });
+    expect(
+      updateActivationPolicy(input, {
+        kind: 'manual',
+        enabled: true,
+        providerId: 'antigravity',
+        scope: 'argon',
+        timezone: 'UTC',
+      }),
+    ).toMatchObject({ ok: false, code: 'WINDOW_TARGET_REQUIRED' });
+
+    expect(
+      updateActivationPolicy(input, {
+        kind: 'manual',
+        enabled: true,
+        providerId: 'antigravity',
+        scope: 'argon',
+        timezone: 'UTC',
+        windowKind: 'antigravity_argon_weekly',
+      }),
+    ).toMatchObject({ ok: true, value: { scope: 'argon', policy: { kind: 'manual' } } });
+    expect(context.repositories.schedulePolicies.get('activation-antigravity-argon')).toMatchObject(
+      {
+        scope: 'argon',
+        config: { windowKind: 'antigravity_argon_weekly' },
+      },
+    );
   });
 
   it('rejects automatic policies until the selected usage window has been observed', () => {

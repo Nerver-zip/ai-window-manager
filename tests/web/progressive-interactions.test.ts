@@ -1026,6 +1026,35 @@ describe('progressive SSR interaction runtime', () => {
     expect(runtime.history.pushed).toEqual(['http://awm.test/schedule?scope=claude_gpt']);
   });
 
+  it('soft-navigates to the Argon policy region and keeps the selected family in browser history', async () => {
+    const runtime = createRuntime({
+      target: 'schedule-workspace',
+      pages: new Map([['argon', { target: 'schedule-workspace', text: 'Gemini 4 Argon' }]]),
+      fetch: () =>
+        Promise.resolve(response({ token: 'argon', url: 'http://awm.test/schedule?scope=argon' })),
+    });
+    const link = new FakeElement('a', runtime.document);
+    link.dataset.awmSoftNav = '';
+    link.dataset.awmTarget = 'schedule-workspace';
+    link.href = 'http://awm.test/schedule?scope=argon';
+    const event = {
+      type: 'click',
+      target: link,
+      button: 0,
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true;
+      },
+    };
+
+    runtime.document.dispatchEvent(event);
+    await flushPromises();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(runtime.document.regions[0]?.textContent).toBe('Gemini 4 Argon');
+    expect(runtime.history.pushed).toEqual(['http://awm.test/schedule?scope=argon']);
+  });
+
   it('restores the server-rendered page region on browser back/forward without adding history entries', async () => {
     const requested: string[] = [];
     const runtime = createRuntime({

@@ -245,11 +245,29 @@ export function windowGroupDisplayName(windowKind: string): string | null {
     .slice(prefix.length)
     .replace(/_(?:five_hour|weekly|seven_day|primary|secondary)$/, '');
   const normalized = groupKey.toLowerCase();
-  if (normalized === 'gemini') return 'Gemini Models';
-  if (normalized === 'claude_gpt' || normalized === 'claude_and_gpt') {
-    return 'Claude and GPT Models';
+  if (
+    normalized === 'gemini' ||
+    normalized === 'argon' ||
+    normalized === 'claude_gpt' ||
+    normalized === 'claude_and_gpt'
+  ) {
+    return quotaFamilyDisplayName(normalized);
   }
   return humanizeIdentifier(groupKey, 'Other');
+}
+
+export function quotaFamilyDisplayName(scope: string): string {
+  switch (scope) {
+    case 'gemini':
+      return 'Gemini Models';
+    case 'claude_gpt':
+    case 'claude_and_gpt':
+      return 'Claude and GPT Models';
+    case 'argon':
+      return 'Gemini 4 Argon';
+    default:
+      return humanizeIdentifier(scope, 'Other');
+  }
 }
 
 export function evidenceLabel(source: string): string {

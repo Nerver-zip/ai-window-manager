@@ -51,7 +51,7 @@ export const ScheduleSettingsSchema = z
 const ActivationPolicyBaseSchema = z.object({
   enabled: z.boolean().default(true),
   providerId: ID,
-  scope: z.enum(['default', 'gemini', 'claude_gpt']).optional(),
+  scope: z.enum(['default', 'gemini', 'claude_gpt', 'argon']).optional(),
   timezone: z.string().min(1).max(128).optional(),
 });
 
@@ -187,7 +187,7 @@ export function updateActivationPolicy(
       ? policyScopeForWindowKind(requestedWindowKind)
       : undefined;
     const selectedScope = parsed.data.scope ?? inferredScope;
-    if (selectedScope !== 'gemini' && selectedScope !== 'claude_gpt') {
+    if (selectedScope !== 'gemini' && selectedScope !== 'claude_gpt' && selectedScope !== 'argon') {
       return failure(400, 'POLICY_SCOPE_REQUIRED', 'choose an Antigravity quota family');
     }
     scope = selectedScope;
@@ -239,10 +239,13 @@ export function updateActivationPolicy(
       );
     }
   }
-  if (
-    !windowKind &&
-    (parsed.data.kind !== 'manual' || (currentObservation?.windows.length ?? 0) > 0)
-  ) {
+  const hasObservedWindowInScope =
+    provider.kind === 'antigravity'
+      ? (currentObservation?.windows.some((window) =>
+          windowKindBelongsToPolicyScope(window.windowKind, scope),
+        ) ?? false)
+      : (currentObservation?.windows.length ?? 0) > 0;
+  if (!windowKind && (parsed.data.kind !== 'manual' || hasObservedWindowInScope)) {
     return failure(
       400,
       'WINDOW_TARGET_REQUIRED',

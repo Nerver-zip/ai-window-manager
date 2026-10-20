@@ -80,6 +80,7 @@ describe('human-facing presentation labels', () => {
   it.each([
     ['antigravity_gemini_weekly', 'Gemini Models'],
     ['antigravity_gemini_five_hour', 'Gemini Models'],
+    ['antigravity_argon_weekly', 'Gemini 4 Argon'],
     ['antigravity_claude_gpt_weekly', 'Claude and GPT Models'],
     ['antigravity_claude_gpt_five_hour', 'Claude and GPT Models'],
     ['antigravity_future_team_weekly', 'Future Team'],

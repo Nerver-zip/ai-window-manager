@@ -108,6 +108,7 @@ import {
   timeZoneDisplayName,
   windowGroupDisplayName,
   windowDisplayName,
+  quotaFamilyDisplayName,
 } from './ui/presentation.js';
 
 declare module 'fastify' {
@@ -174,7 +175,7 @@ interface ProviderRead {
   activationPolicyNeedsAttention: boolean;
   activationPolicies?: ProviderPolicyRead[];
   capabilities?: ProviderCapabilities;
-  triggerModels?: { gemini: string; claudeGpt: string };
+  triggerModels?: { gemini: string; claudeGpt: string; argon?: string };
   pendingActions?: Array<{
     id: string;
     state: string;
@@ -815,9 +816,7 @@ export function buildServer(input: BuildServerInput) {
       ) ??
       scheduling.providers[0];
     const selectedScope: ActivationPolicyScope = selected?.policyScopes
-      ? requestedScope === 'claude_gpt'
-        ? 'claude_gpt'
-        : 'gemini'
+      ? (selected.policyScopes.find((scope) => scope.scope === requestedScope)?.scope ?? 'gemini')
       : 'default';
     const selectedPolicyScope = selected?.policyScopes?.find(
       (scope) => scope.scope === selectedScope,
@@ -851,14 +850,12 @@ export function buildServer(input: BuildServerInput) {
     }
     const providerRecord = input.repositories.providers.get(parsed.data.providerId);
     const parsedWindowKind = 'windowKind' in parsed.data ? parsed.data.windowKind : undefined;
+    const inferredScope = parsedWindowKind ? policyScopeForWindowKind(parsedWindowKind) : undefined;
     const scope: ActivationPolicyScope =
       providerRecord?.kind === 'antigravity'
-        ? parsed.data.scope === 'claude_gpt'
-          ? 'claude_gpt'
-          : parsed.data.scope === 'gemini'
-            ? 'gemini'
-            : ((parsedWindowKind ? policyScopeForWindowKind(parsedWindowKind) : undefined) ??
-              'gemini')
+        ? parsed.data.scope && parsed.data.scope !== 'default'
+          ? parsed.data.scope
+          : (inferredScope ?? 'gemini')
         : 'default';
     if (
       providerRecord?.kind === 'antigravity' &&
@@ -1557,6 +1554,11 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
             triggerModels: {
               gemini: input.config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
               claudeGpt: input.config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
+              ...(capabilities.windowTrigger.supportedWindowKinds?.includes(
+                'antigravity_argon_weekly',
+              )
+                ? { argon: input.config.AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL }
+                : {}),
             },
           }
         : {}),
@@ -1627,7 +1629,15 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
         } else if (observation && target.status !== 'exact') {
           needsAttention = true;
         }
-      } else if (policy && !requestedWindowKind && (observation?.windows.length ?? 0) > 0) {
+      } else if (
+        policy &&
+        !requestedWindowKind &&
+        (provider.kind === 'antigravity'
+          ? (observation?.windows.some((window) =>
+              windowKindBelongsToPolicyScope(window.windowKind, scope),
+            ) ?? false)
+          : (observation?.windows.length ?? 0) > 0)
+      ) {
         needsAttention = true;
       }
       if (selectedWindowKind && policy && 'windowKind' in policy) {
@@ -1673,6 +1683,11 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
             triggerModels: {
               gemini: input.config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
               claudeGpt: input.config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
+              ...(capabilities.windowTrigger.supportedWindowKinds?.includes(
+                'antigravity_argon_weekly',
+              )
+                ? { argon: input.config.AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL }
+                : {}),
             },
           }
         : {}),
@@ -1764,6 +1779,13 @@ function resolveUsageView(input: BuildServerInput, query: Record<string, unknown
     repositories: input.repositories,
     now,
     timezone,
+    observedWindows: providers.flatMap((provider) => {
+      if (provider.kind !== 'antigravity') return [];
+      const argonWindow = input.repositories.providerState
+        .get(provider.id)
+        ?.observation?.windows.find((window) => window.windowKind === 'antigravity_argon_weekly');
+      return argonWindow ? [{ providerId: provider.id, windowKind: argonWindow.windowKind }] : [];
+    }),
     ...(requestedProvider ? { providerId: requestedProvider } : {}),
     ...(requestedWindow && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(requestedWindow)
       ? { windowKind: requestedWindow }
@@ -2072,7 +2094,7 @@ function renderSelectedPolicy(provider: ProviderRead): string {
 }
 
 function renderProviderPolicyFamily(provider: ProviderRead, item: ProviderPolicyRead): string {
-  const family = item.scope === 'gemini' ? 'Gemini Models' : 'Claude and GPT Models';
+  const family = quotaFamilyDisplayName(item.scope);
   const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}&scope=${item.scope}`;
   if (item.needsAttention) {
     return `<article class="provider-policy-family"><strong>${family}</strong><p class="provider-policy-status">Schedule needs review before automatic starts can resume.</p><a href="${escapeHtml(scheduleHref)}">Review schedule</a></article>`;
@@ -2212,9 +2234,10 @@ function renderWindow(
   const model = triggerModelForWindow(provider, window);
   const targetLabel = windowGroupDisplayName(window.windowKind);
   const actionLabel = targetLabel ? `${targetLabel}, ${label}` : label;
-  const startAction = canManuallyTrigger(provider, window)
-    ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-awm-enhance="mutation" data-awm-target="overview-provider:${escapeHtml(provider.id)}" data-awm-uncertain-message="The start request may have been accepted. Refresh provider status; do not repeat the request until its result is clear."><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" data-awm-pending-label="Queueing start…" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
-    : '';
+  const startAction =
+    canManuallyTrigger(provider, window) && (provider.kind !== 'antigravity' || model !== null)
+      ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-awm-enhance="mutation" data-awm-target="overview-provider:${escapeHtml(provider.id)}" data-awm-uncertain-message="The start request may have been accepted. Refresh provider status; do not repeat the request until its result is clear."><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" data-awm-pending-label="Queueing start…" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
+      : '';
   return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction}</section>`;
 }
 
@@ -2235,12 +2258,16 @@ function triggerModelForWindow(provider: ProviderRead, window: WindowSnapshot): 
   if (window.windowKind.startsWith('antigravity_gemini_')) return provider.triggerModels.gemini;
   if (window.windowKind.startsWith('antigravity_claude_gpt_'))
     return provider.triggerModels.claudeGpt;
+  if (window.windowKind === 'antigravity_argon_weekly') return provider.triggerModels.argon ?? null;
   return null;
 }
 
 function triggerModelDisplayName(model: string): string {
   const knownNames: Record<string, string> = {
     'gemini-3.8-flash-low': 'Gemini 3.8 Flash Low',
+    'gemini-4-argon-low': 'Gemini 4 Argon Low',
+    'gemini-4-argon-medium': 'Gemini 4 Argon Medium',
+    'gemini-4-argon-high': 'Gemini 4 Argon High',
     'claude-sonnet-4-6': 'Claude Sonnet 4.6',
   };
   return knownNames[model] ?? model;

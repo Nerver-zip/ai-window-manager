@@ -713,6 +713,143 @@ describe('settings UI helpers', () => {
     expect(html).not.toContain('gemini-3.8-flash-low</code>');
   });
 
+  it('keeps Argon weekly-only and explains when the provider has not reported it', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          windows: [
+            observedWindowTarget('antigravity', 'antigravity_gemini_weekly', 604_800),
+            observedWindowTarget('antigravity', 'antigravity_claude_gpt_weekly', 604_800),
+          ],
+        },
+      ],
+      selectedProviderId: 'antigravity',
+      policyScope: 'argon',
+      policy: {
+        id: 'activation-antigravity-argon',
+        providerId: 'antigravity',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      referenceInstant: new Date('2026-09-24T12:00:00.000Z'),
+    });
+
+    expect(html).toContain('href="/schedule?providerId=antigravity&amp;scope=argon"');
+    expect(html).toContain('aria-current="page">Gemini 4 Argon</a>');
+    expect(html).toContain('name="scope" value="argon"');
+    expect(html).toContain(
+      'No Gemini 4 Argon weekly window is currently reported. No other quota family or cadence will be substituted.',
+    );
+    expect(html).not.toContain('antigravity_argon_five_hour');
+    expect(html).not.toContain('value="antigravity_gemini_weekly"');
+    expect(html).not.toContain('value="antigravity_claude_gpt_weekly"');
+  });
+
+  it('shows the configured Argon trigger model only on its exact weekly target', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          capabilities: {
+            ...supportedCapabilities,
+            windowTrigger: {
+              supported: true,
+              contract: 'observed_undocumented',
+              consumesQuota: true,
+              supportedWindowKinds: ['antigravity_argon_weekly'],
+            },
+          },
+          triggerModels: {
+            gemini: 'gemini-3.8-flash-low',
+            claudeGpt: 'claude-sonnet-4-6',
+            argon: 'gemini-4-argon-low',
+          },
+          windows: [observedWindowTarget('antigravity', 'antigravity_argon_weekly', 604_800)],
+        },
+      ],
+      selectedProviderId: 'antigravity',
+      policyScope: 'argon',
+      policy: {
+        id: 'activation-antigravity-argon',
+        providerId: 'antigravity',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'antigravity_argon_weekly',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      referenceInstant: new Date('2026-09-24T12:00:00.000Z'),
+    });
+
+    expect(html).toContain('Gemini 4 Argon · Weekly window');
+    expect(html).toContain('value="antigravity_argon_weekly" selected');
+    expect(html).toContain(
+      '<span class="field-label">Trigger model</span><code>gemini-4-argon-low</code>',
+    );
+    expect(html).toContain(
+      'The provider reports Gemini 4 Argon as a weekly-only allowance. Its trigger effect has not been live-validated, and Argon triggering is disabled by default.',
+    );
+    expect(html).not.toContain('both the 5-hour and weekly windows in this group');
+    expect(html).not.toContain('antigravity_argon_five_hour');
+  });
+
+  it('keeps Argon schedules monitoring-only when only another family trigger is enabled', () => {
+    const html = renderActivationSchedulePage({
+      csrfToken,
+      providers: [
+        {
+          ...provider,
+          id: 'antigravity',
+          kind: 'antigravity',
+          enabled: true,
+          mode: 'automation',
+          capabilities: {
+            ...supportedCapabilities,
+            windowTrigger: {
+              supported: true,
+              contract: 'observed_undocumented',
+              consumesQuota: true,
+              supportedWindowKinds: ['antigravity_gemini_weekly'],
+            },
+          },
+          triggerModels: {
+            gemini: 'gemini-3.8-flash-low',
+            claudeGpt: 'claude-sonnet-4-6',
+          },
+          windows: [observedWindowTarget('antigravity', 'antigravity_argon_weekly', 604_800)],
+        },
+      ],
+      selectedProviderId: 'antigravity',
+      policyScope: 'argon',
+      policy: {
+        id: 'activation-antigravity-argon',
+        providerId: 'antigravity',
+        kind: 'manual',
+        enabled: true,
+        timezone: 'UTC',
+        windowKind: 'antigravity_argon_weekly',
+        updatedAtMs: 1,
+      },
+      timezone: { timezone: 'UTC', source: 'manual' },
+      referenceInstant: new Date('2026-09-24T12:00:00.000Z'),
+    });
+
+    expect(html).toContain('Monitoring only');
+    expect(html).toContain('Other Antigravity trigger families do not enable Argon starts.');
+    expect(html).not.toContain('Automatic actions available');
+  });
+
   it('keeps monitoring-only save possible with no observations and blocks automatic modes', () => {
     const html = renderActivationSchedulePage({
       csrfToken,
