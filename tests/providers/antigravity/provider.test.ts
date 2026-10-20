@@ -185,6 +185,34 @@ describe('AntigravityProvider', () => {
     await expect(provider.health({})).resolves.toBe('UP');
   });
 
+  it('rejects distinct quota buckets that resolve to the same window identity', async () => {
+    type Bucket = {
+      id: string;
+      window: '5h' | 'weekly';
+      remaining_fraction: number;
+      reset_time?: string | null;
+    };
+    const payload = JSON.parse(fixture('usage-json.success.json')) as {
+      command: { data: { groups: Array<{ buckets: Bucket[] }> } };
+    };
+    const weeklyBuckets = payload.command.data.groups[0]!.buckets;
+    weeklyBuckets.push({
+      ...weeklyBuckets[0]!,
+      id: 'synthetic-gemini-second-weekly',
+      remaining_fraction: 0.5,
+    });
+    const provider = providerFor(JSON.stringify(payload));
+
+    const observation = await provider.inspect({});
+
+    expect(observation).toMatchObject({
+      health: 'DEGRADED',
+      windows: [],
+      summary: 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS',
+    });
+    await expect(provider.health({})).resolves.toBe('DEGRADED');
+  });
+
   it('preserves nullable timing while marking duration provenance as inferred', async () => {
     const observation = await providerFor(fixture('usage-json.partial-null.json')).inspect({});
 

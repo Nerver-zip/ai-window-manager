@@ -46,6 +46,14 @@ const MAX_TIMEOUT_MS = 305_000;
 const MAX_RESET_DISTANCE_MS = 366 * 24 * 60 * 60 * 1000;
 // Normalize only tiny endpoint residuals; the observed 99.95% remaining stays active.
 const REMAINING_FRACTION_EPSILON = 0.00001;
+const AMBIGUOUS_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS';
+
+class AntigravityWindowIdentityAmbiguousError extends Error {
+  constructor() {
+    super('multiple Antigravity quota buckets map to the same window identity');
+    this.name = 'AntigravityWindowIdentityAmbiguousError';
+  }
+}
 
 export interface AntigravityProviderOptions {
   executable: string;
@@ -161,6 +169,7 @@ function normalizeTriggerModel(value: string | undefined): string | undefined {
 }
 
 function healthFor(error: unknown): ProviderHealth {
+  if (error instanceof AntigravityWindowIdentityAmbiguousError) return 'DEGRADED';
   if (error instanceof AntigravityTransportError && error.code === 'AUTH_REQUIRED') {
     return 'AUTH_REQUIRED';
   }
@@ -169,6 +178,9 @@ function healthFor(error: unknown): ProviderHealth {
 }
 
 function summaryFor(error: unknown): string {
+  if (error instanceof AntigravityWindowIdentityAmbiguousError) {
+    return AMBIGUOUS_WINDOW_IDENTITY_SUMMARY;
+  }
   if (error instanceof AntigravityTransportError) return `AGY_${error.code}`;
   if (error instanceof AntigravityOutputError) return 'AGY_PROVIDER_OUTPUT_INVALID';
   return 'AGY_PROVIDER_OUTPUT_INVALID';
@@ -405,9 +417,18 @@ export class AntigravityProvider implements ProviderAdapter {
       if (!Number.isFinite(completedAt.getTime())) throw new AntigravityOutputError();
       observedAt = completedAt.toISOString();
 
-      const windows = envelope.command.data.groups.flatMap((group, index) =>
-        group.buckets.map((bucket) => normalizeBucket(this.id, group, index, bucket, observedAt)),
-      );
+      const windows: WindowSnapshot[] = [];
+      const seenWindowKinds = new Set<string>();
+      envelope.command.data.groups.forEach((group, groupIndex) => {
+        group.buckets.forEach((bucket) => {
+          const window = normalizeBucket(this.id, group, groupIndex, bucket, observedAt);
+          if (seenWindowKinds.has(window.windowKind)) {
+            throw new AntigravityWindowIdentityAmbiguousError();
+          }
+          seenWindowKinds.add(window.windowKind);
+          windows.push(window);
+        });
+      });
       const observation = parseProviderObservation({
         providerId: this.id,
         health: windows.length > 0 ? 'UP' : 'DEGRADED',

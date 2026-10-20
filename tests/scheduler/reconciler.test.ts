@@ -449,6 +449,50 @@ describe('Reconciler', () => {
     );
   });
 
+  it('retains last-known-good usage when provider buckets have ambiguous window identity', async () => {
+    const context = setup();
+    await context.reconciler().reconcile();
+    const previous = context.repositories.providerState.get('fake')?.observation;
+    const ambiguousObservation = parseProviderObservation({
+      providerId: 'fake',
+      health: 'DEGRADED',
+      observedAt: context.clock.now().toISOString(),
+      staleAfterSeconds: 10,
+      windows: [],
+      summary: 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS',
+    });
+    const ambiguousAdapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: () => Promise.resolve(ambiguousObservation),
+    };
+    const inspectionResults: string[] = [];
+    const reconciler = context.reconciler({
+      adapters: new Map([['fake', ambiguousAdapter]]),
+      onInspection: (_providerId, result) => inspectionResults.push(result),
+    });
+    context.clock.advanceMs(61_000);
+
+    const report = await reconciler.reconcile();
+    const state = context.repositories.providerState.get('fake');
+
+    expect(report.decisions).toEqual([]);
+    expect(state).toMatchObject({
+      health: 'DEGRADED',
+      lastErrorCode: 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS',
+    });
+    expect(state?.observation).toEqual(previous);
+    expect(context.repositories.windowSamples.list('fake')).toHaveLength(1);
+    expect(inspectionResults).toEqual(['invalid_response']);
+    const failureEvent = context.repositories.events
+      .list('fake')
+      .find((event) => event.type === 'provider_inspection_failed');
+    expect(failureEvent?.reasonCode).toBe('PROVIDER_WINDOW_IDENTITY_AMBIGUOUS');
+    expect(failureEvent?.data).toEqual({
+      failureCode: 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS',
+      retainedLastKnownGood: true,
+    });
+  });
+
   it('does not create an intent from stale persisted state', async () => {
     const context = setup();
     const staleObservation: ProviderObservation = {

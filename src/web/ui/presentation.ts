@@ -193,6 +193,8 @@ const ERROR_LABELS: Readonly<Record<string, string>> = {
   PROVIDER_UNAVAILABLE: 'The provider is temporarily unavailable.',
   INSPECTION_FAILED: 'The latest provider check failed.',
   INVALID_PROVIDER_RESPONSE: 'The provider returned data that could not be verified.',
+  PROVIDER_WINDOW_IDENTITY_AMBIGUOUS:
+    'Provider quota buckets mapped to the same usage window; this reading was rejected.',
   AGY_AUTH_REQUIRED: 'Sign in with the official Antigravity client to resume usage checks.',
   AGY_KEYRING_LOCKED: 'The secure Antigravity sign-in store is locked.',
   AGY_SECRET_SERVICE_UNAVAILABLE: 'The secure sign-in storage service is unavailable.',
