@@ -113,7 +113,9 @@ blindly retried.
 - Google AI Pro receives high baseline quota refreshed every five hours until its weekly limit is reached, plus a higher weekly limit.
 - Users outside Pro/Ultra are documented as receiving weekly-refresh baseline quota.
 - `/usage` (alias `/quota`) in the official Antigravity CLI refreshes quota status from backend and displays model quota usage.
-- Official headless mode `agy -p ...` is designed for scripted/CI use and uses cached official CLI credentials.
+- Official headless mode `agy -p ...` is documented for direct scripting/CI and
+  uses cached official CLI credentials. This does not establish that a
+  third-party application may wrap the CLI under the operator's plan terms.
 - Official headless JSON and stream-JSON output was validated in SPIKE-002 and
   exposes structured groups, quota buckets, remaining fractions and reset
   timestamps without spending a turn.
@@ -168,15 +170,38 @@ blindly retried.
 
 ### Risk / policy
 
-The project-level decision accepts a self-hosted, single-operator integration
-that invokes the **official `agy` CLI itself**, including an experimental,
-quota-consuming `Hi!` action behind an environment gate that defaults on for
-an enabled provider and can be explicitly disabled. This does not
-relax the technical boundary: never extract/replay login tokens, reproduce
-internal backend calls, or impersonate the client. The official CLI owns login
-and its Secret Service credentials; AWM validates bounded usage/action output.
-The trigger is classified `observed_undocumented`, consumes normal quota, and
-is not a dedicated start-only operation.
+The previous project-level decision accepted a self-hosted, single-operator
+integration that invokes the **official `agy` CLI itself**, including an
+experimental quota-consuming `Hi!` action. That decision described a technical
+boundary; it did not establish Google's authorization for AWM to wrap the CLI.
+The official [Antigravity FAQ](https://antigravity.google/docs/faq/), checked
+2026-10-20, says third-party software, tools, or services accessing Antigravity
+violate the Terms of Service and may result in account suspension or
+termination. It separately says headless `agy -p` is for direct scripting/CI
+and wrapping it in third-party applications is unsupported under consumer
+plans. AWM is such an application. Whether an Enterprise arrangement permits
+this exact use is not documented in the FAQ and has not been established here.
+
+Accordingly, the existing CLI integration and its historical operator
+acceptance must not be represented as provider-approved. Do not add a
+normalized Argon family or collect authenticated quota data through AWM until
+applicable terms or a supported integration path are established. A fail-closed
+parser guard may reject explicit but unverified Argon labels to prevent
+misattribution; it does not establish or expose an Argon family. The FAQ points
+third-party Gemini coding-agent use toward Gemini Enterprise or a Google AI
+Studio API key. Gemini Enterprise documents an Antigravity AI developer tools
+offering that includes Gemini 4 Argon, pooled credits on a rolling seven-day
+cycle, and a Business AI Code `FetchQuotaStatus` read method. The public docs do
+not publish that method's response schema or show an Argon-specific window.
+This is a separate quota contract and would need its own supported adapter
+scope; it does not identify the consumer Antigravity quota family. See
+[`SPIKE-006`](research/spikes/SPIKE-006-antigravity-argon.md).
+
+If an authorized integration path is established, its technical boundaries
+remain: never extract/replay login tokens, reproduce internal backend calls, or
+impersonate the client; validate bounded usage/action output; classify the
+trigger as `observed_undocumented` and quota-consuming unless official evidence
+establishes otherwise. A prompt is not a dedicated start-only operation.
 
 **MVP capability proposal**
 
@@ -185,7 +210,8 @@ can_query_usage       = experimental/conditional, official CLI headless JSON onl
 can_query_reset       = experimental/conditional, only with validated bucket reset fields
 can_trigger_window    = gate-controlled (default on), observed_undocumented, exact allowlisted targets
 trigger_consumes_quota= true
-public_usage_api      = false / none found
+consumer_quota_api    = none documented; official CLI output is not a versioned API
+enterprise_quota_api  = FetchQuotaStatus named; public schema and Argon granularity unknown
 ```
 
 SPIKE-002 concludes `VIABLE_OFFICIAL_READ_PATH`; the monitor-only adapter now

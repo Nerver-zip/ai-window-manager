@@ -313,6 +313,34 @@ describe('AntigravityProvider', () => {
     });
   });
 
+  it('fails closed when a group name marks an unverified Argon identity', async () => {
+    const output = fixture('usage-json.success.json').replace(
+      '"name": "Gemini Models"',
+      '"name": "Gemini 4 Argon"',
+    );
+    const observation = await providerFor(output).inspect({});
+
+    expect(observation).toMatchObject({
+      health: 'DEGRADED',
+      windows: [],
+      summary: 'PROVIDER_WINDOW_IDENTITY_UNSUPPORTED',
+    });
+  });
+
+  it('fails closed when a bucket identity marks an unverified Argon quota', async () => {
+    const output = fixture('usage-json.success.json').replace(
+      '"id": "synthetic-gemini-weekly"',
+      '"id": "synthetic-argon-weekly"',
+    );
+    const observation = await providerFor(output).inspect({});
+
+    expect(observation).toMatchObject({
+      health: 'DEGRADED',
+      windows: [],
+      summary: 'PROVIDER_WINDOW_IDENTITY_UNSUPPORTED',
+    });
+  });
+
   it('drops a valid but unreasonable reset instead of inventing timing', async () => {
     const output = fixture('usage-json.additive.json').replace(
       '2030-01-03T12:00:00Z',

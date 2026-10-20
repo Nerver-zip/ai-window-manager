@@ -14,6 +14,9 @@
 
 ### Fixed
 
+- Fail closed when Antigravity usage metadata labels an unverified Argon quota
+  identity, preventing it from being misclassified as Gemini and retaining
+  last-known-good usage.
 - Update the transitive `source-map-js` dependency to `1.2.2` to address
   GHSA-68fv-2mgg-jv7q without suppressing dependency audit findings.
 - Drain expired history incrementally with bounded, yielding passes instead of

@@ -47,11 +47,19 @@ const MAX_RESET_DISTANCE_MS = 366 * 24 * 60 * 60 * 1000;
 // Normalize only tiny endpoint residuals; the observed 99.95% remaining stays active.
 const REMAINING_FRACTION_EPSILON = 0.00001;
 const AMBIGUOUS_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS';
+const UNSUPPORTED_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_UNSUPPORTED';
 
 class AntigravityWindowIdentityAmbiguousError extends Error {
   constructor() {
     super('multiple Antigravity quota buckets map to the same window identity');
     this.name = 'AntigravityWindowIdentityAmbiguousError';
+  }
+}
+
+class AntigravityWindowIdentityUnsupportedError extends Error {
+  constructor() {
+    super('an unverified Antigravity quota identity was observed');
+    this.name = 'AntigravityWindowIdentityUnsupportedError';
   }
 }
 
@@ -104,6 +112,20 @@ function groupKey(groupName: string, index: number): string {
   if (/\bgemini\b/.test(normalized)) return 'gemini';
   if (/\bclaude\b|\bgpt\b/.test(normalized)) return 'claude_gpt';
   return `group_${index + 1}`;
+}
+
+function hasUnverifiedArgonIdentityHint(
+  group: AntigravityUsageGroup,
+  bucket: AntigravityUsageBucket,
+): boolean {
+  return [group.name, group.description, bucket.id, bucket.name, bucket.description].some(
+    (value) =>
+      typeof value === 'string' &&
+      value
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .includes('argon'),
+  );
 }
 
 function windowKey(
@@ -169,7 +191,12 @@ function normalizeTriggerModel(value: string | undefined): string | undefined {
 }
 
 function healthFor(error: unknown): ProviderHealth {
-  if (error instanceof AntigravityWindowIdentityAmbiguousError) return 'DEGRADED';
+  if (
+    error instanceof AntigravityWindowIdentityAmbiguousError ||
+    error instanceof AntigravityWindowIdentityUnsupportedError
+  ) {
+    return 'DEGRADED';
+  }
   if (error instanceof AntigravityTransportError && error.code === 'AUTH_REQUIRED') {
     return 'AUTH_REQUIRED';
   }
@@ -180,6 +207,9 @@ function healthFor(error: unknown): ProviderHealth {
 function summaryFor(error: unknown): string {
   if (error instanceof AntigravityWindowIdentityAmbiguousError) {
     return AMBIGUOUS_WINDOW_IDENTITY_SUMMARY;
+  }
+  if (error instanceof AntigravityWindowIdentityUnsupportedError) {
+    return UNSUPPORTED_WINDOW_IDENTITY_SUMMARY;
   }
   if (error instanceof AntigravityTransportError) return `AGY_${error.code}`;
   if (error instanceof AntigravityOutputError) return 'AGY_PROVIDER_OUTPUT_INVALID';
@@ -421,6 +451,9 @@ export class AntigravityProvider implements ProviderAdapter {
       const seenWindowKinds = new Set<string>();
       envelope.command.data.groups.forEach((group, groupIndex) => {
         group.buckets.forEach((bucket) => {
+          if (hasUnverifiedArgonIdentityHint(group, bucket)) {
+            throw new AntigravityWindowIdentityUnsupportedError();
+          }
           const window = normalizeBucket(this.id, group, groupIndex, bucket, observedAt);
           if (seenWindowKinds.has(window.windowKind)) {
             throw new AntigravityWindowIdentityAmbiguousError();
