@@ -49,17 +49,21 @@ deployment remains operator acceptance; no quota-consuming action was run.
   D-Bus/Secret Service, non-root execution and optional mounted unlock-file
   secret. For configured providers, automatic starts are on by default and may
   be explicitly opted out in provider settings or through the environment gate.
-- **AGY-001**: official headless `/usage` read-only adapter with strict
-  normalization and independent Gemini / Claude-GPT quota windows.
+- **AGY-001 / ARGON-001**: official headless `/usage` read-only adapter with
+  strict normalization and independent Gemini, Claude-GPT and Argon weekly
+  quota scopes. Argon recognizes only the exact weekly bucket ID; it does not
+  infer a five-hour target.
 - **WEB-004 / TEST-004**: Settings onboarding UI and offline lifecycle/runtime
   test coverage.
 
-Antigravity quota actions are a separate, owner-confirmed but
-`observed_undocumented` quota-consuming capability. Their environment gate
-defaults on for configured providers and can be explicitly set to false;
-provider automation mode, a saved target and all normal preflight checks are
-still required. The tested effect is not guaranteed for every account, plan or
-future CLI release.
+The existing Gemini and Claude/GPT quota actions are separate,
+owner-confirmed, `observed_undocumented` quota-consuming capabilities. Their
+global Antigravity environment gate defaults on for configured providers and
+can be explicitly set to false. Argon is separately gated off by default and
+starts in manual, review-required mode with no target. Any action also requires
+provider automation mode, the exact saved target, configured model and normal
+preflight checks. There is no live AWM Argon trigger acceptance, and the CLI
+wrapper is not represented as Google-approved for consumer plans.
 
 ## Native operator access milestone — complete
 
@@ -119,8 +123,8 @@ flows and ordinary provider tests are offline and do not consume quota.
   uses only explicitly authorized per-ID local file deletion under the isolated
   AWM home, not a supported delete API; its storage layout is a remaining risk.
 - **RUNTIME-CLIENT-001 — Provider client lifecycle**: one manifest pins Codex
-  `0.157.1` (official stable release on 2026-09-26) and Antigravity `1.2.12`
-  with architecture digests; manual update/rollback, optional
+  `0.162.1` and Antigravity `1.4.3` with architecture digests; manual
+  update/rollback, optional
   off-by-default daily automatic updates, bounded staging and read-only
   compatibility checks are implemented. A scheduled workflow proposes
   validated pin changes by review-only PR.
@@ -135,7 +139,8 @@ flows and ordinary provider tests are offline and do not consume quota.
 The implementation changes above were validated offline and did not themselves
 exercise a provider or production container. Separately, operator-authorized
 Codex evidence is in `SPIKE-004`; the owner confirms end-to-end Antigravity
-action validation for both model families (recorded in `SPIKE-005`). This
+action validation for the Gemini and Claude/GPT families (recorded in
+`SPIKE-005`). This
 release-preparation run did not repeat any provider request or spend quota.
 
 ## CORE-001 — Finalize evidence/window domain types
@@ -213,7 +218,7 @@ requires review of both new policies before any migrated automatic action.
 
 ## AGY-TRIGGER-001 — Implement durable target-specific Antigravity actions
 
-**Status: implemented with offline tests and owner-confirmed end-to-end live acceptance for both model families (2026-09-27).**
+**Status: implemented with offline tests and owner-confirmed end-to-end live acceptance for Gemini and Claude/GPT (2026-09-27).**
 
 Use the pinned official `agy` CLI stream-JSON protocol with one fixed `Hi!`,
 the model mapped to the exact selected quota family, a durable intent and a
@@ -272,15 +277,40 @@ HTTP handler never inspects or dispatches a provider action.
 **Status: complete; account-specific CLI and end-to-end AWM evidence is owner-confirmed, not a universal provider guarantee.**
 
 The owner confirms the integrated AWM trigger has been validated end-to-end for
-both families. Earlier evidence showed that one official `agy -p "Hi!"` turn
-with each family’s configured model anchored that family’s five-hour reset. See
+the Gemini and Claude/GPT families only. Earlier evidence showed that one
+official `agy -p "Hi!"` turn with each family's configured model anchored that
+family's five-hour reset. See
 [`SPIKE-005`](research/spikes/SPIKE-005-antigravity-window-trigger.md). This
 supports the implemented integration, but does not establish a
 dedicated start API or generalize to all accounts/versions. The capability is
-`observed_undocumented` and quota-consuming; its runtime gate defaults on for
-configured providers and can be explicitly disabled.
+`observed_undocumented` and quota-consuming; the global gate defaults on for
+configured providers and can be explicitly disabled. Argon has no live trigger
+acceptance and retains its additional default-off gate.
 
 **Dependencies**: ANT-001. No undocumented provider endpoint or token handling.
+
+## ARGON-001 — Add weekly-only Gemini 4 Argon support
+
+**Status: ARGON_MONITORING_AND_POLICY_READY (2026-10-20). Offline validation and browser acceptance passed; PR/operator review remains required. No live Argon prompt has been sent.**
+
+Normalize only the exact provider bucket ID `gemini-argon-wtu-weekly` with
+`window: weekly` to `antigravity_argon_weekly`, independent of group order or
+display name. Preserve other Argon-like buckets under stable opaque
+observed-only identities, with unknown phase and no trigger/policy target, so
+they cannot hide fresh Gemini or Claude/GPT observations. Do not add a
+five-hour Argon target. The operator-provided Pro CLI 1.4.2 snapshot and
+identity-unestablished 1.4.3 structured probe are recorded in
+[`SPIKE-006`](research/spikes/SPIKE-006-antigravity-argon.md); they establish
+weekly visibility but not reset-cycle transitions or trigger effects.
+
+Argon starts manual, review-required, and targetless. Trigger support requires
+the global Antigravity gate, the additional default-false
+`AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED` gate, one of the three allowlisted Argon
+model slugs (or none to disable), provider automation mode, and the exact
+observed weekly target. Migration 014 adds the policy scope without rewriting
+existing policies or action state. Offline tests cover fixture identity, scope,
+gating and model mismatch behavior. No live quota acceptance is part of this
+item.
 
 ## WEB-001 — Implement overview SSR
 

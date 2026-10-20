@@ -45,13 +45,16 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
   cleanup succeeds; it is not exposed in ordinary history, metrics or read APIs.
 - `settings`/`providers`/`schedule_policies`: current runtime config.
 
-Codex retains the canonical `activation-codex` policy. Antigravity stores two
-independent policies: `activation-antigravity-gemini` and
-`activation-antigravity-claude-gpt`. Each row records a family scope, an exact
-normalized `windowKind`, and whether an operator review is required. Manual
-action requests persist their exact target in the action intent. Changing a
-saved policy changes future planning only and does not rewrite previous intents
-or history.
+Codex retains the canonical `activation-codex` policy. Antigravity stores three
+independent policies: `activation-antigravity-gemini`,
+`activation-antigravity-claude-gpt`, and `activation-antigravity-argon`. Each row
+records a family scope, an exact normalized `windowKind`, and whether an operator
+review is required. Argon currently has the single canonical weekly target
+`antigravity_argon_weekly`. Its policy starts in manual mode with review
+required, so automatic starts are off.
+Manual action requests persist their exact target in the action intent. Changing
+a saved policy changes future planning only and does not rewrite previous
+intents or history.
 
 This is **not event sourcing**.
 
@@ -207,11 +210,22 @@ The forward-only schema currently consists of:
   for old starts whose reset continued rolling without an anchored cycle. No
   existing intent is rewritten or automatically closed. Back up before upgrade;
   restoring a compatible backup is the schema rollback path.
+- `migrations/014_argon_policy_scope.sql` widens the policy scope constraint to
+  include Argon. It copies all existing policy IDs and values, preserving
+  action-intent foreign-key references, dedupe keys, history and cleanup jobs;
+  it creates no Argon policy and no action intent. The migration runner disables
+  foreign-key enforcement outside the transaction for this table rebuild, checks
+  every foreign key before recording the migration, and restores the prior
+  enforcement setting. Back up before upgrade; restoring a compatible backup is
+  the schema rollback path.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys
 and a bounded busy timeout, and resolves migrations from the packaged application
-path rather than relying only on the process working directory.
+path rather than relying only on the process working directory. A migration that
+rebuilds a referenced table declares this requirement in its SQL header; the
+runner turns foreign-key enforcement off before beginning the transaction and
+checks `PRAGMA foreign_key_check` before commit.
 
 `src/storage/repositories.ts` provides repositories for providers, current
 provider state, window samples, usage aggregation, events, settings, schedule

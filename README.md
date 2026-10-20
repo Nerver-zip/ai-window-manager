@@ -39,11 +39,12 @@ starts with your schedule instead of checking providers manually.
 ## Features
 
 - Monitor reported five-hour and weekly usage windows for Codex and Antigravity.
+  Argon is currently supported as a separate weekly window only.
 - Schedule starts by local times, a repeating cycle, active hours, or whenever
   a window is eligible; alternatively, keep automatic starts off and start a
   supported window yourself.
-- Configure separate schedules for Antigravity's Gemini and Claude/GPT model
-  families.
+- Configure separate schedules for Antigravity's Gemini, Claude/GPT, and
+  Argon model families. Argon starts in manual mode and requires review.
 - Review status, usage charts, a daily usage heatmap, and paginated activity in
   the Overview, Usage, Schedule, and Logs pages.
 - Connect provider accounts through guided flows in the web UI.
@@ -88,13 +89,17 @@ use persisted state; opening a dashboard does not itself inspect a provider.
 | Google Antigravity | Official `agy` CLI usage output           | Normal prompt using the selected family model | Official Google sign-in through the CLI, guided in AWM |
 
 Codex policies target one exact reported window at a time. Antigravity has
-independent policies for **Gemini Models** and **Claude and GPT Models**; each
-targets one exact five-hour or weekly window. Actions for the two Antigravity
-families are serialized. Antigravity's trigger behavior is based on observed
-CLI behavior, and the owner has confirmed the integrated flow for both
-families on the tested setup. It is not a universal provider guarantee and may
-evolve with releases; review the current [provider notes](docs/providers.md)
-before enabling it.
+independent policies for **Gemini Models**, **Claude and GPT Models**, and
+**Gemini 4 Argon**. The observed Argon target is weekly only; no five-hour
+Argon window is exposed. Review the [provider notes](docs/providers.md) for the
+current support boundary and operator-specific evidence before connecting or
+enabling actions.
+
+The existing Gemini and Claude/GPT trigger flow has account-specific
+operator-confirmed evidence. Argon is separate: its trigger gate defaults off,
+its model must be one of the supported Argon slugs, and there is no live AWM
+Argon trigger acceptance. Any normal prompt can consume quota. AWM persists an
+intent before dispatch and does not blindly retry uncertain outcomes.
 
 ## Scheduling
 
@@ -161,18 +166,22 @@ from the Codex and Google provider sign-ins.
 
 The checked-in `.env.example` is the full local `awm` profile:
 
-| Setting                                                         | Example default        | Purpose                                                                              |
-| --------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------ |
-| `AWM_HOST_BIND`                                                 | `0.0.0.0`              | Host interfaces that publish the web service. Use `127.0.0.1` for local-only access. |
-| `AWM_HOST_PORT`                                                 | `8878`                 | Host port; the container listens on `8787`.                                          |
-| `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`    | Initial timezone used for schedules and date displays.                               |
-| `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                 | Enable the corresponding provider client.                                            |
-| `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                 | Allow that provider's trigger capability. Set `false` to opt out.                    |
-| `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low` | Model used for Gemini-family starts.                                                 |
-| `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`    | Model used for Claude/GPT-family starts.                                             |
+| Setting                                                         | Example default        | Purpose                                                                                |
+| --------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| `AWM_HOST_BIND`                                                 | `0.0.0.0`              | Host interfaces that publish the web service. Use `127.0.0.1` for local-only access.   |
+| `AWM_HOST_PORT`                                                 | `8878`                 | Host port; the container listens on `8787`.                                            |
+| `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`    | Initial timezone used for schedules and date displays.                                 |
+| `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                 | Enable the corresponding provider client.                                              |
+| `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                 | Allow that provider's trigger capability. Set `false` to opt out.                      |
+| `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED`                         | `false`                | Additional Argon-only action gate; the global Antigravity gate must also be enabled.   |
+| `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL`                           | `gemini-4-argon-low`   | Argon model (`low`, `medium`, `high` slug), or blank to disable Argon model selection. |
+| `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low` | Model used for Gemini-family starts.                                                   |
+| `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`    | Model used for Claude/GPT-family starts.                                               |
 
 An enabled trigger gate does not itself send a request. Provider connection,
 automation mode, an enabled schedule, and an exact target are still required.
+An Argon action additionally needs its separate gate and allowlisted model; its
+bootstrapped policy is manual, review-required, and targetless.
 After initialization, saved provider settings in SQLite are authoritative;
 changing bootstrap environment values does not silently overwrite explicit
 choices. See [Configuration](docs/configuration.md) for all options.
@@ -207,8 +216,10 @@ starts.
 On **Schedule**:
 
 1. Select Codex or Antigravity.
-2. For Antigravity, select **Gemini Models** or **Claude and GPT Models**.
-3. Choose the exact reported five-hour or weekly window for that policy.
+2. For Antigravity, select **Gemini Models**, **Claude and GPT Models**, or
+   **Gemini 4 Argon**.
+3. Choose the exact reported target. Argon currently has only the weekly
+   target; it is not inferred when absent.
 4. Choose a schedule option, configure its times if needed, and save.
 
 No target is guessed. Monitoring can be checked without sending a

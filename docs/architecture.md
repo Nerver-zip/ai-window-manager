@@ -117,8 +117,10 @@ operators can opt out in settings or through the corresponding environment
 gate. The scheduler and generic executor contain no provider endpoint, token
 format, CLI model semantics, or credential parsing. Each intent stores one
 exact normalized window target. Antigravity has independent policy IDs for the
-Gemini and Claude/GPT families, each constrained to its own allowlisted window
-keys. Policies are independent; trigger dispatch remains provider-wide
+Gemini, Claude/GPT and Gemini 4 Argon families, each constrained to its own
+allowlisted window keys. Argon currently has one weekly target; its policy
+starts manual with review required and its separate trigger gate defaults off.
+Policies are independent; trigger dispatch remains provider-wide
 serialized across families until confirmation or safe terminal resolution.
 
 Provider clients have immutable image-packaged fallbacks and a separate

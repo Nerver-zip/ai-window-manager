@@ -95,14 +95,18 @@ inspects a provider while rendering either page.
 - manual `Trigger now` only when capability/automation mode permits.
 
 Codex has one saved activation policy. Antigravity has independent saved
-policies for Gemini Models and Claude and GPT Models; a family switch loads the
-selected policy without saving, and saving it leaves the other family intact.
-Each policy targets one exact observed window from its family. Ambiguous legacy
-Antigravity schedules require review before they can resume. Older manual
-policies without a target are flagged for review once observations are
-available. If the experimental Antigravity trigger is enabled, the selected
-model is shown as secondary detail; a prompt may affect both cadence windows in
-that family.
+policies for Gemini Models, Claude and GPT Models, and Gemini 4 Argon; a family
+switch loads the selected policy without saving, and saving it leaves the other
+families intact. Each policy targets one exact observed window from its family.
+Argon has a weekly target only. If the provider does not report it, Schedule
+shows that target as unavailable; it does not substitute a Gemini window or
+invent a five-hour Argon window. The provider reports this as a weekly-only
+allowance; its trigger effect has not been live-validated, so Argon triggering
+is disabled by default. Ambiguous legacy Antigravity schedules require review
+before they can resume. Older manual policies without a target are flagged for
+review when an exact target for that family becomes available. If an
+Antigravity trigger is enabled and the exact target is supported, its model is
+shown as secondary detail.
 
 The current server-rendered `/schedule` page reveals only the fields relevant to
 the selected preference. The next-start preview uses saved provider information
@@ -179,15 +183,14 @@ periods. Queries cover the selected time domain and downsample while preserving
 endpoints, extrema and outage breaks within a 384-point per-series limit.
 Chart labels use the saved timezone.
 Antigravity renders a weekly-family selector within the daily usage section and
-four time-series charts with family plus cadence in every heading. Codex's sole
-weekly window is selected automatically. The heatmap has no alternate day list
-or always-visible zero-usage caveat; its calendar grid retains keyboard
-navigation and per-day accessible names.
-Antigravity always shows four charts named by model family and cadence; each
-period is independent. Its weekly heatmap selects a family only when multiple
-weekly sources are available. There is no redundant page-level window selector
-or alternate day list. The calendar supports keyboard grid navigation and
-remains server-rendered.
+one chart for each observed or historically saved window. Gemini Models and
+Claude and GPT Models retain their four existing charts; Gemini 4 Argon adds a
+fifth, weekly chart only when an Argon window or its saved history exists. An
+account without Argon keeps the existing four charts and has no phantom Argon
+heatmap option. Codex's sole weekly window is selected automatically. The
+heatmap uses only reported weekly windows, has no alternate day list or
+always-visible zero-usage caveat, and retains keyboard grid navigation and
+per-day accessible names.
 
 ## Logs
 

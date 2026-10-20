@@ -57,10 +57,12 @@ windows, freshness, capabilities, current-window state and the latest
 persisted scheduler decision. `/api/v1/scheduling` exposes the persisted
 timezone, activation policy, current window, upcoming occurrences and planner
 decision without provider I/O. For Antigravity, each provider DTO additionally
-contains `policyScopes[]` for `gemini` and `claude_gpt`; each entry has its own
-policy, current window, decision, upcoming occurrences and `requiresReview`
-flag. The older top-level fields remain a Gemini-family-compatible view for
-existing clients. Trigger requests create a durable intent and return `202`,
+contains `policyScopes[]` for `gemini`, `claude_gpt` and `argon`; each entry has
+its own policy, current window, decision, upcoming occurrences and
+`requiresReview` flag. The Argon scope accepts only the exact weekly window
+`antigravity_argon_weekly`; an account without that reported window has no
+Argon target to schedule. The older top-level fields remain a
+Gemini-family-compatible view for existing clients. Trigger requests create a durable intent and return `202`,
 while inspect requests append a per-provider reconcile hint, asynchronously wake
 the service and return `202`. This is queue acceptance, not a fresh result. The
 hint requests a fresh read even before the next poll is due; disabled providers
@@ -96,8 +98,11 @@ repository, asset, shell command or digest from the client.
 JSON response is bounded to 365 local calendar days and selected chart windows;
 it includes the saved timezone, aggregation-pending state, selected
 provider/window, daily values with quality/coverage, and downsampled chart
-series. It never inspects a provider. A hidden FakeProvider follows the same
-visibility filtering as the other provider read routes.
+series. The available window list combines saved usage history with the
+currently reported Antigravity Argon weekly target, so it can be selected
+before its first history sample is aggregated. It never inspects a provider. A
+hidden FakeProvider follows the same visibility filtering as the other provider
+read routes.
 
 Notes:
 
@@ -130,10 +135,13 @@ automatically retried if their outcome cannot be confirmed.
 
 The JSON settings routes accept only validated non-secret timezone and
 activation-policy fields. They use the same SQLite services as the HTML forms.
-An Antigravity activation-policy write includes `scope=gemini` or
-`scope=claude_gpt`; the server derives its canonical row ID and rejects a
-window target from the other family. Switching the family on `/schedule` is a
-read-only GET and does not save either policy.
+An Antigravity activation-policy write includes `scope=gemini`,
+`scope=claude_gpt`, or `scope=argon`; the server derives its canonical row ID
+and rejects a window target from another family. Argon accepts only its exact
+provider-reported weekly window and never a synthetic five-hour window. When
+Argon is not reported, its policy can remain manual with no target; automatic
+policies require an exact reported target. Switching the family on `/schedule`
+is a read-only GET and does not save any policy.
 
 The former HTML route `/history` redirects permanently to `/logs`, preserving
 its query string. The JSON endpoint `/api/v1/history` remains unchanged.
