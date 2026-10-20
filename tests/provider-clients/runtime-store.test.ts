@@ -630,13 +630,53 @@ describe('ProviderClientRuntimeStore', () => {
   });
 
   it('rejects corrupt gzip streams and too many archive members', async () => {
-    const harness = makeHarness();
+    let resolveArchiveRead: (() => void) | undefined;
+    const archiveRead = new Promise<void>((resolve) => {
+      resolveArchiveRead = resolve;
+    });
+    let archiveStreamReads = 0;
+    let gzipWasReadBeforeTarParsing = false;
+    const fileSystem = {
+      ...nodeRuntimeStoreFileSystem,
+      async mkdir(pathname: string, mode: number, recursive: boolean) {
+        if (path.basename(pathname) === 'payload') {
+          // The decompressor is already piped, but TarStreamReader cannot call
+          // next() until this directory setup returns.
+          await archiveRead;
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+          gzipWasReadBeforeTarParsing = true;
+        }
+        await nodeRuntimeStoreFileSystem.mkdir(pathname, mode, recursive);
+      },
+      createReadStream(pathname: string) {
+        const source = nodeRuntimeStoreFileSystem.createReadStream(pathname);
+        if (path.basename(pathname) !== 'candidate.tar.gz' || ++archiveStreamReads !== 2) {
+          return source;
+        }
+        return (async function* () {
+          for await (const chunk of source) yield chunk;
+          resolveArchiveRead?.();
+        })();
+      },
+    };
+    const harness = makeHarness({ fileSystem });
     await harness.store.initialize();
     const corruptGzip = runtimeArchive('codex', '1.1.0');
     const corruptIndex = corruptGzip.length - 5;
     corruptGzip[corruptIndex] = corruptGzip[corruptIndex]! ^ 0xff;
     const corruptCandidate = harness.putArchive('codex', '1.1.0', corruptGzip);
     await expectStoreError(harness.store.install('codex', corruptCandidate), 'ARCHIVE_INVALID');
+    expect(gzipWasReadBeforeTarParsing).toBe(true);
+    await expect(harness.store.getState('codex')).resolves.toMatchObject({
+      activeVersion: '1.0.0',
+      activeSource: 'packaged',
+      previousVersion: null,
+    });
+    expect(fs.readlinkSync(path.join(harness.runtimeRoot, 'codex', 'current'))).toBe(
+      harness.packagedCodex,
+    );
+    expect(runtimeVersions(harness.runtimeRoot, 'codex')).toEqual([]);
+    expect(harness.probes).toEqual([]);
 
     const limited = makeHarness();
     const tooMany = archive([
