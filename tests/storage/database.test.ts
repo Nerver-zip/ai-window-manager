@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
-import { openDatabase } from '../../src/storage/database.js';
+import { openDatabase, runMigrations } from '../../src/storage/database.js';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -133,7 +133,7 @@ describe('openDatabase', () => {
     });
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 13,
+        version: 14,
       },
     );
     upgraded.close();
@@ -181,7 +181,7 @@ describe('openDatabase', () => {
   it('opens an in-memory database without creating a filesystem directory', () => {
     const db = openDatabase(':memory:');
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
-      version: 13,
+      version: 14,
     });
     db.close();
   });
@@ -200,7 +200,7 @@ describe('openDatabase', () => {
     openDatabase(file, { migrationsDir }).close();
     const upgraded = openDatabase(file);
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
-      { version: 13 },
+      { version: 14 },
     );
     expect(
       upgraded
@@ -211,6 +211,205 @@ describe('openDatabase', () => {
     ).toEqual({ name: 'rolling_inactive_resolution_evidence' });
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     upgraded.close();
+  });
+
+  it('widens policy scopes from schema 13 without changing policies, intents, history, cleanup or foreign keys', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-argon-policy-scope-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'v13');
+    fs.mkdirSync(migrationsDir);
+    for (let version = 1; version <= 13; version += 1) {
+      const name = fs
+        .readdirSync('migrations')
+        .find((candidate) => candidate.startsWith(`${String(version).padStart(3, '0')}_`));
+      if (!name) throw new Error(`missing migration ${version}`);
+      fs.copyFileSync(path.join('migrations', name), path.join(migrationsDir, name));
+    }
+
+    const file = path.join(dir, 'awm.db');
+    const previous = openDatabase(file, { migrationsDir });
+    previous.exec(`
+      INSERT INTO providers (id, kind, mode, created_at_ms, updated_at_ms)
+      VALUES ('antigravity', 'antigravity', 'automation', 1, 1),
+             ('codex', 'codex', 'monitor_only', 1, 1);
+      INSERT INTO schedule_policies (
+        id, provider_id, scope, requires_review, kind, kind_explicit, enabled,
+        timezone, config_json, created_at_ms, updated_at_ms
+      ) VALUES
+        ('activation-antigravity', 'antigravity', 'legacy', 0, 'manual', 0, 0, 'UTC', '{}', 1, 1),
+        ('activation-antigravity-gemini', 'antigravity', 'gemini', 1, 'auto', 1, 0, 'UTC', '{"windowKind":"antigravity_gemini_weekly"}', 2, 2),
+        ('activation-antigravity-claude-gpt', 'antigravity', 'claude_gpt', 1, 'manual', 0, 0, 'UTC', '{}', 3, 3),
+        ('activation-codex', 'codex', 'default', 0, 'auto', 1, 1, 'UTC', '{}', 4, 4);
+      INSERT INTO action_intents (
+        id, provider_id, policy_id, action_type, dedupe_key, state,
+        scheduled_for_ms, attempt_count, reason_code, explanation_json, created_at_ms, updated_at_ms
+      ) VALUES
+        ('legacy-intent', 'antigravity', 'activation-antigravity', 'trigger_window', 'legacy-dedupe', 'uncertain', 10, 1, 'ACTION_DISPATCH_UNCERTAIN', '{"legacy":true}', 5, 6),
+        ('family-intent', 'antigravity', 'activation-antigravity-gemini', 'trigger_window', 'family-dedupe', 'uncertain', 11, 2, 'ACTION_DISPATCH_UNCERTAIN', '{"family":true}', 7, 8);
+      INSERT INTO action_intents (
+        id, provider_id, policy_id, action_type, dedupe_key, state,
+        scheduled_for_ms, attempt_count, reason_code, explanation_json,
+        started_at_ms, finished_at_ms, last_error_code, created_at_ms, updated_at_ms
+      ) VALUES
+        ('planned-intent', 'antigravity', 'activation-antigravity-claude-gpt', 'trigger_window', 'planned-dedupe', 'planned', 18, 0, 'MANUAL_TRIGGER_REQUESTED', '{"state":"planned"}', NULL, NULL, NULL, 18, 18),
+        ('executing-intent', 'antigravity', 'activation-antigravity-gemini', 'trigger_window', 'executing-dedupe', 'executing', 19, 1, 'MANUAL_TRIGGER_REQUESTED', '{"state":"executing"}', 19, NULL, NULL, 19, 20),
+        ('succeeded-intent', 'antigravity', 'activation-antigravity-claude-gpt', 'trigger_window', 'succeeded-dedupe', 'succeeded', 20, 1, 'MANUAL_TRIGGER_REQUESTED', '{"state":"succeeded"}', 20, 21, NULL, 20, 21),
+        ('retryable-intent', 'antigravity', 'activation-antigravity', 'trigger_window', 'retryable-dedupe', 'failed_retryable', 22, 2, 'ACTION_DISPATCH_FAILED', '{"state":"failed_retryable"}', 22, NULL, 'EAGAIN', 22, 23);
+      INSERT INTO action_resolution_requests (intent_id, generation, state, reason_code, requested_at_ms, checked_at_ms)
+      VALUES ('legacy-intent', 2, 'checked', 'ACTION_RESOLUTION_EVIDENCE_MISSING', 12, 13);
+      INSERT INTO observed_cycle_closures (intent_id, provider_id, window_kind, cycle_at_ms, ended_at_ms, observed_at_ms, evidence_kind)
+      VALUES ('legacy-intent', 'antigravity', 'antigravity_gemini_weekly', 10, 11, 12, 'anchored_boundary');
+      INSERT INTO rolling_inactive_resolution_evidence (
+        intent_id, provider_id, window_kind, cycle_at_ms, outcome_recorded_at_ms,
+        first_observed_at_ms, first_reset_at_ms, last_observed_at_ms, last_reset_at_ms,
+        duration_ms, verified_at_ms
+      ) VALUES ('family-intent', 'antigravity', 'antigravity_gemini_weekly', 10, 11, 12, 100, 13, 200, 18000000, 14);
+      INSERT INTO events (provider_id, type, occurred_at_ms, data_json)
+      VALUES ('antigravity', 'action_uncertain', 15, '{"intentId":"legacy-intent"}');
+      INSERT INTO settings (key, value_json, updated_at_ms)
+      VALUES ('operator-preference', '{"enabled":false}', 16);
+      INSERT INTO provider_cleanup_jobs (
+        id, provider_id, artifact_kind, external_id, state, not_before_ms, created_at_ms, updated_at_ms
+      ) VALUES ('cleanup', 'antigravity', 'antigravity_conversation', 'synthetic-conversation-id', 'pending', 17, 17, 17);
+    `);
+    previous
+      .prepare(
+        `INSERT INTO provider_state (
+          provider_id, health, observed_at_ms, stale_after_ms, observation_json,
+          last_success_at_ms, last_error_code, updated_at_ms
+        ) VALUES ('antigravity', 'connected', 19, 30019,
+          '{"providerId":"antigravity","observedAt":"1970-01-01T00:00:00.019Z","windows":[]}',
+          19, NULL, 19)`,
+      )
+      .run();
+    const sample = previous
+      .prepare(
+        `INSERT INTO window_samples (
+          provider_id, window_kind, observed_at_ms, phase,
+          phase_source, phase_confidence, phase_observed_at_ms,
+          usage_ratio, usage_source, usage_confidence, usage_observed_at_ms
+        ) VALUES ('antigravity', 'antigravity_gemini_weekly', 21, 'INACTIVE',
+          'observed', 'exact', 21, 0.25, 'observed', 'exact', 21)`,
+      )
+      .run();
+    const sampleId = Number(sample.lastInsertRowid);
+    previous
+      .prepare(
+        `INSERT INTO usage_intervals (
+          source_sample_id, provider_id, window_kind, from_ms, to_ms,
+          usage_delta_ratio, quality, reason_code
+        ) VALUES (?, 'antigravity', 'antigravity_gemini_weekly', 20, 21, 0.25, 'observed', NULL)`,
+      )
+      .run(sampleId);
+    previous
+      .prepare(
+        'UPDATE usage_aggregation_checkpoint SET last_sample_id = ?, updated_at_ms = 22 WHERE id = 1',
+      )
+      .run(sampleId);
+    previous
+      .prepare(
+        'INSERT INTO usage_series_state(provider_id, window_kind, state_json, updated_at_ms) VALUES (?, ?, ?, ?)',
+      )
+      .run('antigravity', 'antigravity_gemini_weekly', '{"usageRatio":0.25}', 22);
+
+    const readPreservedRows = (db: typeof previous) => ({
+      policies: db.prepare('SELECT * FROM schedule_policies ORDER BY id').all(),
+      intents: db.prepare('SELECT * FROM action_intents ORDER BY id').all(),
+      requests: db.prepare('SELECT * FROM action_resolution_requests ORDER BY intent_id').all(),
+      closures: db.prepare('SELECT * FROM observed_cycle_closures ORDER BY intent_id').all(),
+      rollingEvidence: db
+        .prepare('SELECT * FROM rolling_inactive_resolution_evidence ORDER BY intent_id')
+        .all(),
+      events: db.prepare('SELECT * FROM events ORDER BY id').all(),
+      settings: db.prepare('SELECT * FROM settings ORDER BY key').all(),
+      cleanup: db.prepare('SELECT * FROM provider_cleanup_jobs ORDER BY id').all(),
+      providerState: db.prepare('SELECT * FROM provider_state ORDER BY provider_id').all(),
+      windowSamples: db.prepare('SELECT * FROM window_samples ORDER BY id').all(),
+      usageIntervals: db.prepare('SELECT * FROM usage_intervals ORDER BY source_sample_id').all(),
+      usageCheckpoint: db.prepare('SELECT * FROM usage_aggregation_checkpoint ORDER BY id').all(),
+      usageSeriesState: db
+        .prepare('SELECT * FROM usage_series_state ORDER BY provider_id, window_kind')
+        .all(),
+    });
+    const before = readPreservedRows(previous);
+    expect(
+      previous
+        .prepare("SELECT COUNT(*) AS count FROM schedule_policies WHERE scope = 'argon'")
+        .get(),
+    ).toEqual({ count: 0 });
+    previous.close();
+
+    const upgraded = openDatabase(file);
+    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
+      {
+        version: 14,
+      },
+    );
+    expect(readPreservedRows(upgraded)).toEqual(before);
+    expect(upgraded.prepare('SELECT COUNT(*) AS count FROM action_intents').get()).toEqual({
+      count: 6,
+    });
+    expect(
+      upgraded.prepare('SELECT DISTINCT state FROM action_intents ORDER BY state').all(),
+    ).toEqual([
+      { state: 'executing' },
+      { state: 'failed_retryable' },
+      { state: 'planned' },
+      { state: 'succeeded' },
+      { state: 'uncertain' },
+    ]);
+    expect(
+      upgraded
+        .prepare("SELECT COUNT(*) AS count FROM schedule_policies WHERE scope = 'argon'")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(upgraded.pragma('foreign_key_check')).toEqual([]);
+    expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
+    const actionIntentForeignKeys = upgraded
+      .prepare('PRAGMA foreign_key_list(action_intents)')
+      .all() as Array<{ table: string; from: string; on_delete: string }>;
+    expect(
+      actionIntentForeignKeys.filter(
+        (foreignKey) =>
+          foreignKey.table === 'schedule_policies' &&
+          foreignKey.from === 'policy_id' &&
+          foreignKey.on_delete === 'SET NULL',
+      ),
+    ).toHaveLength(1);
+    expect(
+      upgraded
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_schedule_policies_provider_scope'",
+        )
+        .get(),
+    ).toEqual({ name: 'idx_schedule_policies_provider_scope' });
+    const policyScopeIndexColumns = upgraded
+      .prepare('PRAGMA index_info(idx_schedule_policies_provider_scope)')
+      .all() as Array<{ name: string }>;
+    expect(policyScopeIndexColumns.map((row) => row.name)).toEqual(['provider_id', 'scope']);
+    expect(() =>
+      upgraded
+        .prepare(
+          `INSERT INTO action_intents (
+          id, provider_id, policy_id, action_type, dedupe_key, state,
+          scheduled_for_ms, reason_code, created_at_ms, updated_at_ms
+        ) VALUES ('duplicate-intent', 'antigravity', 'activation-antigravity', 'trigger_window', 'legacy-dedupe', 'uncertain', 20, 'synthetic', 20, 20)`,
+        )
+        .run(),
+    ).toThrow(/UNIQUE constraint failed: action_intents\.dedupe_key/);
+    upgraded.close();
+
+    const reopened = openDatabase(file);
+    expect(readPreservedRows(reopened)).toEqual(before);
+    expect(
+      reopened.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 14').get(),
+    ).toEqual({
+      count: 1,
+    });
+    expect(reopened.pragma('foreign_key_check')).toEqual([]);
+    expect(reopened.pragma('integrity_check', { simple: true })).toBe('ok');
+    reopened.close();
   });
 
   it('migrates a blank database with SQLite safety pragmas and can reopen it', () => {
@@ -236,11 +435,13 @@ describe('openDatabase', () => {
       { version: 11, applied_at_ms: appliedAtMs },
       { version: 12, applied_at_ms: appliedAtMs },
       { version: 13, applied_at_ms: appliedAtMs },
+      { version: 14, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(db.pragma('busy_timeout', { simple: true })).toBe(5000);
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(
       db
         .prepare("SELECT 1 FROM pragma_table_info('window_samples') WHERE name = 'phase_source'")
@@ -254,7 +455,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(13);
+    ).toBe(14);
     reopened.close();
   });
 
@@ -340,6 +541,34 @@ describe('openDatabase', () => {
     failed.close();
   });
 
+  it('rolls back a foreign-key-off migration with violations and restores enforcement', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-foreign-key-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'migrations');
+    fs.mkdirSync(migrationsDir);
+    fs.writeFileSync(
+      path.join(migrationsDir, '001_invalid_fk.sql'),
+      `-- awm:requires-foreign-keys-off
+       CREATE TABLE parent (id INTEGER PRIMARY KEY);
+       CREATE TABLE child (parent_id INTEGER REFERENCES parent(id));
+       INSERT INTO child (parent_id) VALUES (404);`,
+    );
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    try {
+      expect(() => runMigrations(db, migrationsDir)).toThrow(
+        'database migration 1 left a foreign key violation in child',
+      );
+      expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
+      expect(
+        db.prepare("SELECT name FROM sqlite_master WHERE name IN ('parent', 'child')").all(),
+      ).toEqual([]);
+      expect(db.prepare('SELECT version FROM schema_migrations').all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
   it('upgrades an existing version-one database without rewriting its migration', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-upgrade-'));
     dirs.push(dir);
@@ -372,6 +601,7 @@ describe('openDatabase', () => {
       { version: 11 },
       { version: 12 },
       { version: 13 },
+      { version: 14 },
     ]);
     expect(
       upgraded
@@ -412,7 +642,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toHaveLength(13);
+    ).toHaveLength(14);
     expect(
       upgraded
         .prepare(

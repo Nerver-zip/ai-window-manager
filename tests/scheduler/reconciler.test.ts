@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
-import type { ProviderObservation } from '../../src/domain/types.js';
+import type { ProviderObservation, WindowSnapshot } from '../../src/domain/types.js';
 import { trackWindowCycles } from '../../src/scheduler/window-cycle.js';
 import { parseProviderObservation } from '../../src/domain/schemas.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
@@ -105,6 +105,144 @@ function setup(initial = '2026-09-14T07:59:00.000Z') {
   };
 }
 
+type AntigravityScope = 'gemini' | 'claude_gpt' | 'argon';
+
+const ANTIGRAVITY_WINDOW_KINDS: Record<AntigravityScope, string> = {
+  gemini: 'antigravity_gemini_five_hour',
+  claude_gpt: 'antigravity_claude_gpt_weekly',
+  argon: 'antigravity_argon_weekly',
+};
+
+const ANTIGRAVITY_POLICY_IDS: Record<AntigravityScope, string> = {
+  gemini: 'activation-antigravity-gemini',
+  claude_gpt: 'activation-antigravity-claude-gpt',
+  argon: 'activation-antigravity-argon',
+};
+
+function prepareAntigravity(context: ReturnType<typeof setup>): number {
+  const provider = context.repositories.providers.get('fake');
+  if (!provider) throw new Error('provider missing');
+  context.repositories.providers.upsert({ ...provider, enabled: false });
+  context.repositories.providers.upsert({ ...provider, id: 'antigravity', kind: 'antigravity' });
+  return context.clock.now().getTime();
+}
+
+function makeAntigravityWindow(
+  scope: AntigravityScope,
+  observedAt: string,
+  options: {
+    phase?: WindowSnapshot['phase']['value'];
+    confidence?: WindowSnapshot['phase']['confidence'];
+    usageRatio?: number;
+    resetAt?: string | null;
+  } = {},
+): WindowSnapshot {
+  const phase = options.phase ?? 'INACTIVE';
+  const confidence = options.confidence ?? (phase === 'UNKNOWN' ? 'unknown' : 'high');
+  const usageRatio = options.usageRatio ?? 0;
+  const durationSeconds = scope === 'gemini' ? 18_000 : 604_800;
+  const resetAt =
+    options.resetAt === null
+      ? undefined
+      : (options.resetAt ??
+        new Date(Date.parse(observedAt) + durationSeconds * 1000).toISOString());
+
+  return {
+    providerId: 'antigravity',
+    windowKind: ANTIGRAVITY_WINDOW_KINDS[scope],
+    observedAt,
+    phase: {
+      value: phase,
+      source: phase === 'UNKNOWN' ? 'inferred' : 'observed',
+      confidence,
+      observedAt,
+    },
+    durationSeconds: {
+      value: durationSeconds,
+      source: 'observed',
+      confidence: 'exact',
+      observedAt,
+    },
+    ...(resetAt
+      ? {
+          resetAt: {
+            value: resetAt,
+            source: 'observed' as const,
+            confidence: 'exact' as const,
+            observedAt,
+          },
+        }
+      : {}),
+    usageRatio: { value: usageRatio, source: 'inferred', confidence: 'exact', observedAt },
+    remainingRatio: {
+      value: 1 - usageRatio,
+      source: 'inferred',
+      confidence: 'exact',
+      observedAt,
+    },
+  };
+}
+
+function storeAntigravityObservation(
+  context: ReturnType<typeof setup>,
+  windows: WindowSnapshot[],
+  options: { observedAt?: string; staleAfterSeconds?: number } = {},
+): ProviderObservation {
+  const nowMs = context.clock.now().getTime();
+  const observation = parseProviderObservation({
+    providerId: 'antigravity',
+    health: 'UP',
+    observedAt: options.observedAt ?? context.clock.now().toISOString(),
+    staleAfterSeconds: options.staleAfterSeconds ?? 60,
+    windows,
+  });
+  const trackedObservation = trackWindowCycles(observation, context.repositories);
+  context.repositories.providerState.upsert({
+    providerId: 'antigravity',
+    health: 'UP',
+    observedAtMs: Date.parse(trackedObservation.observedAt),
+    staleAfterMs: trackedObservation.staleAfterSeconds * 1000,
+    observation: trackedObservation,
+    lastSuccessAtMs: nowMs,
+    lastErrorCode: null,
+    updatedAtMs: nowMs,
+  });
+  return trackedObservation;
+}
+
+function addAntigravityPolicy(
+  context: ReturnType<typeof setup>,
+  scope: AntigravityScope,
+  options: { kind?: 'manual' | 'auto'; requiresReview?: boolean } = {},
+): SchedulePolicyRecord {
+  const nowMs = context.clock.now().getTime();
+  const policy: SchedulePolicyRecord = {
+    id: ANTIGRAVITY_POLICY_IDS[scope],
+    providerId: 'antigravity',
+    scope,
+    requiresReview: options.requiresReview ?? false,
+    kind: options.kind ?? 'auto',
+    enabled: true,
+    timezone: 'UTC',
+    config: { windowKind: ANTIGRAVITY_WINDOW_KINDS[scope] },
+    createdAtMs: nowMs,
+    updatedAtMs: nowMs,
+  };
+  context.repositories.schedulePolicies.upsert(policy);
+  return policy;
+}
+
+function antigravityReconciler(context: ReturnType<typeof setup>): Reconciler {
+  const adapter: ProviderAdapter = { ...context.adapter, id: 'antigravity' };
+  return new Reconciler({
+    clock: context.clock,
+    db: context.db,
+    repositories: context.repositories,
+    adapters: new Map([['antigravity', adapter]]),
+    idFactory: () => 'intent-1',
+  });
+}
+
 describe('Reconciler', () => {
   it('retains a manual hint during shared outage backoff and reads once after recovery', async () => {
     const context = setup();
@@ -203,99 +341,143 @@ describe('Reconciler', () => {
     await worker.stop();
   });
 
-  it('evaluates Antigravity families independently but plans only one provider-wide action', async () => {
+  it('keeps Gemini, Claude/GPT and Argon starts serialized provider-wide', async () => {
     const context = setup();
-    const provider = context.repositories.providers.get('fake');
-    if (!provider) throw new Error('provider missing');
-    context.repositories.providers.upsert({ ...provider, enabled: false });
-    context.repositories.providers.upsert({ ...provider, id: 'antigravity', kind: 'antigravity' });
-    const nowMs = context.clock.now().getTime();
-    const observed = await context.fake.inspect({});
-    const sourceWindow = observed.windows[0];
-    if (!sourceWindow) throw new Error('fake window missing');
-    const antigravityObservation = parseProviderObservation({
-      ...observed,
-      providerId: 'antigravity',
-      windows: [
-        {
-          ...sourceWindow,
-          providerId: 'antigravity',
-          windowKind: 'antigravity_gemini_five_hour',
-          phase: { ...sourceWindow.phase, value: 'INACTIVE', confidence: 'exact' },
-        },
-        {
-          ...sourceWindow,
-          providerId: 'antigravity',
-          windowKind: 'antigravity_claude_gpt_weekly',
-          phase: { ...sourceWindow.phase, value: 'INACTIVE', confidence: 'exact' },
-          durationSeconds: {
-            value: 604_800,
-            source: 'observed',
-            confidence: 'exact',
-            observedAt: observed.observedAt,
-          },
-        },
-      ],
-    });
-    context.repositories.providerState.upsert({
-      providerId: 'antigravity',
-      health: 'UP',
-      observedAtMs: nowMs,
-      staleAfterMs: antigravityObservation.staleAfterSeconds * 1000,
-      observation: trackWindowCycles(antigravityObservation, context.repositories),
-      lastSuccessAtMs: nowMs,
-      lastErrorCode: null,
-      updatedAtMs: nowMs,
-    });
-    context.repositories.schedulePolicies.upsert({
-      id: 'activation-antigravity-gemini',
-      providerId: 'antigravity',
-      scope: 'gemini',
-      requiresReview: false,
-      kind: 'auto',
-      enabled: true,
-      timezone: 'UTC',
-      config: { windowKind: 'antigravity_gemini_five_hour' },
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    });
-    context.repositories.schedulePolicies.upsert({
-      id: 'activation-antigravity-claude-gpt',
-      providerId: 'antigravity',
-      scope: 'claude_gpt',
-      requiresReview: false,
-      kind: 'auto',
-      enabled: true,
-      timezone: 'UTC',
-      config: { windowKind: 'antigravity_claude_gpt_weekly' },
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    });
+    const nowMs = prepareAntigravity(context);
+    const observedAt = new Date(nowMs).toISOString();
+    storeAntigravityObservation(
+      context,
+      (['gemini', 'claude_gpt', 'argon'] as const).map((scope) =>
+        makeAntigravityWindow(scope, observedAt),
+      ),
+    );
+    for (const scope of ['gemini', 'claude_gpt', 'argon'] as const) {
+      addAntigravityPolicy(context, scope);
+    }
 
-    const adapter: ProviderAdapter = { ...context.adapter, id: 'antigravity' };
-    const report = await new Reconciler({
-      clock: context.clock,
-      db: context.db,
-      repositories: context.repositories,
-      adapters: new Map([['antigravity', adapter]]),
-      idFactory: () => 'intent-1',
-    }).reconcile();
+    const report = await antigravityReconciler(context).reconcile();
+    const starts = report.decisions.filter((item) => item.decision.kind === 'START');
+    const waiting = report.decisions.filter(
+      (item) =>
+        item.decision.kind === 'WAIT' && item.decision.reasonCode === 'ACTION_ALREADY_PENDING',
+    );
 
     expect(report.createdIntentIds).toEqual(['intent-1']);
+    expect(starts).toHaveLength(1);
+    expect(waiting).toHaveLength(2);
+    expect(report.decisions).toHaveLength(3);
     expect(context.repositories.actionIntents.listOpen()).toMatchObject([
-      { policyId: 'activation-antigravity-claude-gpt' },
+      { policyId: starts[0]?.policyId },
     ]);
-    const geminiDecision = report.decisions.find(
-      (item) => item.policyId === 'activation-antigravity-gemini',
-    );
-    const claudeDecision = report.decisions.find(
-      (item) => item.policyId === 'activation-antigravity-claude-gpt',
-    );
-    expect(claudeDecision?.decision.kind).toBe('START');
-    expect(geminiDecision?.decision).toMatchObject({
-      kind: 'WAIT',
-      reasonCode: 'ACTION_ALREADY_PENDING',
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('keeps Argon manual and review-gated by default, then still blocks it after review', async () => {
+    const context = setup();
+    prepareAntigravity(context);
+    const observedAt = context.clock.now().toISOString();
+    storeAntigravityObservation(context, [makeAntigravityWindow('argon', observedAt)]);
+    const policy = addAntigravityPolicy(context, 'argon', {
+      kind: 'manual',
+      requiresReview: true,
     });
+
+    const reviewReport = await antigravityReconciler(context).reconcile();
+    expect(reviewReport.decisions).toEqual([]);
+    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
+    expect(context.repositories.events.list('antigravity')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'schedule_policy_review_required',
+          reasonCode: 'POLICY_REVIEW_REQUIRED',
+          data: { policyId: policy.id, scope: 'argon' },
+        }),
+      ]),
+    );
+
+    context.repositories.schedulePolicies.upsert({ ...policy, requiresReview: false });
+    const reviewedReport = await antigravityReconciler(context).reconcile();
+    expect(reviewedReport.decisions[0]?.decision).toMatchObject({
+      kind: 'NONE',
+      reasonCode: 'MANUAL_POLICY',
+    });
+    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it.each([
+    { state: 'unobserved' as const, expectedReason: 'WINDOW_NOT_REPORTED' },
+    { state: 'stale' as const, expectedReason: 'OBSERVATION_STALE' },
+    { state: 'unknown' as const, expectedReason: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW' },
+  ])(
+    'does not create an Argon intent when its observation is $state',
+    async ({ state, expectedReason }) => {
+      const context = setup();
+      prepareAntigravity(context);
+      const nowMs = context.clock.now().getTime();
+      const observedAtMs = state === 'stale' ? nowMs - 120_000 : nowMs;
+      const observedAt = new Date(observedAtMs).toISOString();
+      const windows =
+        state === 'unobserved'
+          ? []
+          : [
+              makeAntigravityWindow('argon', observedAt, {
+                ...(state === 'unknown'
+                  ? { phase: 'UNKNOWN' as const, confidence: 'unknown' as const, usageRatio: 0.5 }
+                  : {}),
+              }),
+            ];
+      storeAntigravityObservation(context, windows, {
+        observedAt,
+        staleAfterSeconds: 60,
+      });
+      addAntigravityPolicy(context, 'argon');
+
+      const report = await antigravityReconciler(context).reconcile();
+
+      expect(report.decisions[0]?.decision).toMatchObject({
+        kind: 'WAIT',
+        reasonCode: expectedReason,
+      });
+      expect(report.createdIntentIds).toEqual([]);
+      expect(context.repositories.actionIntents.listOpen()).toEqual([]);
+      expect(context.triggerCount).toBe(0);
+    },
+  );
+
+  it.each([
+    { resetAt: null, resetDescription: 'missing' },
+    { resetAt: '2026-09-14T07:58:00.000Z', resetDescription: 'overdue' },
+  ])('does not start a full Argon window with a $resetDescription reset', async ({ resetAt }) => {
+    const context = setup();
+    prepareAntigravity(context);
+    const observedAt = context.clock.now().toISOString();
+    const window = makeAntigravityWindow('argon', observedAt, {
+      phase: 'UNKNOWN',
+      confidence: 'unknown',
+      usageRatio: 0,
+      resetAt,
+    });
+    storeAntigravityObservation(context, [window]);
+    addAntigravityPolicy(context, 'argon');
+
+    const report = await antigravityReconciler(context).reconcile();
+    const decision = report.decisions[0]?.decision;
+
+    expect(
+      context.repositories.providerState.get('antigravity')?.observation?.windows[0],
+    ).toMatchObject({
+      phase: { value: 'UNKNOWN', confidence: 'unknown' },
+      usageRatio: { value: 0 },
+      remainingRatio: { value: 1 },
+    });
+    expect(decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW',
+      explanation: { phase: 'UNKNOWN', phaseConfidence: 'unknown' },
+    });
+    expect(report.createdIntentIds).toEqual([]);
+    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
     expect(context.triggerCount).toBe(0);
   });
 

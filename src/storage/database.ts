@@ -65,14 +65,44 @@ export function runMigrations(db: SqliteDatabase, migrationsDir: string, now = D
     const { version } = migration;
     if (applied.has(version)) continue;
     const sql = fs.readFileSync(migration.path, 'utf8');
-    const apply = db.transaction(() => {
-      db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations(version, applied_at_ms) VALUES (?, ?)').run(
-        version,
-        now(),
-      );
-    });
-    apply();
+    const requiresForeignKeysOff = /^-- awm:requires-foreign-keys-off(?:\r?\n|$)/.test(sql);
+    const previousForeignKeys = db.pragma('foreign_keys', { simple: true }) as number;
+    try {
+      if (requiresForeignKeysOff) {
+        db.pragma('foreign_keys = OFF');
+        if (db.pragma('foreign_keys', { simple: true }) !== 0) {
+          throw new Error(`database migration ${version} must run outside a transaction`);
+        }
+      }
+      const apply = db.transaction(() => {
+        db.exec(sql);
+        if (requiresForeignKeysOff) assertNoForeignKeyViolations(db, version);
+        db.prepare('INSERT INTO schema_migrations(version, applied_at_ms) VALUES (?, ?)').run(
+          version,
+          now(),
+        );
+      });
+      apply();
+    } finally {
+      if (requiresForeignKeysOff) {
+        db.pragma(`foreign_keys = ${previousForeignKeys === 1 ? 'ON' : 'OFF'}`);
+      }
+    }
+  }
+}
+
+function assertNoForeignKeyViolations(db: SqliteDatabase, version: number): void {
+  const violations = db.pragma('foreign_key_check') as Array<{
+    table: string;
+    rowid: number | null;
+    parent: string;
+    fkid: number;
+  }>;
+  if (violations.length > 0) {
+    const first = violations[0]!;
+    throw new Error(
+      `database migration ${version} left a foreign key violation in ${first.table} (parent ${first.parent})`,
+    );
   }
 }
 
