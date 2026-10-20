@@ -80,6 +80,7 @@ describe('human-facing presentation labels', () => {
   it.each([
     ['antigravity_gemini_weekly', 'Gemini Models'],
     ['antigravity_gemini_five_hour', 'Gemini Models'],
+    ['antigravity_argon_weekly', 'Gemini 4 Argon'],
     ['antigravity_claude_gpt_weekly', 'Claude and GPT Models'],
     ['antigravity_claude_gpt_five_hour', 'Claude and GPT Models'],
     ['antigravity_future_team_weekly', 'Future Team'],
@@ -220,6 +221,10 @@ describe('human-facing presentation labels', () => {
     ['PROVIDER_UNAVAILABLE', 'The provider is temporarily unavailable.'],
     ['INSPECTION_FAILED', 'The latest provider check failed.'],
     ['INVALID_PROVIDER_RESPONSE', 'The provider returned data that could not be verified.'],
+    [
+      'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS',
+      'Provider quota buckets mapped to the same usage window; this reading was rejected.',
+    ],
     [null, 'None'],
     ['future', 'The provider needs attention.'],
   ])('labels error %s', (error, expected) => {

@@ -11,9 +11,21 @@
 - Private loop diagnostics, coalesced inspect hints, persisted shared provider
   read backoff, and audited unknown-outcome closure after fresh observed-cycle
   evidence, without redispatching quota-consuming actions.
+- Pin the official Antigravity CLI to `1.4.3` with verified per-architecture
+  digests; retain the existing Codex CLI `0.162.1` pin.
+- Add Gemini 4 Argon as a separate weekly Antigravity usage target using the
+  observed `gemini-argon-wtu-weekly` bucket ID. Its policy starts manual,
+  review-required and targetless; its additional trigger gate defaults off.
 
 ### Fixed
 
+- Await gzip stream completion when validating provider-client archives so early
+  or late CRC failures reject installation without unhandled stream errors.
+
+- Preserve unknown Argon-like quota buckets as stable opaque observed-only
+  windows, keeping their phase unknown and their IDs outside canonical policy
+  and trigger targets. Only the exact observed weekly bucket maps to the
+  canonical Argon target.
 - Update the transitive `source-map-js` dependency to `1.2.2` to address
   GHSA-68fv-2mgg-jv7q without suppressing dependency audit findings.
 - Drain expired history incrementally with bounded, yielding passes instead of

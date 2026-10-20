@@ -27,7 +27,11 @@ import {
 } from '../storage/repositories.js';
 
 export type InspectionFailureCode =
-  'AUTH_REQUIRED' | 'PROVIDER_UNAVAILABLE' | 'INSPECTION_FAILED' | 'INVALID_PROVIDER_RESPONSE';
+  | 'AUTH_REQUIRED'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'INSPECTION_FAILED'
+  | 'INVALID_PROVIDER_RESPONSE'
+  | 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS';
 
 export type InspectionMetricResult =
   'success' | 'auth_required' | 'provider_unavailable' | 'invalid_response' | 'failed';
@@ -158,7 +162,9 @@ export class Reconciler {
         if (policy.scope === 'legacy') continue;
         if (
           provider.kind === 'antigravity' &&
-          ((policy.scope !== 'gemini' && policy.scope !== 'claude_gpt') ||
+          ((policy.scope !== 'gemini' &&
+            policy.scope !== 'claude_gpt' &&
+            policy.scope !== 'argon') ||
             policy.id !== activationPolicyId(provider.id, policy.scope))
         ) {
           this.appendEventIfChanged({
@@ -219,7 +225,7 @@ export class Reconciler {
         if (
           provider.kind === 'antigravity' &&
           requestedWindowKind &&
-          (policy.scope !== 'gemini' && policy.scope !== 'claude_gpt'
+          (policy.scope !== 'gemini' && policy.scope !== 'claude_gpt' && policy.scope !== 'argon'
             ? true
             : !windowKindBelongsToPolicyScope(requestedWindowKind, policy.scope))
         ) {
@@ -467,6 +473,9 @@ export class Reconciler {
         return { ok: false, code: 'INVALID_PROVIDER_RESPONSE' };
       }
       if (observation.health !== 'UP') {
+        if (observation.summary === 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS') {
+          return { ok: false, code: 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS' };
+        }
         return { ok: false, code: healthToFailureCode(observation.health) };
       }
       return { ok: true, observation };
@@ -730,6 +739,8 @@ function inspectionMetricResult(code: InspectionFailureCode): InspectionMetricRe
       return 'provider_unavailable';
     case 'INVALID_PROVIDER_RESPONSE':
       return 'invalid_response';
+    case 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS':
+      return 'invalid_response';
     case 'INSPECTION_FAILED':
       return 'failed';
   }
@@ -742,6 +753,8 @@ function failureCodeToHealth(code: InspectionFailureCode): ProviderStateRecord['
     case 'PROVIDER_UNAVAILABLE':
       return 'UNAVAILABLE';
     case 'INVALID_PROVIDER_RESPONSE':
+      return 'DEGRADED';
+    case 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS':
       return 'DEGRADED';
     case 'INSPECTION_FAILED':
       return 'ERROR';

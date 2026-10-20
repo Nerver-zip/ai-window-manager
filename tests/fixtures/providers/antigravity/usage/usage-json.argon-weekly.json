@@ -1,0 +1,77 @@
+{
+  "status": "SUCCESS",
+  "response": "Gemini Models\tWeekly Limit Remaining\t50%\t2030-01-05T12:00:00Z\nGemini Models\tFive Hour Limit Remaining\t50%\t2030-01-01T17:00:00Z\nClaude and GPT models\tWeekly Limit Remaining\t50%\t2030-01-06T12:00:00Z\nClaude and GPT models\tFive Hour Limit Remaining\t50%\t2030-01-01T18:00:00Z\nGemini 4 Argon\tGemini 4 Argon Weekly Limit\t50%\t2030-01-05T12:00:00Z\n",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 0
+  },
+  "command": {
+    "name": "usage",
+    "data": {
+      "description": "Synthetic fixture based on observed agy 1.4.3 usage structure; all ratios and reset timestamps are synthetic.",
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "description": "Synthetic fixture group.",
+          "buckets": [
+            {
+              "id": "gemini-weekly",
+              "name": "Weekly Limit Remaining",
+              "description": "Synthetic fixture bucket.",
+              "window": "weekly",
+              "remaining_fraction": 0.5,
+              "reset_time": "2030-01-05T12:00:00Z"
+            },
+            {
+              "id": "gemini-5h",
+              "name": "Five Hour Limit Remaining",
+              "description": "Synthetic fixture bucket.",
+              "window": "5h",
+              "remaining_fraction": 0.5,
+              "reset_time": "2030-01-01T17:00:00Z"
+            }
+          ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "description": "Synthetic fixture group.",
+          "buckets": [
+            {
+              "id": "3p-weekly",
+              "name": "Weekly Limit Remaining",
+              "description": "Synthetic fixture bucket.",
+              "window": "weekly",
+              "remaining_fraction": 0.5,
+              "reset_time": "2030-01-06T12:00:00Z"
+            },
+            {
+              "id": "3p-5h",
+              "name": "Five Hour Limit Remaining",
+              "description": "Synthetic fixture bucket.",
+              "window": "5h",
+              "remaining_fraction": 0.5,
+              "reset_time": "2030-01-01T18:00:00Z"
+            }
+          ]
+        },
+        {
+          "name": "Gemini 4 Argon",
+          "description": "Synthetic fixture group.",
+          "buckets": [
+            {
+              "id": "gemini-argon-wtu-weekly",
+              "name": "Gemini 4 Argon Weekly Limit",
+              "description": "Synthetic fixture bucket.",
+              "window": "weekly",
+              "remaining_fraction": 0.5,
+              "reset_time": "2030-01-05T12:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

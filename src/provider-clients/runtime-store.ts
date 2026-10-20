@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 
 export const PROVIDER_CLIENT_IDS = ['codex', 'antigravity'] as const;
@@ -659,6 +660,10 @@ async function extractTarGzip(
 ): Promise<void> {
   const compressed = Readable.from(fileSystem.createReadStream(archivePath));
   const gunzip = createGunzip();
+  const gunzipCompleted = finished(gunzip).then(
+    () => true,
+    () => false,
+  );
   compressed.once('error', (error) => gunzip.destroy(error));
   const expanded = compressed.pipe(gunzip);
   const reader = new TarStreamReader(expanded, limits.maxExpandedBytes);
@@ -757,6 +762,9 @@ async function extractTarGzip(
       fail('ARCHIVE_INVALID', 'Provider archive is truncated or has dangling metadata');
     }
     await reader.drainZeroPadding();
+    if (!(await gunzipCompleted)) {
+      fail('ARCHIVE_INVALID', 'Provider archive has an invalid gzip stream');
+    }
   } catch (error) {
     expanded.destroy();
     compressed.destroy();

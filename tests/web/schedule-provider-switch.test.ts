@@ -154,11 +154,13 @@ function seedPolicy(
       ? 'default'
       : typeof windowKind === 'string' && windowKind.startsWith('antigravity_claude_gpt_')
         ? 'claude_gpt'
-        : 'gemini';
+        : typeof windowKind === 'string' && windowKind.startsWith('antigravity_argon_')
+          ? 'argon'
+          : 'gemini';
   repositories.schedulePolicies.upsert({
     id:
       providerId === 'antigravity'
-        ? `activation-antigravity-${scope === 'claude_gpt' ? 'claude-gpt' : 'gemini'}`
+        ? `activation-antigravity-${scope === 'claude_gpt' ? 'claude-gpt' : scope}`
         : `activation-${providerId}`,
     providerId,
     scope,
@@ -214,6 +216,9 @@ describe('schedule provider switching', () => {
     expect(antigravityPage.body).toContain(
       'href="/schedule?providerId=antigravity&amp;scope=claude_gpt"',
     );
+    expect(antigravityPage.body).toContain(
+      'href="/schedule?providerId=antigravity&amp;scope=argon"',
+    );
     expect(antigravityPage.body).not.toContain('value="antigravity_claude_gpt_weekly"');
 
     const selector = antigravityPage.body.match(
@@ -250,6 +255,12 @@ describe('schedule provider switching', () => {
       beforeAntigravityClaude,
     );
     expect(reconcileRequests).toBe(0);
+
+    const unavailableArgonPage = await app.inject('/schedule?providerId=antigravity&scope=argon');
+    expect(unavailableArgonPage.body).toContain(
+      'No Gemini 4 Argon weekly window is currently reported. No other quota family or cadence will be substituted.',
+    );
+    expect(unavailableArgonPage.body).not.toContain('antigravity_argon_five_hour');
   });
 
   it('saves only the selected provider policy and leaves the other provider unchanged', async () => {
@@ -332,6 +343,75 @@ describe('schedule provider switching', () => {
     expect(savedPage.body).toContain('name="anchorLocalTime" type="time" value="10:30"');
     expect(savedPage.body).toContain('value="antigravity_claude_gpt_weekly" selected');
     expect(savedPage.body).toContain('name="scope" value="claude_gpt"');
+  });
+
+  it('saves the Argon weekly policy independently from the Gemini and Claude/GPT policies', async () => {
+    let reconcileRequests = 0;
+    const { app, repositories } = createScheduleApp(() => {
+      reconcileRequests += 1;
+    });
+    seedObservedWindows(repositories, 'antigravity', [
+      ['antigravity_gemini_five_hour', 18_000],
+      ['antigravity_gemini_weekly', 604_800],
+      ['antigravity_claude_gpt_five_hour', 18_000],
+      ['antigravity_claude_gpt_weekly', 604_800],
+      ['antigravity_argon_weekly', 604_800],
+    ]);
+    seedPolicy(repositories, 'antigravity', 'manual', {
+      windowKind: 'antigravity_argon_weekly',
+    });
+    const geminiBefore = schedulePolicy(repositories, 'antigravity', 'gemini');
+    const claudeBefore = schedulePolicy(repositories, 'antigravity', 'claude_gpt');
+    const argonBefore = schedulePolicy(repositories, 'antigravity', 'argon');
+    if (!argonBefore) throw new Error('expected Argon policy');
+
+    const page = await app.inject('/schedule?providerId=antigravity&scope=argon');
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('Gemini 4 Argon · Weekly window');
+    const setCookie = page.headers['set-cookie'];
+    const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0];
+    const csrfToken = page.body.match(/name="csrfToken" value="([^"]+)"/)?.[1];
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/schedule',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      payload: new URLSearchParams({
+        csrfToken: csrfToken ?? '',
+        providerId: 'antigravity',
+        scope: 'argon',
+        policyKind: 'fixed',
+        enabled: 'true',
+        timezone: 'America/Sao_Paulo',
+        windowKind: 'antigravity_argon_weekly',
+        anchorLocalTime: '10:30',
+        toleranceSeconds: '900',
+      }).toString(),
+    });
+
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe(
+      '/schedule?updated=schedule&providerId=antigravity&scope=argon',
+    );
+    expect(schedulePolicy(repositories, 'antigravity', 'gemini')).toEqual(geminiBefore);
+    expect(schedulePolicy(repositories, 'antigravity', 'claude_gpt')).toEqual(claudeBefore);
+    expect(schedulePolicy(repositories, 'antigravity', 'argon')).toMatchObject({
+      id: 'activation-antigravity-argon',
+      scope: 'argon',
+      kind: 'fixed',
+      config: {
+        windowKind: 'antigravity_argon_weekly',
+        anchorLocalTime: '10:30',
+      },
+      requiresReview: false,
+    });
+    expect(repositories.schedulePolicies.list('antigravity')).toHaveLength(3);
+    expect(reconcileRequests).toBe(1);
   });
 
   it('submits provider radios on change without auto-submitting unrelated filters', () => {

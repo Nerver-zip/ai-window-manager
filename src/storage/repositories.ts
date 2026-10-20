@@ -16,7 +16,7 @@ import { ACTION_DEADLINE_SQL } from '../domain/action-deadline.js';
 import type { RollingInactiveEvidence } from '../scheduler/action-resolution-policy.js';
 
 export type ProviderMode = 'monitor_only' | 'automation';
-export type SchedulePolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'legacy';
+export type SchedulePolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'argon' | 'legacy';
 export type SchedulePolicyKind =
   'manual' | 'auto' | 'fixed' | 'custom_schedule' | 'active_hours' | 'target_reset' | 'work_window';
 export type ActionIntentState =

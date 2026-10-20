@@ -187,6 +187,70 @@ describe('usage aggregation persistence', () => {
     expect(data.providers.map((item) => item.id)).toEqual(['codex']);
   });
 
+  it('projects Argon weekly usage separately from Gemini weekly usage in daily history', () => {
+    const { db, repositories } = database();
+    repositories.providers.upsert({ ...provider(), id: 'antigravity', kind: 'antigravity' });
+    const base = Date.parse('2026-09-22T10:00:00.000Z');
+    const insert = (windowKind: string, atMs: number, ratio: number) =>
+      repositories.windowSamples.insert({
+        ...weeklySample(atMs, ratio),
+        providerId: 'antigravity',
+        windowKind,
+      });
+    insert('antigravity_argon_weekly', base, 0.2);
+    insert('antigravity_gemini_weekly', base, 0.1);
+    insert('antigravity_argon_weekly', base + 10 * 60_000, 0.27);
+    insert('antigravity_gemini_weekly', base + 10 * 60_000, 0.41);
+    processUsageAggregationBatch(db, repositories, now);
+
+    const readWindow = (windowKind: string) =>
+      readUsagePageData({
+        repositories,
+        now: new Date(now),
+        timezone: 'UTC',
+        providerId: 'antigravity',
+        windowKind,
+        localDay: '2026-09-22',
+        visibleProviderIds: new Set(['antigravity']),
+      });
+    const argon = readWindow('antigravity_argon_weekly');
+    const gemini = readWindow('antigravity_gemini_weekly');
+
+    expect(argon.windows).toEqual([
+      { providerId: 'antigravity', windowKind: 'antigravity_argon_weekly' },
+      { providerId: 'antigravity', windowKind: 'antigravity_gemini_weekly' },
+    ]);
+    expect(argon.selectedWindowKind).toBe('antigravity_argon_weekly');
+    expect(argon.selectedDay?.usagePercentagePoints).toBeCloseTo(7);
+    expect(gemini.selectedWindowKind).toBe('antigravity_gemini_weekly');
+    expect(gemini.selectedDay?.usagePercentagePoints).toBeCloseTo(31);
+  });
+
+  it('includes currently observed windows before their first history sample is aggregated', () => {
+    const { repositories } = database();
+    repositories.providers.upsert({ ...provider(), id: 'antigravity', kind: 'antigravity' });
+    const data = readUsagePageData({
+      repositories,
+      now: new Date(now),
+      timezone: 'UTC',
+      providerId: 'antigravity',
+      windowKind: 'antigravity_argon_weekly',
+      visibleProviderIds: new Set(['antigravity']),
+      providers: [{ id: 'antigravity', label: 'Antigravity', kind: 'antigravity' }],
+      observedWindows: [
+        { providerId: 'antigravity', windowKind: 'antigravity_gemini_weekly' },
+        { providerId: 'antigravity', windowKind: 'antigravity_argon_weekly' },
+      ],
+    });
+
+    expect(data.windows).toEqual([
+      { providerId: 'antigravity', windowKind: 'antigravity_gemini_weekly' },
+      { providerId: 'antigravity', windowKind: 'antigravity_argon_weekly' },
+    ]);
+    expect(data.selectedWindowKind).toBe('antigravity_argon_weekly');
+    expect(data.selectedDay?.usagePercentagePoints).toBeNull();
+  });
+
   it('recognizes a weekly window at its first baseline without inventing prior daily use', () => {
     const { db, repositories } = database();
     repositories.windowSamples.insert(weeklySample(now - 60_000, 0.69));

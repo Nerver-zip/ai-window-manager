@@ -13,19 +13,24 @@ describe('activation policy scopes', () => {
     expect(activationPolicyId('antigravity', 'claude_gpt')).toBe(
       'activation-antigravity-claude-gpt',
     );
+    expect(activationPolicyId('antigravity', 'argon')).toBe('activation-antigravity-argon');
     expect(activationPolicyId('antigravity', 'legacy')).toBe('activation-antigravity');
     expect(activationPolicyScopes('codex')).toEqual(['default']);
-    expect(activationPolicyScopes('antigravity')).toEqual(['gemini', 'claude_gpt']);
+    expect(activationPolicyScopes('antigravity')).toEqual(['gemini', 'claude_gpt', 'argon']);
   });
 
   it('matches only exact allowlisted Antigravity targets to their family', () => {
     expect(policyScopeForWindowKind('antigravity_gemini_five_hour')).toBe('gemini');
     expect(policyScopeForWindowKind('antigravity_claude_gpt_weekly')).toBe('claude_gpt');
+    expect(policyScopeForWindowKind('antigravity_argon_weekly')).toBe('argon');
     expect(policyScopeForWindowKind('five_hour')).toBeUndefined();
+    expect(policyScopeForWindowKind('antigravity_argon_five_hour')).toBeUndefined();
     expect(windowKindBelongsToPolicyScope('antigravity_gemini_weekly', 'gemini')).toBe(true);
     expect(windowKindBelongsToPolicyScope('antigravity_claude_gpt_five_hour', 'gemini')).toBe(
       false,
     );
     expect(windowKindBelongsToPolicyScope('five_hour', 'claude_gpt')).toBe(false);
+    expect(windowKindBelongsToPolicyScope('antigravity_argon_weekly', 'argon')).toBe(true);
+    expect(windowKindBelongsToPolicyScope('antigravity_gemini_weekly', 'argon')).toBe(false);
   });
 });

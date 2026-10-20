@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Research date: **2026-09-25**.
+Provider research last refreshed: **2026-10-20**.
 
 ## Normalized adapter contract
 
@@ -113,10 +113,14 @@ blindly retried.
 - Google AI Pro receives high baseline quota refreshed every five hours until its weekly limit is reached, plus a higher weekly limit.
 - Users outside Pro/Ultra are documented as receiving weekly-refresh baseline quota.
 - `/usage` (alias `/quota`) in the official Antigravity CLI refreshes quota status from backend and displays model quota usage.
-- Official headless mode `agy -p ...` is designed for scripted/CI use and uses cached official CLI credentials.
+- Official headless mode `agy -p ...` is documented for direct scripting/CI and
+  uses cached official CLI credentials. This does not establish that a
+  third-party application may wrap the CLI under the operator's plan terms.
 - Official headless JSON and stream-JSON output was validated in SPIKE-002 and
   exposes structured groups, quota buckets, remaining fractions and reset
-  timestamps without spending a turn.
+  timestamps without spending a turn. The official CLI changelog documents
+  print-mode `/usage` as read-only structured output without an agent turn or
+  quota use; the nested bucket schema is still not published as versioned.
 - Official auth uses the OS keyring/Secret Service and offers an SSH OAuth flow.
 
 ### Observed / internal
@@ -131,10 +135,24 @@ blindly retried.
   URL. AWM advances only when the official screen explicitly marks option 1
   (Google OAuth) as selected, then exposes the complete URL and forwards only
   the operator-entered browser code to the waiting CLI.
-- The currently packaged Antigravity CLI pin is `1.2.12` (2026-09-27), with
-  official architecture-specific SHA-256 digests. Its release-preparation
-  compatibility probes were unauthenticated and did not consume quota; the
-  sign-in transcript above remains evidence specific to the earlier CLI.
+- The current Antigravity CLI pin is `1.4.3` with official architecture-specific
+  SHA-256 digests. CLI 1.4.3 lists the Argon low/medium/high model variants and
+  returns the structured Argon weekly bucket described in SPIKE-006. The
+  pre-change 1.3.3 build required sign-in to list models in an empty home; its
+  authenticated Argon behavior remains unverified.
+- The operator's Google AI Pro CLI 1.4.2 output listed the three Argon model
+  slugs and an Argon weekly row with 33% remaining and a reset of
+  `2026-10-24 22:16 -03`. This is one operator-provided snapshot. The separate
+  1.4.3 structured probe ran with an empty home and did not establish account
+  identity; do not attribute its ratios or timestamps to the Pro account.
+- The exact provider bucket ID `gemini-argon-wtu-weekly` with `window: weekly`
+  maps to `antigravity_argon_weekly` independently of group order and display
+  name. Argon-like buckets with other IDs or cadences remain visible under a
+  deterministic opaque, observed-only identity derived from the validated
+  bucket ID and cadence. Their phase and confidence are `UNKNOWN`; they do not
+  map to a canonical Argon/Gemini target or trigger policy. Known Gemini and
+  Claude/GPT buckets remain independently observable. Only the exact weekly
+  bucket is trigger-supported; no Argon five-hour target is inferred or exposed.
 - An operator's 2026-10-11 read-only observation showed a full five-hour quota
   with a reset 6.209 seconds beyond the adapter's pre-CLI timestamp. That
   exceeded the five-second rolling-reset inference tolerance and temporarily
@@ -168,24 +186,34 @@ blindly retried.
 
 ### Risk / policy
 
-The project-level decision accepts a self-hosted, single-operator integration
-that invokes the **official `agy` CLI itself**, including an experimental,
-quota-consuming `Hi!` action behind an environment gate that defaults on for
-an enabled provider and can be explicitly disabled. This does not
-relax the technical boundary: never extract/replay login tokens, reproduce
-internal backend calls, or impersonate the client. The official CLI owns login
-and its Secret Service credentials; AWM validates bounded usage/action output.
-The trigger is classified `observed_undocumented`, consumes normal quota, and
-is not a dedicated start-only operation.
+The [Antigravity FAQ](https://antigravity.google/docs/faq/), checked
+2026-10-20, warns that third-party access violates its Terms of Service and
+that wrapping headless `agy -p` is unsupported under consumer plans. The
+operator identified the account as Google AI Pro and authorized this
+implementation; that is project authorization, not Google approval. AWM uses
+the official CLI and does not extract credentials or reproduce internal
+endpoints. Operator-provided CLI 1.4.2 output and the isolated 1.4.3 JSON probe
+show the observed weekly Argon bucket, but do not prove reset-cycle transitions
+or Argon trigger effects. See
+[`SPIKE-006`](research/spikes/SPIKE-006-antigravity-argon.md).
+
+The integration's technical boundaries remain: never extract/replay login
+tokens, reproduce internal backend calls, or
+impersonate the client; validate bounded usage/action output; classify the
+trigger as `observed_undocumented` and quota-consuming unless official evidence
+establishes otherwise. A prompt is not a dedicated start-only operation.
 
 **MVP capability proposal**
 
 ```text
 can_query_usage       = experimental/conditional, official CLI headless JSON only
 can_query_reset       = experimental/conditional, only with validated bucket reset fields
-can_trigger_window    = gate-controlled (default on), observed_undocumented, exact allowlisted targets
+can_trigger_window    = exact-target allowlisted, observed_undocumented and quota-consuming;
+                         Argon additionally requires its family gate (default false)
 trigger_consumes_quota= true
-public_usage_api      = false / none found
+argon_target          = antigravity_argon_weekly only; ID gemini-argon-wtu-weekly
+consumer_quota_api    = none documented; official CLI output is not a versioned API
+enterprise_quota_api  = FetchQuotaStatus named; public schema and Argon granularity unknown
 ```
 
 SPIKE-002 concludes `VIABLE_OFFICIAL_READ_PATH`; the monitor-only adapter now
@@ -197,12 +225,22 @@ in-container D-Bus/Secret-Service/keyring design and a file-mounted unlock
 secret. That runtime has offline packaging/probe coverage, but authenticated
 login reuse after restart still requires explicit operator acceptance. The
 trigger is advertised per exact target when
-`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` (the default) and that target's group model is
-configured; dispatch additionally requires the provider to be in automation
-mode. Its allowlist contains `antigravity_gemini_five_hour`,
-`antigravity_gemini_weekly`, `antigravity_claude_gpt_five_hour`, and
-`antigravity_claude_gpt_weekly`; the chosen family selects its configured
-model. A request does not intentionally select both groups.
+`AWM_ANTIGRAVITY_TRIGGER_ENABLED=true` and its family gate/model are configured;
+dispatch additionally requires provider automation mode. The Gemini and
+Claude/GPT families use the global Antigravity gate. Argon also requires
+`AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED=true` (default `false`) and one of
+`gemini-4-argon-low`, `gemini-4-argon-medium`, or `gemini-4-argon-high`;
+blanking the Argon model disables that target. The Argon policy bootstraps as
+manual, review-required, with no target selected. A mismatch found before
+dispatch is rejected without a prompt; once a prompt may have been sent, an
+ambiguous result remains uncertain and is never retried. A request selects
+only its exact allowlisted target. For Argon, dispatch requires the stream
+`init.model` to exactly equal the configured Argon slug. A missing or
+mismatched init model fails after registering the exact conversation cleanup
+artifact and before sending the user event. A missing result-level model is
+accepted only after that init verification; an explicit result mismatch remains
+uncertain. This guard is offline-only; live AWM Argon trigger compatibility
+remains unverified.
 
 The adapter derives an operational phase from the observed remaining fraction:
 values within `0.00001` of full allowance are normalized to `INACTIVE`, values
@@ -212,10 +250,12 @@ by Google. `INACTIVE` means full unused allowance for the selected target and
 eligibility for the project's safety checks; a `99.95%` remaining observation
 still counts as active.
 
-The owner confirms end-to-end AWM trigger acceptance for both quota families.
-This live evidence is for the tested account, pinned client and models only;
-it does not establish behavior for every account, plan or future CLI version.
-The release-preparation agent did not repeat a quota-consuming request.
+The owner confirms end-to-end AWM trigger acceptance for the existing Gemini
+and Claude/GPT windows only. This evidence applies to the tested account,
+pinned client and models; it does not generalize to every account, plan or
+future CLI version. There is no AWM live Argon trigger acceptance, and this
+release-preparation work did not send an Argon prompt or repeat a
+quota-consuming request.
 
 The official Antigravity CLI README states that Google may collect and use
 interaction data under its Terms of Service and Privacy Policy, with an opt-out

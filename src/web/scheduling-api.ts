@@ -76,6 +76,10 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
           (policyRecord?.requiresReview ?? false) ||
           Boolean(policyRecord && !policy) ||
           Boolean(policyRecord && (policyRecord.scope ?? 'default') !== scope);
+        const observation = state?.observation;
+        const adapter = input.adapters.get(provider.id);
+        const requestedWindowKind =
+          policy && 'windowKind' in policy ? policy.windowKind : undefined;
         if (
           provider.kind === 'antigravity' &&
           policy &&
@@ -85,11 +89,16 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
         ) {
           policy = null;
           requiresReview = true;
+        } else if (
+          provider.kind === 'antigravity' &&
+          policy &&
+          !requestedWindowKind &&
+          observation?.windows.some((window) =>
+            windowKindBelongsToPolicyScope(window.windowKind, scope),
+          )
+        ) {
+          requiresReview = true;
         }
-        const observation = state?.observation;
-        const adapter = input.adapters.get(provider.id);
-        const requestedWindowKind =
-          policy && 'windowKind' in policy ? policy.windowKind : undefined;
         const targetResolution = resolveWindowTarget(
           requestedWindowKind,
           observation?.windows ?? [],

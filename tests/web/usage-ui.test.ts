@@ -89,6 +89,10 @@ function antigravityData(overrides: Partial<UsagePageData> = {}): UsagePageData 
   });
 }
 
+function argonWindow(): UsagePageData['windows'][number] {
+  return { providerId: 'antigravity', windowKind: 'antigravity_argon_weekly' };
+}
+
 function chartCards(html: string): string[] {
   return [...html.matchAll(/<article class="card chart-card"[\s\S]*?<\/article>/g)].map(
     ([card]) => card,
@@ -238,9 +242,58 @@ describe('Usage page', () => {
     ].map(([, id]) => id);
     expect(new Set(titleIds).size).toBe(4);
     expectSoftNavigationContract(html);
+    expect(html).not.toContain('Gemini 4 Argon');
     const topControls = html.match(/<section class="usage-controls"[^>]*>[\s\S]*?<\/section>/)?.[0];
     expect(topControls).toBeDefined();
     expect(topControls).not.toContain('<select name="window"');
+  });
+
+  it('adds an Argon weekly chart only when Argon is observed or has saved history', () => {
+    const argonSeries: HistoryUsageSeries = {
+      providerId: 'antigravity',
+      windowKind: 'antigravity_argon_weekly',
+      range: '7d',
+      points: [{ observedAt: '2026-09-23T12:00:00.000Z', usageRatio: 0.12, remainingRatio: 0.88 }],
+    };
+    const observedHtml = renderUsagePage({
+      data: antigravityData({
+        windows: [
+          ...antigravityWindows.map((windowKind) => ({
+            providerId: 'antigravity',
+            windowKind,
+          })),
+          argonWindow(),
+        ],
+        selectedWindowKind: 'antigravity_argon_weekly',
+      }),
+      series: [argonSeries],
+      chartRanges: ['antigravity|antigravity_argon_weekly|7d'],
+    });
+    const observedCards = chartCards(observedHtml);
+
+    expect(observedCards).toHaveLength(5);
+    expect(observedCards[4]).toContain('Gemini 4 Argon · Weekly window');
+    expect(observedCards[4]).toContain('aria-label="Gemini 4 Argon · Weekly window over time"');
+    expect(observedCards[4]).toContain('value="antigravity|antigravity_argon_weekly|7d" selected');
+    expect(observedCards[4]).toContain('name="window" value="antigravity_argon_weekly"');
+    expectSoftNavigationContract(observedHtml);
+
+    const retainedHistoryHtml = renderUsagePage({
+      data: antigravityData({
+        windows: antigravityWindows.map((windowKind) => ({
+          providerId: 'antigravity',
+          windowKind,
+        })),
+      }),
+      series: [argonSeries],
+    });
+    expect(chartCards(retainedHistoryHtml)).toHaveLength(5);
+    expect(chartCards(retainedHistoryHtml)[4]).toContain('Gemini 4 Argon · Weekly window');
+
+    const unavailableHtml = renderUsagePage({ data: antigravityData(), series: [] });
+    expect(chartCards(unavailableHtml)).toHaveLength(4);
+    expect(unavailableHtml).not.toContain('Gemini 4 Argon');
+    expect(unavailableHtml).not.toContain('antigravity_argon');
   });
 
   it('places a family selector inside the heatmap and limits it to weekly sources', () => {
@@ -287,6 +340,32 @@ describe('Usage page', () => {
     expect(claudeSection).toContain(
       '<option value="antigravity_claude_gpt_weekly" selected>Claude and GPT Models</option>',
     );
+
+    const argonHtml = renderUsagePage({
+      data: antigravityData({
+        windows: [
+          ...antigravityWindows.map((windowKind) => ({
+            providerId: 'antigravity',
+            windowKind,
+          })),
+          argonWindow(),
+        ],
+        selectedWindowKind: 'antigravity_argon_weekly',
+      }),
+      series: [],
+    });
+    const argonSection = argonHtml.match(
+      /<section class="usage-calendar-section"[\s\S]*?<\/section>/,
+    )?.[0];
+    expect(argonSection).toContain(
+      '<h2 id="daily-usage-heading">Gemini 4 Argon · Weekly window</h2>',
+    );
+    expect(argonSection).toContain(
+      '<option value="antigravity_argon_weekly" selected>Gemini 4 Argon</option>',
+    );
+    expect(argonSection).not.toMatch(/<option value="[^"]*argon_five_hour/);
+    expect(argonSection).toContain('aria-label="Daily usage family"');
+    expect(argonSection).toContain('data-awm-focus-key="usage-heatmap-family"');
   });
 
   it('does not render non-weekly observations as heatmap data', () => {

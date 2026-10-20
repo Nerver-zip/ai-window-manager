@@ -1,0 +1,229 @@
+{
+  "source": "Synthetic fixtures; native operator authentication; no provider dispatch",
+  "viewports": ["1440x900", "390x844", "360x800"],
+  "checks": [
+    {
+      "route": "overview",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "/",
+      "title": "Overview \u00b7 AI Window Manager",
+      "h1": "Overview",
+      "viewportWidth": 1440,
+      "clientWidth": 1440,
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "horizontalOverflow": false,
+      "activeScope": "Overview",
+      "windowOptions": []
+    },
+    {
+      "route": "usage",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "/usage",
+      "title": "Usage \u00b7 AI Window Manager",
+      "h1": "Usage",
+      "viewportWidth": 1440,
+      "clientWidth": 1440,
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "horizontalOverflow": false,
+      "activeScope": "Usage",
+      "windowOptions": []
+    },
+    {
+      "route": "schedule-argon",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "/schedule?providerId=antigravity&scope=argon",
+      "title": "Schedule \u00b7 AI Window Manager",
+      "h1": "Schedule",
+      "viewportWidth": 1440,
+      "clientWidth": 1440,
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "horizontalOverflow": false,
+      "activeScope": "Schedule",
+      "windowOptions": [
+        {
+          "value": "antigravity_argon_weekly",
+          "text": "Weekly window",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "url": "/settings",
+      "title": "Settings \u00b7 AI Window Manager",
+      "h1": "Settings",
+      "viewportWidth": 1440,
+      "clientWidth": 1440,
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "horizontalOverflow": false,
+      "activeScope": "Settings",
+      "windowOptions": []
+    },
+    {
+      "route": "overview",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "url": "/",
+      "title": "Overview \u00b7 AI Window Manager",
+      "h1": "Overview",
+      "viewportWidth": 390,
+      "clientWidth": 390,
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "activeScope": "Overview",
+      "windowOptions": []
+    },
+    {
+      "route": "usage",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "url": "/usage",
+      "title": "Usage \u00b7 AI Window Manager",
+      "h1": "Usage",
+      "viewportWidth": 390,
+      "clientWidth": 390,
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "activeScope": "Usage",
+      "windowOptions": []
+    },
+    {
+      "route": "schedule-argon",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "url": "/schedule?providerId=antigravity&scope=argon",
+      "title": "Schedule \u00b7 AI Window Manager",
+      "h1": "Schedule",
+      "viewportWidth": 390,
+      "clientWidth": 390,
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "activeScope": "Schedule",
+      "windowOptions": [
+        {
+          "value": "antigravity_argon_weekly",
+          "text": "Weekly window",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "url": "/settings",
+      "title": "Settings \u00b7 AI Window Manager",
+      "h1": "Settings",
+      "viewportWidth": 390,
+      "clientWidth": 390,
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "horizontalOverflow": false,
+      "activeScope": "Settings",
+      "windowOptions": []
+    },
+    {
+      "route": "overview",
+      "viewport": {
+        "width": 360,
+        "height": 800
+      },
+      "url": "/",
+      "title": "Overview \u00b7 AI Window Manager",
+      "h1": "Overview",
+      "viewportWidth": 360,
+      "clientWidth": 360,
+      "documentScrollWidth": 360,
+      "bodyScrollWidth": 360,
+      "horizontalOverflow": false,
+      "activeScope": "Overview",
+      "windowOptions": []
+    },
+    {
+      "route": "usage",
+      "viewport": {
+        "width": 360,
+        "height": 800
+      },
+      "url": "/usage",
+      "title": "Usage \u00b7 AI Window Manager",
+      "h1": "Usage",
+      "viewportWidth": 360,
+      "clientWidth": 360,
+      "documentScrollWidth": 360,
+      "bodyScrollWidth": 360,
+      "horizontalOverflow": false,
+      "activeScope": "Usage",
+      "windowOptions": []
+    },
+    {
+      "route": "schedule-argon",
+      "viewport": {
+        "width": 360,
+        "height": 800
+      },
+      "url": "/schedule?providerId=antigravity&scope=argon",
+      "title": "Schedule \u00b7 AI Window Manager",
+      "h1": "Schedule",
+      "viewportWidth": 360,
+      "clientWidth": 360,
+      "documentScrollWidth": 360,
+      "bodyScrollWidth": 360,
+      "horizontalOverflow": false,
+      "activeScope": "Schedule",
+      "windowOptions": [
+        {
+          "value": "antigravity_argon_weekly",
+          "text": "Weekly window",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 360,
+        "height": 800
+      },
+      "url": "/settings",
+      "title": "Settings \u00b7 AI Window Manager",
+      "h1": "Settings",
+      "viewportWidth": 360,
+      "clientWidth": 360,
+      "documentScrollWidth": 360,
+      "bodyScrollWidth": 360,
+      "horizontalOverflow": false,
+      "activeScope": "Settings",
+      "windowOptions": []
+    }
+  ],
+  "summary": "12 pages; no horizontal overflow or page errors; enhanced save preserves timeOrigin; Argon manual weekly policy survives restart"
+}

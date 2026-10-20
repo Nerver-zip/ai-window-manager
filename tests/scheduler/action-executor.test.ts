@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ProviderObservation } from '../../src/domain/types.js';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { ActionExecutor, type ActionExecutorPhase } from '../../src/scheduler/action-executor.js';
 import { FakeClock } from '../../src/scheduler/clock.js';
+import { activationPolicyId, policyScopeForWindowKind } from '../../src/scheduler/policy-scope.js';
 import { ProviderCleanupWorker } from '../../src/scheduler/provider-cleanup.js';
 import { trackWindowCycles } from '../../src/scheduler/window-cycle.js';
 import { ProviderReadBackoff } from '../../src/storage/provider-read-backoff.js';
@@ -33,6 +35,7 @@ function setup(
     triggerResult?: 'succeeded' | 'failed' | 'uncertain' | 'rejected';
     targetWindowKind?: string | null;
     providerId?: string;
+    windowDurationSeconds?: number;
   } = {},
 ) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-executor-'));
@@ -42,7 +45,7 @@ function setup(
   const providerId = options.providerId ?? 'fake';
   const fake = new FakeProvider(clock, {
     id: providerId,
-    windowDurationSeconds: 18_000,
+    windowDurationSeconds: options.windowDurationSeconds ?? 18_000,
     ...(options.triggerResult ? { triggerResult: options.triggerResult } : {}),
   });
   let triggerCount = 0;
@@ -132,6 +135,179 @@ function setup(
       });
     },
   };
+}
+
+const ANTIGRAVITY_TEST_WINDOWS = [
+  { windowKind: 'antigravity_gemini_five_hour', durationSeconds: 18_000 },
+  { windowKind: 'antigravity_claude_gpt_five_hour', durationSeconds: 18_000 },
+  { windowKind: 'antigravity_argon_weekly', durationSeconds: 604_800 },
+] as const;
+
+type TriggerWindow = NonNullable<ProviderAdapter['triggerWindow']>;
+
+function withAntigravityWindows(
+  observation: ProviderObservation,
+  activeWindowKind?: string,
+): ProviderObservation {
+  const source = observation.windows[0];
+  if (!source) return observation;
+
+  const windows = ANTIGRAVITY_TEST_WINDOWS.map(({ windowKind, durationSeconds }) => {
+    const active = windowKind === activeWindowKind;
+    const phase = {
+      ...source.phase,
+      value: active ? ('ACTIVE' as const) : ('INACTIVE' as const),
+      observedAt: observation.observedAt,
+    };
+    const duration = {
+      value: durationSeconds,
+      source: 'official_supported' as const,
+      confidence: 'exact' as const,
+      observedAt: observation.observedAt,
+    };
+    const common = {
+      ...source,
+      windowKind,
+      observedAt: observation.observedAt,
+      phase,
+      durationSeconds: duration,
+    };
+    delete common.startedAt;
+    delete common.resetAt;
+    if (!active) return common;
+
+    return {
+      ...common,
+      startedAt: {
+        value: observation.observedAt,
+        source: 'observed' as const,
+        confidence: 'exact' as const,
+        observedAt: observation.observedAt,
+      },
+      resetAt: {
+        value: new Date(Date.parse(observation.observedAt) + durationSeconds * 1000).toISOString(),
+        source: 'inferred' as const,
+        confidence: 'high' as const,
+        observedAt: observation.observedAt,
+      },
+      usageRatio: {
+        value: 0.01,
+        source: 'observed' as const,
+        confidence: 'exact' as const,
+        observedAt: observation.observedAt,
+      },
+      remainingRatio: {
+        value: 0.99,
+        source: 'inferred' as const,
+        confidence: 'exact' as const,
+        observedAt: observation.observedAt,
+      },
+    };
+  });
+
+  return { ...observation, windows };
+}
+
+function antigravityAdapter(
+  context: ReturnType<typeof setup>,
+  triggerWindow?: TriggerWindow,
+): ProviderAdapter {
+  const capability = context.fake.capabilities();
+  const trigger = triggerWindow ?? context.adapter.triggerWindow?.bind(context.adapter);
+  return {
+    ...context.adapter,
+    capabilities: () => ({
+      ...capability,
+      windowTrigger: {
+        ...capability.windowTrigger,
+        consumesQuota: true,
+        supportedWindowKinds: ANTIGRAVITY_TEST_WINDOWS.map(({ windowKind }) => windowKind),
+      },
+    }),
+    inspect: async (ctx) => withAntigravityWindows(await context.fake.inspect(ctx)),
+    ...(trigger ? { triggerWindow: trigger } : {}),
+  };
+}
+
+function upsertAntigravityPolicy(context: ReturnType<typeof setup>, windowKind: string): string {
+  const scope = policyScopeForWindowKind(windowKind);
+  if (!scope || scope === 'default')
+    throw new Error(`unsupported Antigravity test target ${windowKind}`);
+  const existingProvider = context.repositories.providers.get('antigravity');
+  const template = context.repositories.schedulePolicies.get('policy-1');
+  if (!existingProvider || !template) throw new Error('Antigravity test fixtures are missing');
+  context.repositories.providers.upsert({ ...existingProvider, kind: 'antigravity' });
+  const policyId = activationPolicyId('antigravity', scope);
+  context.repositories.schedulePolicies.upsert({
+    ...template,
+    id: policyId,
+    providerId: 'antigravity',
+    scope,
+    requiresReview: scope === 'argon',
+    kind: 'manual',
+    kindExplicit: false,
+    enabled: true,
+    config: { windowKind },
+  });
+  return policyId;
+}
+
+function configureAntigravityIntent(context: ReturnType<typeof setup>, windowKind: string): void {
+  const policyId = upsertAntigravityPolicy(context, windowKind);
+  const nowMs = context.clock.now().getTime();
+  context.db
+    .prepare(
+      `UPDATE action_intents
+       SET policy_id = ?, dedupe_key = ?, reason_code = ?, explanation_json = ?,
+           scheduled_for_ms = ?, expires_at_ms = ?, updated_at_ms = ?
+       WHERE id = ?`,
+    )
+    .run(
+      policyId,
+      `antigravity:trigger_window:${policyId}:${windowKind}:${nowMs}`,
+      'MANUAL_TRIGGER_REQUESTED',
+      JSON.stringify({
+        decision: 'manual_trigger',
+        reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+        windowKind,
+      }),
+      nowMs,
+      nowMs + 300_000,
+      nowMs,
+      context.intent.id,
+    );
+}
+
+function addAntigravityIntent(
+  context: ReturnType<typeof setup>,
+  input: { id: string; windowKind: string; scheduledForMs?: number },
+): void {
+  const policyId = upsertAntigravityPolicy(context, input.windowKind);
+  const nowMs = context.clock.now().getTime();
+  const scheduledForMs = input.scheduledForMs ?? nowMs;
+  context.repositories.actionIntents.createIfAbsent({
+    ...context.intent,
+    id: input.id,
+    policyId,
+    dedupeKey: `antigravity:trigger_window:${policyId}:${input.id}`,
+    state: 'planned',
+    scheduledForMs,
+    notBeforeMs: null,
+    expiresAtMs: nowMs + 300_000,
+    attemptCount: 0,
+    confirmationAttemptCount: 0,
+    confirmationNotBeforeMs: null,
+    reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+    explanation: {
+      decision: 'manual_trigger',
+      reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+      windowKind: input.windowKind,
+    },
+    createdAtMs: scheduledForMs,
+    startedAtMs: null,
+    finishedAtMs: null,
+    updatedAtMs: scheduledForMs,
+  });
 }
 
 describe('ActionExecutor', () => {
@@ -656,6 +832,119 @@ describe('ActionExecutor', () => {
     );
   });
 
+  it('confirms an Argon weekly start only from a fresh exact Argon window observation', async () => {
+    const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
+    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    let dispatches = 0;
+    let inspections = 0;
+    let dispatchedWindowKind: string | undefined;
+    const adapter = antigravityAdapter(context, (_ctx, request) => {
+      dispatches += 1;
+      dispatchedWindowKind = request.windowKind;
+      return Promise.resolve({
+        status: 'succeeded',
+        occurredAt: context.clock.now().toISOString(),
+      });
+    });
+    const exactObservationAdapter: ProviderAdapter = {
+      ...adapter,
+      inspect: async (ctx) => {
+        inspections += 1;
+        return withAntigravityWindows(
+          await context.fake.inspect(ctx),
+          dispatches > 0 ? 'antigravity_argon_weekly' : undefined,
+        );
+      },
+    };
+
+    const report = await context
+      .executor({ adapters: new Map([['antigravity', exactObservationAdapter]]) })
+      .executeDue();
+
+    expect(report.confirmedIntentIds).toEqual(['intent-1']);
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
+    expect(dispatchedWindowKind).toBe('antigravity_argon_weekly');
+    expect(inspections).toBe(2);
+    expect(dispatches).toBe(1);
+  });
+
+  it('does not repeat an ambiguous Argon dispatch after restarting the executor', async () => {
+    const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
+    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    let dispatches = 0;
+    let dispatchedWindowKind: string | undefined;
+    const adapter = antigravityAdapter(context, (_ctx, request) => {
+      dispatches += 1;
+      dispatchedWindowKind = request.windowKind;
+      return Promise.reject(
+        Object.assign(new Error('response lost after send'), { code: 'ETIMEDOUT' }),
+      );
+    });
+
+    await context.executor({ adapters: new Map([['antigravity', adapter]]) }).executeDue();
+    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      lastErrorCode: 'ETIMEDOUT',
+    });
+    expect(dispatchedWindowKind).toBe('antigravity_argon_weekly');
+    expect(dispatches).toBe(1);
+
+    context.db.close();
+    const reopenedDb = openDatabase(path.join(context.dir, 'awm.db'));
+    const reopenedRepositories = createRepositories(reopenedDb);
+    resources.push({ db: reopenedDb, dir: context.dir });
+    await new ActionExecutor({
+      isProviderRuntimeChanging: () => false,
+      clock: context.clock,
+      db: reopenedDb,
+      repositories: reopenedRepositories,
+      adapters: new Map([['antigravity', adapter]]),
+    }).executeDue();
+
+    expect(reopenedRepositories.actionIntents.get('intent-1')).toMatchObject({
+      state: 'uncertain',
+      lastErrorCode: 'ETIMEDOUT',
+    });
+    expect(dispatches).toBe(1);
+  });
+
+  it('keeps Gemini and Claude starts planned while an Argon start is unresolved', async () => {
+    const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
+    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    const nowMs = context.clock.now().getTime();
+    addAntigravityIntent(context, {
+      id: 'intent-gemini',
+      windowKind: 'antigravity_gemini_five_hour',
+      scheduledForMs: nowMs,
+    });
+    addAntigravityIntent(context, {
+      id: 'intent-claude-gpt',
+      windowKind: 'antigravity_claude_gpt_five_hour',
+      scheduledForMs: nowMs,
+    });
+    let dispatches = 0;
+    const adapter = antigravityAdapter(context, () => {
+      dispatches += 1;
+      return Promise.resolve({
+        status: 'uncertain',
+        occurredAt: context.clock.now().toISOString(),
+        errorCode: 'AMBIGUOUS_ANTIGRAVITY_RESULT',
+      });
+    });
+
+    await context.executor({ adapters: new Map([['antigravity', adapter]]) }).executeDue();
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+    expect(context.repositories.actionIntents.get('intent-gemini')?.state).toBe('planned');
+    expect(context.repositories.actionIntents.get('intent-claude-gpt')?.state).toBe('planned');
+
+    await context.executor({ adapters: new Map([['antigravity', adapter]]) }).executeDue();
+
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+    expect(context.repositories.actionIntents.get('intent-gemini')?.state).toBe('planned');
+    expect(context.repositories.actionIntents.get('intent-claude-gpt')?.state).toBe('planned');
+    expect(dispatches).toBe(1);
+  });
+
   it('requires observation confirmation even when the Codex turn completed', async () => {
     const context = setup();
     const adapter: ProviderAdapter = {
@@ -780,6 +1069,66 @@ describe('ActionExecutor', () => {
     await reopenedExecutor.executeDue();
     expect(triggerAttempts).toBe(1);
     expect(cleanupAttempts).toBe(2);
+  });
+
+  it('retries only Argon artifact deletion after cleanup failure', async () => {
+    const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
+    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    let triggerAttempts = 0;
+    let cleanupAttempts = 0;
+    const adapter = antigravityAdapter(context, async (ctx) => {
+      triggerAttempts += 1;
+      await ctx.registerCleanupArtifact?.({
+        kind: 'antigravity_conversation',
+        externalId: 'synthetic-argon-conversation-id',
+      });
+      return {
+        status: 'uncertain',
+        occurredAt: context.clock.now().toISOString(),
+        errorCode: 'AMBIGUOUS_ANTIGRAVITY_RESULT',
+      };
+    });
+    const cleanupAdapter: ProviderAdapter = {
+      ...adapter,
+      cleanupArtifact: () => {
+        cleanupAttempts += 1;
+        if (cleanupAttempts === 1) {
+          return Promise.reject(
+            Object.assign(new Error('synthetic deletion timeout'), { code: 'ETIMEDOUT' }),
+          );
+        }
+        return Promise.resolve();
+      },
+    };
+
+    await context.executor({ adapters: new Map([['antigravity', cleanupAdapter]]) }).executeDue();
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+    expect(
+      context.repositories.providerCleanupJobs.listDue(context.clock.now().getTime()),
+    ).toHaveLength(1);
+
+    const worker = new ProviderCleanupWorker({
+      clock: context.clock,
+      repositories: context.repositories,
+      adapters: new Map([['antigravity', cleanupAdapter]]),
+      retryBaseMs: 1_000,
+      retryMaxMs: 4_000,
+    });
+    expect(await worker.runDue()).toMatchObject({ attempted: 1, deleted: 0, retryable: 1 });
+    await context.executor({ adapters: new Map([['antigravity', cleanupAdapter]]) }).executeDue();
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
+    expect(triggerAttempts).toBe(1);
+
+    context.clock.advanceMs(1_000);
+    expect(await worker.runDue()).toMatchObject({ attempted: 1, deleted: 1, retryable: 0 });
+    await context.executor({ adapters: new Map([['antigravity', cleanupAdapter]]) }).executeDue();
+
+    expect(triggerAttempts).toBe(1);
+    expect(cleanupAttempts).toBe(2);
+    expect(context.repositories.providerCleanupJobs.listDue(context.clock.now().getTime())).toEqual(
+      [],
+    );
+    expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('uncertain');
   });
 
   it('allows an explicitly requested manual trigger when Codex phase is unknown', async () => {

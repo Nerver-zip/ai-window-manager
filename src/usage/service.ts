@@ -94,6 +94,7 @@ export function readUsagePageData(input: {
   repositories: StorageRepositories;
   now: Date;
   timezone: string;
+  observedWindows?: readonly UsageSeriesOption[];
   providerId?: string;
   windowKind?: string;
   localDay?: string;
@@ -122,7 +123,17 @@ export function readUsagePageData(input: {
   const selectedProviderId = providerOptions.some((provider) => provider.id === input.providerId)
     ? input.providerId!
     : (providerOptions[0]?.id ?? null);
-  const windows = eligible.filter((item) => item.providerId === selectedProviderId);
+  const windowsByKind = new Map(
+    eligible
+      .filter((item) => item.providerId === selectedProviderId)
+      .map((item) => [item.windowKind, item] as const),
+  );
+  for (const item of input.observedWindows ?? []) {
+    if (item.providerId === selectedProviderId && !windowsByKind.has(item.windowKind)) {
+      windowsByKind.set(item.windowKind, item);
+    }
+  }
+  const windows = [...windowsByKind.values()];
   const selectedWindowKind = windows.some((item) => item.windowKind === input.windowKind)
     ? input.windowKind!
     : (windows.find((item) => classifyWindowCadence(item) === 'weekly')?.windowKind ??

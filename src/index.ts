@@ -415,10 +415,12 @@ function registerAntigravityProvider(): void {
     cwd: config.AWM_ANTIGRAVITY_HOME,
     antigravityHome: config.AWM_ANTIGRAVITY_HOME,
     triggerEnabled: config.AWM_ANTIGRAVITY_TRIGGER_ENABLED,
+    argonTriggerEnabled: config.AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED,
     actionTimeoutSeconds: config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
     triggerModels: {
       gemini: config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
       claudeGpt: config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
+      argon: config.AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL,
     },
   });
   // Per-ID cleanup obligations remain actionable even while monitoring is hidden.

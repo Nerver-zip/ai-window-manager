@@ -15,8 +15,11 @@ import {
 } from '../scheduler/planner.js';
 import { localTimeMinutes, type TimezoneSetting } from '../scheduler/policy.js';
 import type { ProviderMode } from '../storage/repositories.js';
-import type { ActivationPolicyScope } from '../scheduler/policy-scope.js';
-import { windowKindBelongsToPolicyScope } from '../scheduler/policy-scope.js';
+import {
+  activationPolicyScopes,
+  windowKindBelongsToPolicyScope,
+  type ActivationPolicyScope,
+} from '../scheduler/policy-scope.js';
 import { renderAppShell } from './ui/layout.js';
 import { renderProviderPicker } from './ui/provider-picker.js';
 import { renderAuthOnboarding, type AuthOnboardingInput } from './ui/auth-onboarding.js';
@@ -26,6 +29,7 @@ import {
   durationLabel,
   providerDisplayName,
   providerLogoUrl,
+  quotaFamilyDisplayName,
   timeZoneDisplayName,
   windowGroupDisplayName,
   windowDisplayName,
@@ -108,7 +112,7 @@ export interface SettingsProviderView {
   staleAfterSeconds?: number | undefined;
   configured?: boolean | undefined;
   connectionLabel?: string | undefined;
-  triggerModels?: { gemini: string; claudeGpt: string } | undefined;
+  triggerModels?: { gemini: string; claudeGpt: string; argon?: string } | undefined;
   providerClientUpdate?: {
     packagedVersion: string | null;
     activeVersion: string | null;
@@ -222,6 +226,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
     selectedProvider,
     windowTargets,
     targetResolution,
+    policyScope,
     'Choose the exact provider-reported window this schedule should manage.',
   );
   const tolerance = policy && 'toleranceSeconds' in policy ? policy.toleranceSeconds : 15 * 60;
@@ -280,23 +285,22 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         </form>
       </section>
       <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
-      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}</section>
+      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}${policyScope === 'argon' ? renderScheduleSafety(selectedProvider, policyScope) : ''}</section>
     </div>`,
   });
 }
 
 function renderPolicyScopeNavigation(
   providerId: string,
-  selectedScope: 'gemini' | 'claude_gpt' | 'default',
+  selectedScope: ActivationPolicyScope,
 ): string {
-  const options = [
-    ['gemini', 'Gemini Models'],
-    ['claude_gpt', 'Claude and GPT Models'],
-  ] as const;
+  const options = activationPolicyScopes('antigravity')
+    .filter((scope): scope is Exclude<ActivationPolicyScope, 'default'> => scope !== 'default')
+    .map((scope) => [scope, quotaFamilyDisplayName(scope)] as const);
   return `<nav class="policy-scope-navigation" aria-label="Antigravity quota family">${options
     .map(
       ([scope, label]) =>
-        `<a class="button${selectedScope === scope ? ' button-primary' : ' button-secondary'}" href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}" data-awm-soft-nav data-awm-target="schedule-workspace"${selectedScope === scope ? ' aria-current="page"' : ''}>${label}</a>`,
+        `<a class="button${selectedScope === scope ? ' button-primary' : ' button-secondary'}" href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}" data-awm-soft-nav data-awm-target="schedule-workspace"${selectedScope === scope ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`,
     )
     .join('')}</nav>`;
 }
@@ -616,6 +620,7 @@ function renderWindowTargetField(
   provider: SettingsProviderView | undefined,
   targets: readonly WindowTargetDescriptor[],
   resolution: WindowTargetResolution,
+  policyScope: ActivationPolicyScope,
   helpText: string,
 ): string {
   const selectedWindowKind = resolution.status === 'resolved' ? resolution.target.windowKind : '';
@@ -629,8 +634,8 @@ function renderWindowTargetField(
   const triggerModelNote = triggerModel
     ? `<p class="managed-window-model"><span class="field-label">Trigger model</span><code>${escapeHtml(triggerModel)}</code></p>`
     : '';
-  const resolutionNote = renderWindowTargetResolutionNote(resolution, targets.length);
-  const sideEffectWarning = crossWindowSideEffectWarning(provider);
+  const resolutionNote = renderWindowTargetResolutionNote(resolution, targets.length, policyScope);
+  const sideEffectWarning = crossWindowSideEffectWarning(provider, selectedTarget);
   const sideEffectNote = sideEffectWarning
     ? `<p class="policy-guidance" role="note">${escapeHtml(sideEffectWarning)}</p>`
     : '';
@@ -651,14 +656,19 @@ function triggerModelForTarget(
   }
   if (target?.groupLabel === 'Gemini Models') return provider.triggerModels.gemini;
   if (target?.groupLabel === 'Claude and GPT Models') return provider.triggerModels.claudeGpt;
+  if (target?.windowKind === 'antigravity_argon_weekly') return provider.triggerModels.argon;
   return undefined;
 }
 
 function renderWindowTargetResolutionNote(
   resolution: WindowTargetResolution,
   targetCount: number,
+  policyScope: ActivationPolicyScope,
 ): string {
   if (targetCount === 0) {
+    if (policyScope === 'argon') {
+      return '<p class="field-help" role="status">No Gemini 4 Argon weekly window is currently reported. No other quota family or cadence will be substituted.</p>';
+    }
     return '<p class="field-help" role="status">Waiting for a provider-reported usage window. No target has been invented; automatic schedules are unavailable until an exact window is reported.</p>';
   }
   if (resolution.status === 'resolved' && resolution.source === 'legacy') {
@@ -715,8 +725,14 @@ function cadenceLabel(cadence: 'five_hour' | 'weekly'): string {
   return cadence === 'five_hour' ? '5-hour window' : 'Weekly window';
 }
 
-function crossWindowSideEffectWarning(provider: SettingsProviderView | undefined): string {
+function crossWindowSideEffectWarning(
+  provider: SettingsProviderView | undefined,
+  target: WindowTargetDescriptor | undefined,
+): string {
   const kind = `${provider?.kind ?? ''} ${provider?.id ?? ''}`.toLowerCase();
+  if (target?.windowKind === 'antigravity_argon_weekly') {
+    return 'The provider reports Gemini 4 Argon as a weekly-only allowance. Its trigger effect has not been live-validated, and Argon triggering is disabled by default.';
+  }
   if (kind.includes('antigravity') || kind.includes('agy')) {
     return 'A start may use quota in both the 5-hour and weekly windows in this group. The selected group chooses the model family; it does not limit which of that family’s quotas the provider charges.';
   }
@@ -991,7 +1007,7 @@ export function renderSchedulePage(input: SchedulePageInput): string {
               <div class="form-grid">
                 ${renderField('schedule-enabled', 'Plan status', `<select id="schedule-enabled" name="enabled" aria-describedby="schedule-enabled-help">${booleanOptions(policy.enabled, 'Active', 'Paused')}</select>`, 'Pause this plan without deleting it or changing its saved values.', 'schedule-enabled-help')}
                 ${providerPicker}
-                ${renderWindowTargetField(selectedProvider, windowTargets, targetResolution, 'Choose the exact provider-reported window whose reset you want to plan around.')}
+                ${renderWindowTargetField(selectedProvider, windowTargets, targetResolution, 'default', 'Choose the exact provider-reported window whose reset you want to plan around.')}
                 ${renderField('schedule-target-reset', 'Reset time', `<input id="schedule-target-reset" name="targetResetLocalTime" type="time" value="${escapeAttribute(targetResetLocalTime)}" step="60" aria-describedby="schedule-target-reset-help" required>`, 'The local time when this usage window is expected to reset.', 'schedule-target-reset-help')}
                 ${renderField('schedule-timezone', 'Timezone', `<input id="schedule-timezone" name="timezone" value="${escapeAttribute(timezone)}" placeholder="America/Sao_Paulo" maxlength="128" aria-describedby="schedule-timezone-help" required>`, 'Use an IANA timezone so daylight-saving transitions remain explicit.', 'schedule-timezone-help')}
                 ${renderField('schedule-tolerance', 'Timing tolerance', `<input id="schedule-tolerance" name="toleranceSeconds" type="number" min="${MIN_TOLERANCE_SECONDS}" max="${MAX_TOLERANCE_SECONDS}" value="${toleranceSeconds === null ? '' : toleranceSeconds}" aria-describedby="schedule-tolerance-help" required>`, 'How many seconds of variation are acceptable around the planned start.', 'schedule-tolerance-help')}
@@ -1298,9 +1314,28 @@ function renderCapabilityRow(
   return `<div><dt>${escapeHtml(capabilityLabel(capabilityName))}</dt><dd><span class="badge ${capability.supported ? 'badge-success' : 'badge-warning'}">${status}</span><br><small>${escapeHtml(extra)}</small></dd></div>`;
 }
 
-function renderScheduleSafety(provider: SettingsProviderView | undefined): string {
+function renderScheduleSafety(
+  provider: SettingsProviderView | undefined,
+  scope: ActivationPolicyScope = 'default',
+): string {
   if (!provider)
     return '<p class="notice"><span class="badge">Waiting for a provider</span> Select a provider to see whether automatic actions are available.</p>';
+  if (provider.kind === 'antigravity' && scope === 'argon') {
+    const argonReported = provider.windows?.some(
+      (window) => window.windowKind === 'antigravity_argon_weekly',
+    );
+    if (!argonReported) {
+      return '<p class="notice"><span class="badge">Monitoring only</span> No Argon weekly target is currently reported; this schedule cannot dispatch against another quota family.</p>';
+    }
+    const exactArgonTriggerSupported =
+      provider.capabilities?.windowTrigger.supported === true &&
+      provider.capabilities.windowTrigger.supportedWindowKinds?.includes(
+        'antigravity_argon_weekly',
+      ) === true;
+    if (!exactArgonTriggerSupported) {
+      return '<p class="notice"><span class="badge">Monitoring only</span> Argon is reported as a weekly-only target, but its trigger is disabled or unavailable for this exact window. Other Antigravity trigger families do not enable Argon starts.</p>';
+    }
+  }
   if (provider.capabilities?.windowTrigger.supported !== true)
     return '<p class="notice"><span class="badge">Monitoring only</span> The schedule can be evaluated, but this provider cannot start a new window automatically.</p>';
   if (provider.mode !== 'automation' || !provider.enabled)

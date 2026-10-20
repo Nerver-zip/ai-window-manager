@@ -70,6 +70,7 @@ export interface AntigravityUsageCommandOptions {
 export interface AntigravityTriggerCommandOptions {
   executable: string;
   model: string;
+  verifyModelSelection?: boolean;
   timeoutMs: number;
   registerCleanupArtifact: (artifact: ProviderCleanupArtifact) => Promise<void>;
   cleanupUnregisteredConversation: (conversationId: string) => Promise<void>;
@@ -313,6 +314,10 @@ export async function runAntigravityTriggerCommand(
               // Never dispatch if both durable registration and exact-ID cleanup fail.
             }
             failStream(actionFailure('CLEANUP_REGISTRATION_FAILED', 'failed'));
+            return;
+          }
+          if (options.verifyModelSelection && event.model !== options.model) {
+            failStream(actionFailure('STREAM_PROTOCOL_ERROR', 'failed'));
             return;
           }
           if (settled || options.signal?.aborted) return;

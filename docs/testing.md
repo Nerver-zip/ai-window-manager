@@ -45,6 +45,26 @@ provider-wide claim serialization, and provider-client archive digest/version/
 compatibility/rollback paths. No provider account or quota is used by these
 tests.
 
+Argon regression coverage uses the synthetic weekly usage fixture. It checks
+that only `gemini-argon-wtu-weekly` with `window: weekly` maps to
+`antigravity_argon_weekly`, independent of group order/name. Unknown Argon-like
+buckets keep a stable opaque observed-only identity with unknown phase while
+known Gemini and Claude/GPT windows remain fresh; opaque identities are not
+trigger targets. Colliding normalized identities still fail closed. No
+five-hour Argon target is created. Configuration and provider tests cover the
+default-off Argon gate,
+the three accepted model slugs and blank-model disablement, and prevent a
+pre-dispatch model mismatch from sending a prompt. If the selected model
+mismatch appears after possible dispatch, the result remains uncertain without
+retry. Bootstrap and migration tests cover Argon's manual, review-required,
+targetless initial policy and preservation of existing saved policies under
+migration 014.
+
+These tests establish offline implementation behavior only. They do not
+establish a live Argon trigger effect or provider approval of a third-party
+CLI wrapper. No normal test should send an Argon prompt or spend provider
+quota.
+
 ## Secret scanning
 
 Install Gitleaks and run `pnpm secret:scan` before review. CI checks out full

@@ -60,37 +60,43 @@ describe('bootstrap provider defaults', () => {
   it.each([
     { providerId: 'codex', kind: 'codex' },
     { providerId: 'antigravity', kind: 'antigravity' },
-  ])(
-    'defaults $providerId to automation when its trigger gate is enabled',
-    ({ providerId, kind }) => {
-      const { repositories } = openFixture();
+  ])('seeds $providerId with the gate-appropriate activation defaults', ({ providerId, kind }) => {
+    const { repositories } = openFixture();
 
-      seed(repositories, true, providerId, kind);
+    seed(repositories, true, providerId, kind);
 
-      expect(repositories.providers.get(providerId)?.mode).toBe('automation');
-      const policies = repositories.schedulePolicies.list(providerId);
-      expect(policies).toMatchObject(
-        providerId === 'antigravity'
-          ? [
-              {
-                id: 'activation-antigravity-claude-gpt',
-                scope: 'claude_gpt',
-                kind: 'auto',
-                enabled: true,
-                config: {},
-              },
-              {
-                id: 'activation-antigravity-gemini',
-                scope: 'gemini',
-                kind: 'auto',
-                enabled: true,
-                config: {},
-              },
-            ]
-          : [{ id: `activation-${providerId}`, scope: 'default', kind: 'auto', enabled: true }],
-      );
-    },
-  );
+    expect(repositories.providers.get(providerId)?.mode).toBe('automation');
+    const policies = repositories.schedulePolicies.list(providerId);
+    expect(policies).toMatchObject(
+      providerId === 'antigravity'
+        ? [
+            {
+              id: 'activation-antigravity-argon',
+              scope: 'argon',
+              requiresReview: true,
+              kind: 'manual',
+              kindExplicit: false,
+              enabled: true,
+              config: {},
+            },
+            {
+              id: 'activation-antigravity-claude-gpt',
+              scope: 'claude_gpt',
+              kind: 'auto',
+              enabled: true,
+              config: {},
+            },
+            {
+              id: 'activation-antigravity-gemini',
+              scope: 'gemini',
+              kind: 'auto',
+              enabled: true,
+              config: {},
+            },
+          ]
+        : [{ id: `activation-${providerId}`, scope: 'default', kind: 'auto', enabled: true }],
+    );
+  });
 
   it('defaults to monitor-only and manual when the provider trigger gate is disabled', () => {
     const { repositories } = openFixture();
@@ -99,6 +105,15 @@ describe('bootstrap provider defaults', () => {
 
     expect(repositories.providers.get('antigravity')?.mode).toBe('monitor_only');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
+      {
+        id: 'activation-antigravity-argon',
+        scope: 'argon',
+        requiresReview: true,
+        kind: 'manual',
+        kindExplicit: false,
+        enabled: true,
+        config: {},
+      },
       {
         id: 'activation-antigravity-claude-gpt',
         scope: 'claude_gpt',
@@ -136,6 +151,12 @@ describe('bootstrap provider defaults', () => {
     expect(repositories.schedulePolicies.get('activation-antigravity-claude-gpt')).toMatchObject({
       scope: 'claude_gpt',
       kind: 'auto',
+      kindExplicit: false,
+    });
+    expect(repositories.schedulePolicies.get('activation-antigravity-argon')).toMatchObject({
+      scope: 'argon',
+      kind: 'manual',
+      requiresReview: true,
       kindExplicit: false,
     });
   });
@@ -184,6 +205,12 @@ describe('bootstrap provider defaults', () => {
 
     expect(repositories.providers.get('antigravity')?.mode).toBe('automation');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
+      {
+        id: 'activation-antigravity-argon',
+        kind: 'manual',
+        requiresReview: true,
+        kindExplicit: false,
+      },
       { id: 'activation-antigravity-claude-gpt', kind: 'auto' },
       { id: 'activation-antigravity-gemini', kind: 'auto' },
     ]);
@@ -213,8 +240,78 @@ describe('bootstrap provider defaults', () => {
 
     expect(repositories.providers.get('antigravity')?.mode).toBe('monitor_only');
     expect(repositories.schedulePolicies.list('antigravity')).toMatchObject([
+      {
+        id: 'activation-antigravity-argon',
+        kind: 'manual',
+        requiresReview: true,
+        kindExplicit: false,
+      },
       { id: 'activation-antigravity-claude-gpt', kind: 'auto' },
       { id: 'activation-antigravity-gemini', kind: 'manual' },
     ]);
+  });
+
+  it('adds Argon behind manual review after restart while preserving existing family policies', () => {
+    const fixture = openFixture();
+    const nowMs = 1_000;
+    fixture.repositories.providers.upsert({
+      id: 'antigravity',
+      kind: 'antigravity',
+      enabled: true,
+      mode: 'automation',
+      modeExplicit: true,
+      pollIntervalSeconds: 30,
+      config: { home: '/agy-state' },
+      configVersion: 1,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    });
+    const previousPolicies = [
+      {
+        id: 'activation-antigravity-gemini',
+        providerId: 'antigravity',
+        scope: 'gemini' as const,
+        requiresReview: false,
+        kind: 'manual' as const,
+        kindExplicit: true,
+        enabled: true,
+        timezone: 'America/Sao_Paulo',
+        config: { windowKind: 'antigravity_gemini_weekly' },
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      },
+      {
+        id: 'activation-antigravity-claude-gpt',
+        providerId: 'antigravity',
+        scope: 'claude_gpt' as const,
+        requiresReview: false,
+        kind: 'auto' as const,
+        kindExplicit: true,
+        enabled: true,
+        timezone: 'UTC',
+        config: { windowKind: 'antigravity_claude_gpt_five_hour' },
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      },
+    ];
+    for (const policy of previousPolicies) fixture.repositories.schedulePolicies.upsert(policy);
+
+    const repositories = reopen(fixture);
+    seed(repositories, true);
+
+    for (const policy of previousPolicies) {
+      expect(repositories.schedulePolicies.get(policy.id)).toEqual(policy);
+    }
+    expect(repositories.schedulePolicies.get('activation-antigravity-argon')).toMatchObject({
+      id: 'activation-antigravity-argon',
+      scope: 'argon',
+      requiresReview: true,
+      kind: 'manual',
+      kindExplicit: false,
+      enabled: true,
+      timezone: 'America/Sao_Paulo',
+      config: {},
+    });
+    expect(repositories.schedulePolicies.list('antigravity')).toHaveLength(3);
   });
 });
