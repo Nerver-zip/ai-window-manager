@@ -232,9 +232,9 @@ Terms of Service and Privacy Policy. Review the CLI's settings for its opt-out;
 AWM does not configure or override that preference. Trigger prompts are normal
 provider interactions and may consume quota.
 
-## Stability upgrade to schema 13 (operator-run; not automatic deployment)
+## Stability upgrade to schema 14 (operator-run; not automatic deployment)
 
-1. Review the source diff, especially migrations 010–013 and
+1. Review the source diff, especially migrations 010–014 and
    [unknown-outcome semantics](adr/008-unknown-action-resolution.md). Run
    `pnpm validate`, `pnpm audit --audit-level moderate`, Compose config/build
    and the disposable smoke below before scheduling production downtime.
@@ -249,7 +249,7 @@ provider interactions and may consume quota.
    do not copy only the main file or run a destructive reset.
 3. With the backup verified, start the reviewed image using
    `docker compose up -d --wait --wait-timeout 180`. Index creation and the
-   transactional intent-table rebuild may take longer with a large history;
+   transactional intent/policy-table rebuilds may take longer with a large history;
    inspect bounded logs instead of repeatedly interrupting migrations.
 4. Check `/healthz`, sign in again (restart invalidates sessions), and inspect
    the private `/api/v1/diagnostics` with that session. Verify the migration and
@@ -260,7 +260,7 @@ provider interactions and may consume quota.
      import Database from "better-sqlite3";
      const db = new Database("/data/window-manager.db", { readonly: true });
      const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version;
-     if (version !== 13 || db.pragma("integrity_check", { simple: true }) !== "ok"
+     if (version !== 14 || db.pragma("integrity_check", { simple: true }) !== "ok"
          || db.pragma("foreign_key_check").length !== 0) process.exitCode = 1;
      console.log({ schemaVersion: version, valid: process.exitCode !== 1 });
      db.close();
@@ -301,7 +301,7 @@ The smoke test proves health readiness, anonymous redirects/401s, login,
 session/CSRF enforcement, and SQLite persistence after restart and stop/up. For
 the normally deployed service, `/healthz` stays public for Docker healthchecks;
 dashboard/API requests require signing in. Metrics additionally supports the
-optional dedicated technical credential. The smoke also checks schema 13,
+optional dedicated technical credential. The smoke also checks schema 14,
 inspect wakeup/defer, private loop progress, executing recovery without
 redispatch, safe refusal to resolve an unidentified legacy cycle, metrics
 restart/revocation and credential-free logs. Only disposable fixtures are used.
