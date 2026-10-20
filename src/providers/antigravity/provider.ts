@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ProviderActionResultSchema,
   ProviderIdSchema,
@@ -48,18 +49,12 @@ const MAX_RESET_DISTANCE_MS = 366 * 24 * 60 * 60 * 1000;
 const REMAINING_FRACTION_EPSILON = 0.00001;
 const AMBIGUOUS_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS';
 const UNSUPPORTED_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_UNSUPPORTED';
+const ARGON_WEEKLY_BUCKET_ID = 'gemini-argon-wtu-weekly';
 
 class AntigravityWindowIdentityAmbiguousError extends Error {
   constructor() {
     super('multiple Antigravity quota buckets map to the same window identity');
     this.name = 'AntigravityWindowIdentityAmbiguousError';
-  }
-}
-
-class AntigravityWindowIdentityUnsupportedError extends Error {
-  constructor() {
-    super('an unverified Antigravity quota identity was observed');
-    this.name = 'AntigravityWindowIdentityUnsupportedError';
   }
 }
 
@@ -72,6 +67,7 @@ export interface AntigravityProviderOptions {
   actionTimeoutSeconds?: number;
   antigravityHome?: string;
   triggerEnabled?: boolean;
+  argonTriggerEnabled?: boolean;
   triggerModels?: AntigravityTriggerModels;
   cwd?: string;
   now?: () => Date;
@@ -81,7 +77,14 @@ export interface AntigravityProviderOptions {
 export interface AntigravityTriggerModels {
   gemini?: string;
   claudeGpt?: string;
+  argon?: string;
 }
+
+const ARGON_TRIGGER_MODELS = new Set([
+  'gemini-4-argon-low',
+  'gemini-4-argon-medium',
+  'gemini-4-argon-high',
+]);
 
 export { ANTIGRAVITY_TRIGGER_MESSAGE } from './transport.js';
 
@@ -91,6 +94,7 @@ const TRIGGER_MODEL_GROUP_BY_WINDOW_KIND: Readonly<Record<string, keyof Antigrav
     antigravity_gemini_weekly: 'gemini',
     antigravity_claude_gpt_five_hour: 'claudeGpt',
     antigravity_claude_gpt_weekly: 'claudeGpt',
+    antigravity_argon_weekly: 'argon',
   };
 
 const WINDOW_DURATION_SECONDS = {
@@ -107,11 +111,45 @@ function fact<T>(
   return { value, source, confidence, observedAt };
 }
 
-function groupKey(groupName: string, index: number): string {
-  const normalized = groupName.toLowerCase();
-  if (/\bgemini\b/.test(normalized)) return 'gemini';
-  if (/\bclaude\b|\bgpt\b/.test(normalized)) return 'claude_gpt';
+function groupKey(
+  group: AntigravityUsageGroup,
+  bucket: AntigravityUsageBucket,
+  index: number,
+): string {
+  // The verified provider-issued bucket ID is independent of group order and labels.
+  if (isVerifiedArgonBucket(bucket)) return 'argon';
+  if (isUnverifiedArgonBucket(group, bucket)) {
+    return `argon_unverified_${unverifiedArgonBucketKey(bucket)}`;
+  }
+  const normalized = group.name.trim().toLowerCase().replace(/\s+/g, ' ');
+  const knownGroups: Readonly<Record<string, string>> = {
+    'gemini models': 'gemini',
+    'claude and gpt models': 'claude_gpt',
+  };
+  if (Object.hasOwn(knownGroups, normalized)) return knownGroups[normalized]!;
   return `group_${index + 1}`;
+}
+
+function isVerifiedArgonBucket(bucket: AntigravityUsageBucket): boolean {
+  return bucket.id === ARGON_WEEKLY_BUCKET_ID && bucket.window === 'weekly';
+}
+
+function isUnverifiedArgonBucket(
+  group: AntigravityUsageGroup,
+  bucket: AntigravityUsageBucket,
+): boolean {
+  return !isVerifiedArgonBucket(bucket) && hasUnverifiedArgonIdentityHint(group, bucket);
+}
+
+function unverifiedArgonBucketKey(bucket: AntigravityUsageBucket): string {
+  // The hash keeps the observed key stable without exposing provider-supplied IDs.
+  // Its 24 hex characters keep WindowKind under the domain's 64-character limit.
+  return createHash('sha256')
+    .update(bucket.id, 'utf8')
+    .update('\0')
+    .update(bucket.window, 'utf8')
+    .digest('hex')
+    .slice(0, 24);
 }
 
 function hasUnverifiedArgonIdentityHint(
@@ -129,12 +167,12 @@ function hasUnverifiedArgonIdentityHint(
 }
 
 function windowKey(
-  groupName: string,
+  group: AntigravityUsageGroup,
   index: number,
-  window: AntigravityUsageBucket['window'],
+  bucket: AntigravityUsageBucket,
 ): string {
-  const durationKey = window === '5h' ? 'five_hour' : 'weekly';
-  return `antigravity_${groupKey(groupName, index)}_${durationKey}`;
+  const durationKey = bucket.window === '5h' ? 'five_hour' : 'weekly';
+  return `antigravity_${groupKey(group, bucket, index)}_${durationKey}`;
 }
 
 function reasonableResetAt(
@@ -159,19 +197,27 @@ function normalizeBucket(
   observedAt: string,
 ): WindowSnapshot {
   const resetAt = reasonableResetAt(bucket.reset_time, observedAt);
+  const windowKind = windowKey(group, groupIndex, bucket);
+  const unverifiedArgon = isUnverifiedArgonBucket(group, bucket);
+  const argonTimingUnknown =
+    windowKind === 'antigravity_argon_weekly' &&
+    bucket.remaining_fraction >= 1 - REMAINING_FRACTION_EPSILON &&
+    (!resetAt || Date.parse(resetAt) <= Date.parse(observedAt));
   const phase = fact<WindowPhase>(
-    bucket.remaining_fraction >= 1 - REMAINING_FRACTION_EPSILON
-      ? 'INACTIVE'
-      : bucket.remaining_fraction <= REMAINING_FRACTION_EPSILON
-        ? 'EXHAUSTED'
-        : 'ACTIVE',
-    'inferred',
-    'high',
+    unverifiedArgon || argonTimingUnknown
+      ? 'UNKNOWN'
+      : bucket.remaining_fraction >= 1 - REMAINING_FRACTION_EPSILON
+        ? 'INACTIVE'
+        : bucket.remaining_fraction <= REMAINING_FRACTION_EPSILON
+          ? 'EXHAUSTED'
+          : 'ACTIVE',
+    unverifiedArgon ? 'unknown' : 'inferred',
+    unverifiedArgon || argonTimingUnknown ? 'unknown' : 'high',
     observedAt,
   );
   return {
     providerId,
-    windowKind: windowKey(group.name, groupIndex, bucket.window),
+    windowKind,
     observedAt,
     phase,
     durationSeconds: fact(WINDOW_DURATION_SECONDS[bucket.window], 'inferred', 'exact', observedAt),
@@ -191,12 +237,7 @@ function normalizeTriggerModel(value: string | undefined): string | undefined {
 }
 
 function healthFor(error: unknown): ProviderHealth {
-  if (
-    error instanceof AntigravityWindowIdentityAmbiguousError ||
-    error instanceof AntigravityWindowIdentityUnsupportedError
-  ) {
-    return 'DEGRADED';
-  }
+  if (error instanceof AntigravityWindowIdentityAmbiguousError) return 'DEGRADED';
   if (error instanceof AntigravityTransportError && error.code === 'AUTH_REQUIRED') {
     return 'AUTH_REQUIRED';
   }
@@ -207,9 +248,6 @@ function healthFor(error: unknown): ProviderHealth {
 function summaryFor(error: unknown): string {
   if (error instanceof AntigravityWindowIdentityAmbiguousError) {
     return AMBIGUOUS_WINDOW_IDENTITY_SUMMARY;
-  }
-  if (error instanceof AntigravityWindowIdentityUnsupportedError) {
-    return UNSUPPORTED_WINDOW_IDENTITY_SUMMARY;
   }
   if (error instanceof AntigravityTransportError) return `AGY_${error.code}`;
   if (error instanceof AntigravityOutputError) return 'AGY_PROVIDER_OUTPUT_INVALID';
@@ -276,9 +314,13 @@ export class AntigravityProvider implements ProviderAdapter {
     this.triggerEnabled = options.triggerEnabled ?? false;
     const geminiModel = normalizeTriggerModel(options.triggerModels?.gemini);
     const claudeGptModel = normalizeTriggerModel(options.triggerModels?.claudeGpt);
+    const argonModel = normalizeTriggerModel(options.triggerModels?.argon);
     this.triggerModels = {
       ...(geminiModel ? { gemini: geminiModel } : {}),
       ...(claudeGptModel ? { claudeGpt: claudeGptModel } : {}),
+      ...(options.argonTriggerEnabled && argonModel && ARGON_TRIGGER_MODELS.has(argonModel)
+        ? { argon: argonModel }
+        : {}),
     };
     this.cwd = options.cwd;
     this.now = options.now ?? (() => new Date());
@@ -353,6 +395,7 @@ export class AntigravityProvider implements ProviderAdapter {
       const stdout = await runAntigravityTriggerCommand({
         executable: this.executable,
         model,
+        verifyModelSelection: group === 'argon',
         timeoutMs: this.actionTimeoutSeconds * 1_000,
         registerCleanupArtifact: ctx.registerCleanupArtifact,
         ...(ctx.assertDispatchAllowed ? { assertDispatchAllowed: ctx.assertDispatchAllowed } : {}),
@@ -370,6 +413,9 @@ export class AntigravityProvider implements ProviderAdapter {
       }
 
       if (envelope.status === 'SUCCESS' && envelope.num_turns === 1 && envelope.response?.trim()) {
+        if (group === 'argon' && envelope.model !== undefined && envelope.model !== model) {
+          return actionResult('uncertain', 'AGY_TRIGGER_MODEL_MISMATCH', occurredAt);
+        }
         return actionResult('succeeded', undefined, occurredAt);
       }
       // The official CLI does not provide a trusted dispatch-boundary code.
@@ -449,11 +495,10 @@ export class AntigravityProvider implements ProviderAdapter {
 
       const windows: WindowSnapshot[] = [];
       const seenWindowKinds = new Set<string>();
+      let hasUnverifiedArgonIdentity = false;
       envelope.command.data.groups.forEach((group, groupIndex) => {
         group.buckets.forEach((bucket) => {
-          if (hasUnverifiedArgonIdentityHint(group, bucket)) {
-            throw new AntigravityWindowIdentityUnsupportedError();
-          }
+          if (isUnverifiedArgonBucket(group, bucket)) hasUnverifiedArgonIdentity = true;
           const window = normalizeBucket(this.id, group, groupIndex, bucket, observedAt);
           if (seenWindowKinds.has(window.windowKind)) {
             throw new AntigravityWindowIdentityAmbiguousError();
@@ -468,7 +513,11 @@ export class AntigravityProvider implements ProviderAdapter {
         observedAt,
         staleAfterSeconds: this.staleAfterSeconds,
         windows,
-        ...(windows.length === 0 ? { summary: 'AGY_NO_SUPPORTED_WINDOWS' } : {}),
+        ...(windows.length === 0
+          ? { summary: 'AGY_NO_SUPPORTED_WINDOWS' }
+          : hasUnverifiedArgonIdentity
+            ? { summary: UNSUPPORTED_WINDOW_IDENTITY_SUMMARY }
+            : {}),
       });
       this.currentHealth = observation.health;
       return observation;

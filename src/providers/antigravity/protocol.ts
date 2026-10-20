@@ -65,6 +65,7 @@ export const AntigravityUsageEnvelopeSchema = z
 
 const AntigravityActionEnvelopeSchema = z
   .object({
+    model: z.unknown().optional(),
     status: z.enum([
       'SUCCESS',
       'ERROR',

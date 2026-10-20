@@ -72,14 +72,25 @@ export function outputProcessFactory(
   return scriptedProcessFactory((process) => process.complete(output), onSpawn);
 }
 
+export interface StreamingActionProcessOptions {
+  onPrompt?: (input: string) => void;
+  initModel?: string;
+}
+
 export function streamingActionProcessFactory(
   resultPayload: string,
-  onPrompt?: (input: string) => void,
+  onPromptOrOptions?: ((input: string) => void) | StreamingActionProcessOptions,
   conversationId = SYNTHETIC_ANTIGRAVITY_CONVERSATION_ID,
   exitCode = 0,
   stderr = '',
   onSpawn?: (process: FakeAntigravityProcess) => void,
 ): AntigravityProcessFactory {
+  const onPrompt =
+    typeof onPromptOrOptions === 'function' ? onPromptOrOptions : onPromptOrOptions?.onPrompt;
+  const initModel =
+    typeof onPromptOrOptions === 'function' || onPromptOrOptions === undefined
+      ? undefined
+      : onPromptOrOptions.initModel;
   return scriptedProcessFactory((process) => {
     let input = '';
     process.stdin.setEncoding('utf8');
@@ -112,7 +123,11 @@ export function streamingActionProcessFactory(
     process.start();
     queueMicrotask(() => {
       process.stdout.write(
-        `${JSON.stringify({ event: 'init', conversation_id: conversationId })}\n`,
+        `${JSON.stringify({
+          event: 'init',
+          conversation_id: conversationId,
+          ...(initModel === undefined ? {} : { model: initModel }),
+        })}\n`,
       );
     });
   }, onSpawn);

@@ -92,6 +92,13 @@ const envSchema = z.object({
     .default('true')
     .transform((value) => value === 'true'),
   AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(30),
+  AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL: z
+    .enum(['', 'gemini-4-argon-low', 'gemini-4-argon-medium', 'gemini-4-argon-high'])
+    .default('gemini-4-argon-low'),
   AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL: z
     .string()
     .trim()

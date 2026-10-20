@@ -21,6 +21,8 @@ describe('loadConfig', () => {
     expect(config.AWM_TRUST_PROXY).toEqual([]);
     expect(config.AWM_ANTIGRAVITY_ENABLED).toBe(false);
     expect(config.AWM_ANTIGRAVITY_TRIGGER_ENABLED).toBe(true);
+    expect(config.AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED).toBe(false);
+    expect(config.AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL).toBe('gemini-4-argon-low');
     expect(config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS).toBe(30);
     expect(config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL).toBe('gemini-3.8-flash-low');
     expect(config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL).toBe('claude-sonnet-4-6');
@@ -45,6 +47,25 @@ describe('loadConfig', () => {
 
   it('rejects an invalid timezone before startup', () => {
     expect(() => loadTestConfig({ AWM_TIMEZONE: 'Not/AZone' })).toThrow(/valid IANA timezone/);
+  });
+
+  it('requires explicit Argon enablement and never accepts another family model', () => {
+    expect(
+      loadTestConfig({
+        AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED: 'true',
+        AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL: 'gemini-4-argon-medium',
+      }),
+    ).toMatchObject({
+      AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED: true,
+      AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL: 'gemini-4-argon-medium',
+    });
+    expect(
+      loadTestConfig({ AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL: '' })
+        .AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL,
+    ).toBe('');
+    expect(() =>
+      loadTestConfig({ AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL: 'gemini-3.8-flash-low' }),
+    ).toThrow();
   });
 
   it('accepts only absolute provider-client runtime roots when runtime updates are enabled', () => {
