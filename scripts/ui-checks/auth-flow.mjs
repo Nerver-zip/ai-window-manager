@@ -138,5 +138,5 @@ check(
 check('after sign-in: device code no longer displayed', done.codeCleared);
 await snap('3-succeeded');
 console.log(`\n${results.filter(Boolean).length}/${results.length} auth-flow checks passed`);
-browser.close();
+await browser.close();
 process.exit(results.every(Boolean) ? 0 : 1);

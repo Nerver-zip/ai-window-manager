@@ -75,5 +75,5 @@ console.log(
     ? over.map((r) => `${r.name}@${r.w}: scrollWidth ${r.sw} > clientWidth ${r.cw}`).join('\n')
     : 'none',
 );
-browser.close();
+await browser.close();
 process.exit(0);

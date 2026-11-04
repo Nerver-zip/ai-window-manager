@@ -280,5 +280,5 @@ await send('Emulation.setScriptExecutionDisabled', { value: false });
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
-browser.close();
+await browser.close();
 process.exit(failed.length ? 1 : 0);

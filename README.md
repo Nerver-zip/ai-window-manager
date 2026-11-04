@@ -269,9 +269,9 @@ scheduling, and activity details.
 <details>
 <summary>More app screens</summary>
 
-**Usage — per-window charts and daily history**
+**Usage — per-window charts and provider filtering**
 
-![Usage page showing provider usage charts and the daily heatmap](assets/images/screenshots/usage.png)
+![Usage page showing per-window usage charts for the selected provider](assets/images/screenshots/usage.png)
 
 **Schedule — provider, model family, target window, and start policy**
 

@@ -56,6 +56,7 @@ export async function launch() {
     { stdio: 'ignore' },
   );
 
+  const exited = new Promise((resolve) => chrome.once('exit', resolve));
   let targets;
   for (let i = 0; i < 50; i++) {
     try {
@@ -118,9 +119,11 @@ export async function launch() {
       mobile: width < 500,
     });
   }
-  function close() {
+  async function close() {
     ws.close();
     chrome.kill();
+    // Remove the profile only after Chromium has exited, so it is not still writing to it.
+    await exited;
     fs.rmSync(profile, { recursive: true, force: true });
   }
 
@@ -131,15 +134,27 @@ export async function launch() {
 
 /** Signs in through the real login form with the synthetic demo credentials. */
 export async function login(browser, baseUrl) {
-  const { evalJs, goto, once, viewport, close } = browser;
+  const { send, evalJs, goto, once, viewport, close } = browser;
   await viewport(1280, 800);
   await goto(`${baseUrl}/login`);
-  const filled = await evalJs(
-    `(() => { const u=document.querySelector('input[name=username]'), p=document.querySelector('input[name=password]'); if(!u||!p) return false; u.value=${JSON.stringify(DEMO_USERNAME)}; p.value=${JSON.stringify(DEMO_PASSWORD)}; return true; })()`,
-  );
-  if (!filled) {
+  // Credentials travel as CDP call arguments, never as text compiled into the page script.
+  const { result: windowRef } = await send('Runtime.evaluate', { expression: 'window' });
+  const { result: fill } = await send('Runtime.callFunctionOn', {
+    objectId: windowRef.objectId,
+    functionDeclaration: `function (user, pass) {
+      const u = document.querySelector('input[name=username]');
+      const p = document.querySelector('input[name=password]');
+      if (!u || !p) return false;
+      u.value = user;
+      p.value = pass;
+      return true;
+    }`,
+    arguments: [{ value: DEMO_USERNAME }, { value: DEMO_PASSWORD }],
+    returnByValue: true,
+  });
+  if (!fill.value) {
     console.error('login form not found');
-    close();
+    await close();
     process.exit(1);
   }
   const nav = once('Page.loadEventFired');
@@ -148,7 +163,7 @@ export async function login(browser, baseUrl) {
   await sleep(800);
   if ((await evalJs('location.pathname')) === '/login') {
     console.error('login failed');
-    close();
+    await close();
     process.exit(1);
   }
 }
