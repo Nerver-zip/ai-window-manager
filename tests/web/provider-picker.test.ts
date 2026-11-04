@@ -30,7 +30,7 @@ describe('provider picker', () => {
     });
 
     expect(html).toContain('<fieldset class="provider-picker" aria-describedby="provider-help">');
-    expect(html).toContain('<legend>Provider &lt;selection&gt;</legend>');
+    expect(html).toContain('<legend class="visually-hidden">Provider &lt;selection&gt;</legend>');
     expect(html).toContain('id="provider-0" name="provider" value="codex" checked required');
     expect(html).toContain('/assets/images/providers/codex.png');
     expect(html).toContain('data-configured="true"');

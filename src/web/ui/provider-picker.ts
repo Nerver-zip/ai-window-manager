@@ -7,6 +7,8 @@ export interface ProviderPickerOption {
   kind?: string;
   configured?: boolean | null;
   statusLabel?: string | null;
+  /** Optional visual tone for the status dot; defaults to the configured state. */
+  tone?: 'ok' | 'attention' | 'muted';
 }
 
 export interface ProviderPickerInput {
@@ -28,7 +30,7 @@ export interface ProviderPickerLinksInput {
   emptyText?: string;
 }
 
-/** Render provider choices as a native radio group with a visual card treatment. */
+/** Render provider choices as a native radio group with a segmented-tab treatment. */
 export function renderProviderPicker(input: ProviderPickerInput): string {
   const describedBy = input.describedBy
     ? ` aria-describedby="${escapeHtml(input.describedBy)}"`
@@ -40,10 +42,10 @@ export function renderProviderPicker(input: ProviderPickerInput): string {
     ? `<div class="provider-picker-options">${input.options.map((option, index) => renderOption(input, option, index)).join('')}</div>`
     : `<p class="provider-picker-empty">${escapeHtml(input.emptyText ?? 'No providers available.')}</p>`;
 
-  return `<fieldset class="provider-picker"${describedBy}><legend>${escapeHtml(input.legend)}</legend>${options}${helpText}</fieldset>`;
+  return `<fieldset class="provider-picker"${describedBy}><legend class="visually-hidden">${escapeHtml(input.legend)}</legend>${options}${helpText}</fieldset>`;
 }
 
-/** Render provider choices as immediate navigation links with the same card treatment. */
+/** Render provider choices as immediate navigation links with the same segmented-tab treatment. */
 export function renderProviderPickerLinks(input: ProviderPickerLinksInput): string {
   const options = input.options.length
     ? `<div class="provider-picker-options">${input.options.map((option) => renderLinkOption(input, option)).join('')}</div>`
@@ -79,7 +81,7 @@ function renderOptionContent(option: ProviderPickerOption): string {
   const logoUrl = providerLogoUrl(option.value, option.kind);
   const claudeLogo = (option.kind ?? option.value) === 'claude_code';
   const logo = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="" width="${claudeLogo ? '40' : '34'}" height="${claudeLogo ? '40' : '34'}">`
+    ? `<img src="${escapeHtml(logoUrl)}" alt="" width="${claudeLogo ? '22' : '20'}" height="${claudeLogo ? '22' : '20'}">`
     : `<span class="provider-picker-fallback" aria-hidden="true">${escapeHtml(option.value ? providerInitials(option.label) : 'ALL')}</span>`;
   const status =
     option.statusLabel !== undefined
@@ -89,10 +91,14 @@ function renderOptionContent(option: ProviderPickerOption): string {
         : option.configured === true
           ? 'Connected'
           : null;
+  const dot =
+    option.configured === undefined || option.configured === null
+      ? ''
+      : `<span class="provider-picker-dot"${option.tone ? ` data-tone="${option.tone}"` : ''} aria-hidden="true"></span>`;
   const statusMarkup = status
     ? `<span class="provider-picker-status">${escapeHtml(status)}</span>`
     : '';
-  return `<span class="provider-picker-logo${claudeLogo ? ' provider-picker-logo--claude-code' : ''}">${logo}</span><span class="provider-picker-copy"><span class="provider-picker-name">${escapeHtml(option.label)}</span>${statusMarkup}</span>`;
+  return `<span class="provider-picker-logo${claudeLogo ? ' provider-picker-logo--claude-code' : ''}">${logo}</span><span class="provider-picker-copy"><span class="provider-picker-name">${escapeHtml(option.label)}</span>${dot}${statusMarkup}</span>`;
 }
 
 function providerInitials(label: string): string {

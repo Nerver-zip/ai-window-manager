@@ -88,14 +88,12 @@ describe('operator authentication UI', () => {
     const html = renderAppShell({ page: 'overview', title: 'Overview', content: '' });
 
     expect(html.match(/href="\/logout"/g)).toHaveLength(1);
-    expect(html).toContain(
-      '<a class="button button-secondary shell-sign-out" href="/logout">Sign out</a>',
-    );
+    expect(html).toMatch(/<a class="shell-sign-out" href="\/logout">.*<span>Sign out<\/span><\/a>/);
   });
 
   it('exports responsive, token-based auth styles with a visible keyboard focus state', () => {
     expect(OPERATOR_AUTH_CSS).toContain('var(--surface)');
-    expect(OPERATOR_AUTH_CSS).toContain('var(--border)');
+    expect(OPERATOR_AUTH_CSS).toContain('var(--line)');
     expect(OPERATOR_AUTH_CSS).toContain(':focus-visible');
     expect(OPERATOR_AUTH_CSS).toContain('min-height: 48px');
     expect(OPERATOR_AUTH_CSS).toContain('@media (max-width: 480px)');
