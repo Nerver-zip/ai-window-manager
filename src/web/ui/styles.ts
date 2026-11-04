@@ -348,6 +348,10 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .provider-client-updates { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); padding: 18px 20px; margin-top: 24px; }
 .provider-client-updates h4 { margin: 0 0 4px; font-size: 14px; font-weight: 650; }
 .provider-client-updates .field-help { margin-top: 0; }
+.claude-code-connection { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-soft); padding: 18px 20px; margin: 16px 0; }
+.claude-code-connection h4 { margin: 0 0 4px; font-size: 14px; font-weight: 650; }
+.claude-code-connection code { overflow-wrap: anywhere; }
+.claude-code-steps { margin: 8px 0; padding-left: 20px; display: grid; gap: 6px; }
 .provider-client-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 14px 0; }
 .provider-client-versions > div { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
 .provider-client-versions dt { color: var(--text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }

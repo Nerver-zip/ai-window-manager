@@ -5,6 +5,7 @@ const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   fake: 'Test provider',
   antigravity: 'Antigravity',
   agy: 'Antigravity',
+  claude_code: 'Claude Code',
 };
 
 const EVIDENCE_LABELS: Readonly<Record<string, string>> = {
@@ -203,6 +204,20 @@ const ERROR_LABELS: Readonly<Record<string, string>> = {
   AGY_PROVIDER_TIMEOUT: 'The Antigravity CLI did not respond in time.',
   AGY_PROVIDER_OUTPUT_INVALID: 'The Antigravity CLI returned data the app could not verify.',
   AGY_PROVIDER_UNAVAILABLE: 'The Antigravity CLI is temporarily unavailable.',
+  CLAUDE_CODE_AUTH_REQUIRED:
+    'Sign in with the official Claude Code CLI in the container (see Settings) to resume usage checks.',
+  CLAUDE_CODE_SUBSCRIPTION_REQUIRED:
+    'Claude Code is signed in without a Claude.ai subscription; usage windows are only reported for Pro, Max and other subscription plans.',
+  CLAUDE_CODE_USAGE_UNAVAILABLE:
+    'Claude Code is signed in, but the official usage report did not include plan usage.',
+  CLAUDE_CODE_AUTH_STATUS_UNKNOWN: 'The Claude Code sign-in status could not be verified.',
+  CLAUDE_CODE_EXECUTABLE_UNAVAILABLE: 'The official Claude Code CLI is not installed.',
+  CLAUDE_CODE_PROVIDER_TIMEOUT: 'The Claude Code CLI did not respond in time.',
+  CLAUDE_CODE_PROVIDER_UNAVAILABLE: 'The Claude Code CLI is temporarily unavailable.',
+  CLAUDE_CODE_OUTPUT_INVALID: 'The Claude Code CLI returned data the app could not verify.',
+  CLAUDE_CODE_CONTRACT_CHANGED:
+    'The Claude Code usage report changed shape; readings are paused until the app is updated.',
+  CLAUDE_CODE_NO_USAGE_WINDOWS: 'The Claude Code usage report contained no usage windows.',
 };
 
 export function providerDisplayName(id: string, kind?: string): string {
@@ -238,6 +253,13 @@ export function windowDisplayName(
 }
 
 export function windowGroupDisplayName(windowKind: string): string | null {
+  if (windowKind.startsWith('claude_code_')) {
+    // Canonical five-hour/weekly windows need no group; other server meters keep
+    // their own label (for example a model-scoped weekly meter).
+    if (windowKind === 'claude_code_five_hour' || windowKind === 'claude_code_seven_day')
+      return null;
+    return humanizeIdentifier(windowKind.slice('claude_code_'.length), 'Other');
+  }
   const prefix = 'antigravity_';
   if (!windowKind.startsWith(prefix)) return null;
 
