@@ -41,7 +41,7 @@ describe('retention summary UI', () => {
     const html = renderRetentionSummary();
 
     expect(html).toContain(
-      '<section class="card retention-card" aria-labelledby="data-retention-title">',
+      '<section id="data-retention" class="retention-card settings-section" aria-labelledby="data-retention-title">',
     );
     expect(html).toContain('<h2 id="data-retention-title">Data retention</h2>');
     expect(html).toContain('<dl class="retention-list">');

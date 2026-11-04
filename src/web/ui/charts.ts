@@ -45,11 +45,11 @@ export interface TimeSeriesChartInput {
 }
 
 const VIEWBOX_WIDTH = 640;
-const VIEWBOX_HEIGHT = 230;
-const PLOT_LEFT = 48;
+const VIEWBOX_HEIGHT = 300;
+const PLOT_LEFT = 60;
 const PLOT_RIGHT = 624;
 const PLOT_TOP = 18;
-const PLOT_BOTTOM = 188;
+const PLOT_BOTTOM = 256;
 const MAX_TIME_TICKS = 4;
 
 export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
@@ -62,7 +62,7 @@ export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
     .map((instantMs, index) => {
       const x = chartXAt(instantMs, domain.fromMs, domain.toMs);
       const anchor = index === 0 ? 'start' : index === ticks.length - 1 ? 'end' : 'middle';
-      return `<text class="chart-axis-label chart-axis-time" x="${x}" y="216" text-anchor="${anchor}">${escapeHtml(formatChartTick(new Date(instantMs).toISOString(), input.range, domain.timeZone))}</text>`;
+      return `<text class="chart-axis-label chart-axis-time${anchor === 'middle' ? ' chart-axis-time-mid' : ''}" x="${x}" y="${PLOT_BOTTOM + 28}" text-anchor="${anchor}">${renderAxisTimeLabel(formatChartTick(new Date(instantMs).toISOString(), input.range, domain.timeZone))}</text>`;
     })
     .join('');
   const gridMarkup = input.yAxis.ticks
@@ -74,7 +74,7 @@ export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
   const axisLabels = input.yAxis.ticks
     .map((tick) => {
       const y = chartY(tick, input.yAxis.min, input.yAxis.max);
-      return `<text class="chart-axis-label chart-axis-value" x="0" y="${y + 3}">${escapeHtml(input.yAxis.format(tick))}</text>`;
+      return `<text class="chart-axis-label chart-axis-value" x="${PLOT_LEFT - 8}" y="${y + 4}">${escapeHtml(input.yAxis.format(tick))}</text>`;
     })
     .join('');
   const seriesMarkup = input.series
@@ -108,22 +108,18 @@ export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
   const description = input.description
     ? `<p class="chart-description">${escapeHtml(input.description)}</p>`
     : '';
-  const headerAside = [
-    input.controls,
-    summaryMarkup ? `<div class="chart-summary">${summaryMarkup}</div>` : '',
-  ]
-    .filter(Boolean)
-    .join('');
+  const eyebrow = input.eyebrow ? `<span class="eyebrow">${escapeHtml(input.eyebrow)}</span>` : '';
 
   return `<article class="card chart-card" aria-labelledby="${escapeHtml(titleId)}">
     <header class="chart-card-header">
       <div class="chart-heading">
-        <span class="eyebrow">${escapeHtml(input.eyebrow ?? 'Usage window')}</span>
+        ${eyebrow}
         <h3 id="${escapeHtml(titleId)}">${escapeHtml(input.title)}</h3>
         ${description}
       </div>
-      ${headerAside ? `<div class="chart-card-controls">${headerAside}</div>` : ''}
+      ${input.controls ? `<div class="chart-card-controls">${input.controls}</div>` : ''}
     </header>
+    ${summaryMarkup ? `<div class="chart-summary">${summaryMarkup}</div>` : ''}
     <div class="chart-plot" data-chart-root data-chart-range="${escapeHtml(input.range)}">
       <svg class="chart-svg" viewBox="0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}" role="img" aria-labelledby="${escapeHtml(titleId)}" aria-label="${escapeHtml(`${input.title} over time`)}">
         ${gridMarkup}
@@ -146,6 +142,13 @@ export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
 
 export function renderChartEmptyState(message = 'No usage observations in this range'): string {
   return `<div class="chart-empty" role="status"><span class="chart-empty-mark" aria-hidden="true">—</span><strong>${escapeHtml(message)}</strong><p>Saved observations will appear here after the provider is checked.</p></div>`;
+}
+
+/** Keep the zone in its own tspan so narrow layouts can drop it from middle ticks only. */
+function renderAxisTimeLabel(label: string): string {
+  const match = /^(\d{2}:\d{2}) (.+)$/.exec(label);
+  if (!match) return escapeHtml(label);
+  return `${escapeHtml(match[1])}<tspan class="chart-axis-zone"> ${escapeHtml(match[2])}</tspan>`;
 }
 
 export function formatRatioPercent(value: number): string {

@@ -65,8 +65,8 @@ export function renderOperatorLogoutPage(input: { csrfToken: string }): string {
 
 function renderOperatorBrand(): string {
   return `<div class="operator-auth-brand">
-      <img src="/assets/images/logo.png" alt="" width="44" height="44">
-      <span>AI Window<span class="operator-auth-brand-subtitle">MANAGER</span></span>
+      <img src="/assets/images/logo.png" alt="" width="28" height="28">
+      <span>AI Window Manager</span>
     </div>`;
 }
 

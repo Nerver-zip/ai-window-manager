@@ -32,6 +32,13 @@ const ANTIGRAVITY_CHART_WINDOWS = [
   'antigravity_claude_gpt_five_hour',
   'antigravity_claude_gpt_weekly',
 ] as const;
+const LEGEND_LEVELS = [
+  [0, '0 observed'],
+  [1, '&gt;0–5 points'],
+  [2, '&gt;5–15'],
+  [3, '&gt;15–30'],
+  [4, '&gt;30'],
+] as const;
 const USAGE_HEATMAP_REGION = 'usage-heatmap';
 
 export function renderUsagePage(input: UsagePageInput): string {
@@ -71,16 +78,17 @@ export function renderUsagePage(input: UsagePageInput): string {
       ...(provider.kind ? { kind: provider.kind } : {}),
       ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
       ...(provider.statusLabel !== undefined ? { statusLabel: provider.statusLabel } : {}),
+      ...(provider.tone ? { tone: provider.tone } : {}),
     })),
     selectedValue: providerId,
     getHref: (provider) => usageProviderHref(provider.value, chartRanges, selectedDay?.localDate),
     emptyText: 'No providers available.',
   });
   const dataStatus = data.aggregationPending
-    ? '<p class="usage-notice" role="status">Preparing saved usage history. The heatmap will fill in as existing samples are processed.</p>'
+    ? '<p class="notice notice-info usage-notice" role="status">Preparing saved usage history. The heatmap will fill in as existing samples are processed.</p>'
     : '';
   const notice = input.notice
-    ? `<p class="usage-notice" role="status">${escapeHtml(input.notice)}</p>`
+    ? `<p class="notice notice-info usage-notice" role="status">${escapeHtml(input.notice)}</p>`
     : '';
   const hasWeeklyData = Boolean(providerId && selectedWeeklyWindow);
   const calendar =
@@ -95,7 +103,7 @@ export function renderUsagePage(input: UsagePageInput): string {
           chartRanges,
           chartSeries,
         )
-      : '<div class="usage-empty" role="status"><h3>Weekly usage is not available yet</h3><p>Saved weekly usage observations will appear here. Usage charts remain available below.</p></div>';
+      : '<div class="empty-state usage-empty" role="status"><h3>Weekly usage is not available yet</h3><p>Saved weekly usage observations will appear here. Usage charts remain available below.</p></div>';
   const detail = hasWeeklyData
     ? renderSelectedDay(
         selectedDay,
@@ -130,8 +138,8 @@ export function renderUsagePage(input: UsagePageInput): string {
   const content = `<div class="usage-page">
     ${notice}${dataStatus}
     <section class="usage-controls" aria-label="Usage filters">
-      <div class="usage-controls-copy"><span class="eyebrow">Your activity</span><h2>Usage by day</h2><p>Weekly allowance used, based on saved provider updates.</p><p class="usage-timezone">Calendar dates use ${escapeHtml(timeZoneDisplayName(data.timezone))} · <a href="/settings">Change in Settings</a></p></div>
-      <div class="usage-filter-panel">${providerPicker}</div>
+      ${providerPicker}
+      <p class="usage-timezone">Calendar dates use ${escapeHtml(timeZoneDisplayName(data.timezone))} · <a href="/settings">Change in Settings</a></p>
     </section>
     ${chartMarkup}
     ${heatmapWorkspace}
@@ -243,15 +251,15 @@ function renderCalendar(
         ? `<a class="button button-secondary" href="${escapeHtml(weeklyWindowHref(providerId, weeklyWindows[0]!.windowKind, data.selectedDay?.localDate, ranges, series))}" data-awm-soft-nav data-awm-target="${USAGE_HEATMAP_REGION}" data-awm-focus-key="usage-show-weekly">Show weekly usage</a>`
         : '';
     return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
-      <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">Weekly allowance</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel">${sourceSelector}</div></div>
-      <div class="usage-empty" role="status"><h3>Weekly view not selected</h3><p>${escapeHtml(prompt)}</p>${recoveryLink}</div>
+      <div class="section-heading"><div><h2 id="daily-usage-heading">Weekly allowance</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div>${sourceSelector}</div>
+      <div class="empty-state usage-empty" role="status"><h3>Weekly view not selected</h3><p>${escapeHtml(prompt)}</p>${recoveryLink}</div>
     </section>`;
   }
   const firstDate = data.days[0]?.localDate;
   if (!firstDate || data.days.length === 0) {
     return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
-      <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel">${sourceSelector}</div></div>
-      <div class="usage-empty" role="status"><h3>No saved usage yet</h3><p>New observations will be shown here after the provider is checked.</p></div>
+      <div class="section-heading"><div><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div>${sourceSelector}</div>
+      <div class="empty-state usage-empty" role="status"><h3>No saved usage yet</h3><p>New observations will be shown here after the provider is checked.</p></div>
     </section>`;
   }
   const firstOffset = weekday(firstDate);
@@ -292,7 +300,7 @@ function renderCalendar(
     return `<div class="usage-calendar-row" role="row">${cellsMarkup}</div>`;
   }).join('');
   return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
-    <div class="section-heading"><div><span class="eyebrow">Daily usage</span><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Approximate percentage points of the weekly allowance used per day.</p></div><div class="usage-filter-panel"><span class="section-count">${escapeHtml(data.fromDate)} – ${escapeHtml(data.today)}</span>${sourceSelector}</div></div>
+    <div class="section-heading"><div><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Weekly allowance used per day, based on saved provider updates, in approximate percentage points · ${escapeHtml(data.fromDate)} – ${escapeHtml(data.today)}</p></div>${sourceSelector}</div>
     <div class="usage-calendar-layout">
       <div class="usage-weekdays" aria-hidden="true"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
       <div class="usage-calendar-scroll" tabindex="0" aria-label="Scrollable usage calendar">
@@ -304,12 +312,7 @@ function renderCalendar(
     </div>
     <div class="usage-legend" aria-label="Usage intensity legend">
       <span class="usage-legend-item"><span class="usage-swatch usage-no_data" aria-hidden="true"></span>No data</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-0" aria-hidden="true"></span>0 observed</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-1" aria-hidden="true"></span>&gt;0–5 points</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-2" aria-hidden="true"></span>&gt;5–15</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-3" aria-hidden="true"></span>&gt;15–30</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-4" aria-hidden="true"></span>&gt;30</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-2 usage-partial" aria-hidden="true"></span>Partial data</span>
+      <span class="usage-legend-scale"><span aria-hidden="true">Less</span>${LEGEND_LEVELS.map(([level, label]) => `<span class="usage-swatch usage-level-${level}" title="${label}"><span class="visually-hidden">${label}</span></span>`).join('')}<span aria-hidden="true">More</span></span>
     </div>
   </section>`;
 }
@@ -412,7 +415,7 @@ function renderSelectedDay(
     day.reasons.length > 0
       ? '<p class="usage-quality-note">Daily total may be incomplete.</p>'
       : '';
-  return `<section class="usage-day-detail" aria-live="polite" aria-labelledby="usage-day-title"><div><span class="eyebrow">Selected day</span><h3 id="usage-day-title">${escapeHtml(dateLabel)}</h3><p class="usage-day-summary">${escapeHtml(summary)}</p><p class="muted">${escapeHtml(providerLabel)} · ${escapeHtml(windowLabel)} · ${escapeHtml(quality)} · ${formatHours(day.coverageSeconds)} observed${day.localDate === today ? ' · Today · in progress' : ''} · ${escapeHtml(timeZoneDisplayName(timeZone))}</p>${reasons}</div></section>`;
+  return `<section class="usage-day-detail" aria-live="polite" aria-labelledby="usage-day-title"><div><h3 id="usage-day-title">${escapeHtml(dateLabel)}</h3><p class="usage-day-summary">${escapeHtml(summary)}</p><p class="muted">${escapeHtml(providerLabel)} · ${escapeHtml(windowLabel)} · ${escapeHtml(quality)} · ${formatHours(day.coverageSeconds)} observed${day.localDate === today ? ' · Today · in progress' : ''} · ${escapeHtml(timeZoneDisplayName(timeZone))}</p>${reasons}</div></section>`;
 }
 
 function cellLabel(day: UsagePageData['days'][number], today: string): string {

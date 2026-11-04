@@ -4,27 +4,34 @@ export const AUTH_ONBOARDING_CSS = `
   min-width: 0;
   margin: 0;
 }
-.auth-onboarding__body { display: grid; gap: 12px; }
-.auth-onboarding__intro { margin: 0; color: var(--text); font-size: 14px; font-weight: 550; }
+.auth-onboarding__body { display: grid; gap: var(--space-3); }
+.auth-onboarding__intro { margin: 0; color: var(--text); font-size: 14px; font-weight: 500; }
 .auth-onboarding__detail,
 .auth-onboarding__expiry,
 .auth-onboarding__error,
 .auth-onboarding__code-hint,
 .auth-onboarding__next-step p { margin: 0; color: var(--text-muted); }
 .auth-onboarding__error {
-  border-left: 2px solid var(--danger);
-  padding: 8px 12px;
-  color: var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-soft);
 }
 .auth-onboarding__expiry time { color: var(--text-soft); font-variant-numeric: tabular-nums; }
 .auth-onboarding__actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .auth-onboarding__awaiting {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
+  gap: var(--space-5);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
 }
+.auth-onboarding__awaiting > * { margin: 0; }
+.auth-onboarding__device-code { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.auth-onboarding__device-code > p { margin: 0; color: var(--text-muted); }
 .auth-onboarding__next-step,
 .auth-onboarding__code { display: grid; align-content: start; gap: 8px; min-width: 0; }
 .auth-onboarding__next-step .button { justify-self: start; margin-top: 6px; }
@@ -37,13 +44,15 @@ export const AUTH_ONBOARDING_CSS = `
   width: fit-content;
   max-width: 100%;
   margin: 0;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--input);
-  padding: 8px 12px;
+  padding: 8px 16px;
   color: var(--accent-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 16px;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: .08em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: all;
@@ -52,7 +61,7 @@ export const AUTH_ONBOARDING_CSS = `
 .provider-settings--connect-target {
   scroll-margin-block-start: 20px;
   outline: 2px solid var(--accent);
-  outline-offset: 4px;
+  outline-offset: 2px;
 }
 .provider-settings--connect-target:focus { outline-color: var(--focus); }
 .auth-onboarding__copy-fallback {
@@ -61,29 +70,29 @@ export const AUTH_ONBOARDING_CSS = `
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   color: var(--text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   user-select: all;
   -webkit-user-select: all;
 }
 .auth-copy-button {
   display: inline-flex;
-  min-height: 44px;
+  min-height: 36px;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   background: var(--surface-raised);
-  padding: 8px 13px;
+  padding: 6px 14px;
   color: var(--text);
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
-.auth-copy-button:hover { border-color: var(--accent); background: var(--input); }
-.auth-copy-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.auth-copy-button:hover { border-color: var(--text-faint); background: var(--surface-raised); }
+.auth-copy-button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 .auth-copy-button svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .auth-onboarding__copy-status { min-height: 1em; margin: 0; color: var(--text-muted); font-size: 12px; }
 .auth-onboarding__noscript { margin: 0; color: var(--warning); font-size: 12px; }

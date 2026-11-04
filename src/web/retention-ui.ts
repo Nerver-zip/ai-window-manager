@@ -5,14 +5,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Render a read-only, operator-facing summary of the active retention defaults. */
 export function renderRetentionSummary(): string {
   const policy = DEFAULT_RETENTION_POLICY;
-  return `<section class="card retention-card" aria-labelledby="data-retention-title">
-    <header class="card-header">
-      <div class="heading-copy">
-        <p class="eyebrow">Storage</p>
-        <h2 id="data-retention-title">Data retention</h2>
-        <p class="muted">Older records are removed automatically in small batches.</p>
-      </div>
-    </header>
+  return `<section id="data-retention" class="retention-card settings-section" aria-labelledby="data-retention-title">
+    <div class="heading-copy">
+      <h2 id="data-retention-title">Data retention</h2>
+      <p class="muted">Older records are removed automatically in small batches.</p>
+    </div>
     <dl class="retention-list">
       <div><dt>Detailed usage updates</dt><dd>${retentionDays(policy.windowSamplesMs)}</dd></div>
       <div><dt>Daily usage history</dt><dd>${retentionDays(policy.usageIntervalsMs)}</dd></div>

@@ -23,11 +23,14 @@ The overview should answer at a glance:
 
 ## Overview
 
-When more than one provider is available, compact logo cards select which
-provider to inspect. Only the selected provider's full overview is shown, so
-usage windows and policy details stay focused instead of competing side by
-side. The same selector indicates connection status; providers that still need
-setup appear muted. With one provider, the selector is omitted.
+When more than one provider is available, a compact segmented selector (logo,
+name and a status dot) chooses which provider to inspect. Only the selected
+provider's overview is shown, so usage windows and policy details stay focused
+instead of competing side by side. The dot is filled green when connected,
+hollow amber when sign-in, a check failure or stale data needs attention, and
+hollow grey when paused or not set up; the status text stays available to
+assistive technology (and visible on wide screens). With one provider, the
+selector is omitted.
 
 ```text
 Codex                         Connected
@@ -57,13 +60,23 @@ and provider capability declarations. Opening `/` or `/api/v1/providers` does
 not call a provider adapter. A provider with no persisted observation renders
 health, freshness and window facts as `unknown` rather than fabricated zeroes.
 
-Each provider card shows connection and monitoring status, human-readable window
-names, used/remaining amounts, local and UTC reset times, and the currently saved
-start policy with its window/time settings in plain language and a direct link to
-change it. Paused,
-monitoring-only, unsupported, missing, or invalid policies are called out rather
-than being presented as active. Technical window keys never appear as normal
-labels.
+The selected provider is laid out top-down by importance:
+
+1. a heading with one quiet status line — connection, `Last checked …`, and the
+   automation state as plain text;
+2. an always-visible attention area for stale data, sign-in, unresolved start
+   outcomes (with their review action) and policies that need review;
+3. usage windows as aligned, hairline-separated rows — name and phase, a large
+   used percentage with the remaining share, a meter, the local reset time with
+   relative timing, and the time zone/UTC line as secondary text. Antigravity
+   rows are grouped under Gemini Models, Claude and GPT Models and Gemini 4
+   Argon (weekly only);
+4. the saved start policies as a compact list with Change/Choose/Review links;
+5. connection details in a disclosure.
+
+Paused, monitoring-only, unsupported, missing, or invalid policies are called
+out rather than being presented as active. Technical window keys never appear as
+normal labels.
 
 When a configured provider is disconnected, the Overview offers a direct
 `Connect Codex` or `Connect Antigravity` action that opens the matching
@@ -108,8 +121,11 @@ review when an exact target for that family becomes available. If an
 Antigravity trigger is enabled and the exact target is supported, its model is
 shown as secondary detail.
 
-The current server-rendered `/schedule` page reveals only the fields relevant to
-the selected preference. The next-start preview uses saved provider information
+The current server-rendered `/schedule` page is one policy form beside a
+"What happens next" column (sticky on wide screens, stacked below on narrow
+ones) with the current window, the authoritative next decision, the next-24-hours
+preview and safety notes. The five strategies are a compact radio list; the
+form reveals only the fields relevant to the selected preference. The next-start preview uses saved provider information
 and shows a local time and time zone, along with a plain-language explanation.
 Internal timing tolerance and daylight-saving resolution details do not appear
 in the normal form. `/settings` edits monitoring, automatic starts, check
@@ -127,7 +143,9 @@ auth state are never editable or rendered.
 - a collapsed, plain-language summary of provider capabilities and quota impact;
 - “inspect now”.
 
-Each provider is shown in one connection-first settings card. Sign-in for
+Settings is a single page of headed sections (Time zone, Providers, Data
+retention) with a sticky in-page section list on wide screens. Each provider is
+shown in one connection-first panel. Sign-in for
 Codex and Antigravity lives in that card; disconnected accounts get a primary
 connect action, while monitoring controls stay hidden until connection succeeds.
 Connected accounts show their settings and keep reconnect options secondary.
@@ -165,8 +183,9 @@ unproven resets are visibly marked partial/unknown.
 Short observed intervals are apportioned across local midnight in the saved
 IANA timezone. Longer intervals are not given false daily precision. The
 heatmap uses percentage points of one weekly allowance, with explicit `No data`,
-zero-observed, intensity bands, partial markers and an in-progress label for
-today. This is an estimate from saved provider snapshots, not a message/token
+zero-observed, intensity bands and an in-progress label for today. Partial
+days keep their intensity and say so in the cell name and the selected-day
+summary rather than through a separate legend marker. This is an estimate from saved provider snapshots, not a message/token
 counter. Only weekly windows qualify; a five-hour window is never silently used
 as a substitute. FakeProvider follows the same visibility setting as the other
 UI/API surfaces.
@@ -202,7 +221,11 @@ metadata and are not persisted or exposed through the JSON history contract.
 Routine provider checks and scheduler no-ops are hidden by default; Sync shows
 provider checks, and `?type=scheduler_noop` explicitly reveals routine scheduler
 checks. Category and provider/range filters are combined and paginated in
-bounded pages of 20. Existing chart-period selections link to Usage while
+bounded pages of 20. Filters sit in a light toolbar (provider selector, range,
+a segmented category row and the routine-checks link). Events are grouped under
+local-day headings in the saved time zone along a thin rail; each entry shows a
+24-hour time, a severity dot with a text equivalent, the plain-language title,
+provider and categories as secondary text, and the `Why` reason beneath. Existing chart-period selections link to Usage while
 preserving valid selections. Keep it small:
 
 - recent lifecycle/action timeline;
@@ -214,7 +237,8 @@ No enterprise dashboard, no Grafana clone.
 ## Frontend technology
 
 Server-rendered HTML with a shared dark operations shell, one same-origin
-stylesheet at `/assets/app.css` and a small progressive-enhancement script at
+stylesheet at `/assets/app.css` (composed from `src/web/ui/styles/*` modules:
+base tokens/controls, shell, provider selector and one module per page) and a small progressive-enhancement script at
 `/assets/app.js`. Interactive controls may opt in to fetching their existing
 HTML route and replacing one uniquely keyed `data-awm-region` from its
 server-rendered response. This keeps the shell, scroll and unrelated form state
@@ -237,3 +261,51 @@ axes, grid treatment, labels, colors, null gaps, legends and accessible point
 metadata. The script only reveals the tooltip for the point being inspected;
 the server remains the owner of data and page state. No React, client router or
 large component framework is used.
+
+## Visual language and layout
+
+- One restrained dark palette with a single cyan accent; amber and red are
+  reserved for attention and danger. Status is a small dot plus text, not pill
+  badges.
+- Content sits on the canvas, grouped by headings, whitespace and hairline
+  dividers. A panel is used at most one level deep (chart cards, provider
+  settings); cards are not nested.
+- Shared primitives live in the base module: buttons (primary, secondary,
+  ghost, danger), fields, segmented controls, notices, status, meters,
+  disclosures and empty states.
+- Shell: a slim sticky sidebar (navigation, developer links, Sign out) on wide
+  screens; at 760px and below it becomes a sticky top bar with a five-item tab
+  row. There is no hamburger menu or client router.
+- Responsive targets are 1440, 1280, 390 and 360px wide without page-level
+  horizontal scrolling. Only intentional inner regions (the heatmap track)
+  scroll horizontally. Coarse pointers get 44px targets.
+- Accessibility: skip link, `aria-current` navigation, visible `:focus-visible`
+  outlines, native labels/fieldsets, live regions for notices and enhancement
+  outcomes, accessible chart and heatmap metadata, and no hover-only critical
+  information. `prefers-reduced-motion` disables transitions and the live-status
+  pulse.
+
+## Page functional contract
+
+Visual changes must keep each page's information, actions, states and
+enhancement hooks. This table is the parity checklist for UI work.
+
+| Page                 | Information                                                                                                                                                                                          | Actions, routes and forms                                                                                                                                                                                                  | Conditional states                                                                                                                        | Enhancement and accessibility hooks                                                                                                                          |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Overview `/`         | Provider and connection, monitoring/automation state, freshness, used/left %, local and UTC reset with relative time, every window family (Argon weekly only), saved policies per Antigravity family | `GET /?provider=` switcher with noscript button; `POST /providers/:id/trigger` (capability- and automation-gated); `POST /actions/:id/resolve-unknown`; Connect/Continue sign-in link; schedule Change/Choose/Review links | No providers, one provider, disconnected, first observation pending, stale, unknown usage or reset, uncertain intent, policy needs review | Regions `overview-workspace` and `overview-provider:<id>`; mutation, pending and uncertain-message attributes; `progress` labels; `role=status`              |
+| Usage `/usage`       | Per-window charts with tooltips and point metadata, gap/reset semantics, daily heatmap (partial, no data, today), weekly-family choice, selected day, saved time zone                                | Provider links; per-chart `GET /usage` period form (noscript Apply, other charts' hidden ranges); family select (noscript); day links                                                                                      | No weekly windows, family not selected, no data, out of range, empty range, aggregation pending, Argon only when observed                 | Regions `usage-heatmap` and `usage-chart:<p>:<w>`; heatmap `role=grid` keyboard; chart `role=img` and focusable points                                       |
+| Schedule `/schedule` | Current observed window, exact target, trigger model, cross-window warning, next decision, next-24-hours preview, time zone, safety notes                                                            | Provider `GET` form (noscript); Antigravity family links; `POST /schedule` (five strategies, times, cycle anchor, active-hour periods, presets, steppers); `GET /schedule/preview`                                         | No providers, no targets, Argon unavailable, ambiguous or unresolved target (`role=alert`), review required, no time zone                 | Region `schedule-workspace`; `data-policy-*` and `data-schedule-*` hooks; preview root two levels above the form; `fieldset`/`legend`                        |
+| Logs `/logs`         | Severity, categories, provider, local time, plain-language title, reason, count                                                                                                                      | Combined provider, range and category filters; routine-checks toggle; Previous/Next (20 per page); `/history` 301                                                                                                          | Empty, provider unavailable, routine checks hidden or shown                                                                               | Region `logs-results`; focus keys; `aria-current` filters; `Log pages` navigation                                                                            |
+| Settings `/settings` | Time zone, connection status, capabilities, active/image/latest client versions, update status, retention                                                                                            | `POST /settings/timezone`; `POST /settings/providers/:id`; sign-in start/submit/cancel APIs with link and code copy; client check/install/rollback/auto-update                                                             | Connected, signing in, sign-in required, controls locked until connected, update running, controls unavailable                            | Regions `settings-timezone`, `settings-provider:<id>` and `provider-client:<id>`; `data-auth-*` hooks inside `.provider-settings`; update polling attributes |
+| Sign-in `/login`     | Invalid-credential, throttled and expired-session errors                                                                                                                                             | `POST /login` (CSRF, safe `next`); `GET`/`POST /logout`                                                                                                                                                                    | Throttled (`429`), expired session                                                                                                        | `role=alert`; autocomplete; no application navigation or provider data                                                                                       |
+
+## Browser checks
+
+`scripts/ui-checks/` holds optional developer tooling for verifying the UI in a real browser. It is not part of `pnpm validate` or CI.
+
+- `pnpm ui:demo` starts the real web server on `127.0.0.1` (`PORT`, default 4870) with synthetic seed data, stub provider adapters that reject `inspect()`, fake sign-in drivers, a static client-update stub and a fixed clock. Sign in as `demo` / `demo-password`. It never contacts providers or the network. Set `AWM_DEMO_TMP` to choose the temporary directory root and `AWM_DEMO_NO_AUTOSTART=1` to skip the auto-started sign-in session.
+- `pnpm ui:a11y <baseUrl>` runs keyboard, focus-ring, progressive-enhancement and JavaScript-disabled checks.
+- `pnpm ui:auth-flow <baseUrl> <outDir> [label]` walks the synthetic Claude Code sign-in onboarding (start the demo with `AWM_DEMO_NO_AUTOSTART=1`).
+- `pnpm ui:shots <baseUrl> <outDir> [label]` captures screenshots and reports horizontal overflow (`SHOOT_ONLY`, `SHOOT_SIZES`, `SHOOT_VIEWPORT` narrow the run).
+
+The browser scripts need a local Chromium or Chrome; set `CHROME_BIN` to its path if it is not found automatically.

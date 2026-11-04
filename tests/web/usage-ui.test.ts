@@ -119,6 +119,7 @@ describe('Usage page', () => {
     expect(html).toContain('<h1>Usage</h1>');
     expect(html).toContain('aria-label="Daily weekly allowance usage');
     expect(html).toContain('aria-rowcount="7"');
+    expect(html).toContain('based on saved provider updates');
     expect(html.match(/class="usage-calendar-row" role="row"/g)).toHaveLength(7);
     const gridCells = [...html.matchAll(/<a class="usage-cell[^>]*role="gridcell"[^>]*>/g)];
     expect(gridCells).toHaveLength(365);
@@ -140,6 +141,8 @@ describe('Usage page', () => {
     expect(html).not.toMatch(/class="usage-calendar-track"[^>]*style=/);
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain('usage-level-2 usage-partial');
+    const legend = html.slice(html.indexOf('class="usage-legend"'));
+    expect(legend.slice(0, legend.indexOf('</div>'))).not.toContain('Partial data');
     expect(html).toContain('Daily total may be incomplete.');
     expect(html).not.toContain('Some activity could not be assigned confidently');
     expect(html).not.toContain('Browse days as a list');

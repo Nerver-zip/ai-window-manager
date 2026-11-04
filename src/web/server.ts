@@ -1542,6 +1542,7 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
       staleAfterSeconds: state?.observation?.staleAfterSeconds,
       configured: connection.configured,
       connectionLabel: connection.statusLabel,
+      connectionTone: connection.tone,
       ...(providerClientId && providerClientStatus && input.providerClientUpdates
         ? {
             providerClientUpdate: {
@@ -1572,9 +1573,16 @@ function providerConnectionPresentation(
 ): {
   configured: boolean;
   statusLabel: string;
+  tone: 'ok' | 'attention' | 'muted';
 } {
   const health = state?.health;
   return {
+    tone:
+      health === 'UP'
+        ? 'ok'
+        : health === 'DEGRADED' || health === 'AUTH_REQUIRED' || state?.observation
+          ? 'attention'
+          : 'muted',
     configured: health === 'UP' || health === 'DEGRADED' || Boolean(state?.observation),
     statusLabel:
       health === 'UP'
@@ -1888,6 +1896,7 @@ function renderOverview(
               label: providerDisplayName(provider.id, provider.kind),
               kind: provider.kind,
               ...providerConnectionPresentation(provider),
+              tone: overviewConnectionTone(provider),
             })),
             selectedValue: selectedProviderId ?? null,
           },
@@ -1936,29 +1945,27 @@ function historyUsageSample(snapshot: WindowSnapshot): HistoryUsageSample {
   };
 }
 
-function renderProviderCard(
-  provider: ProviderRead,
-  now: Date,
-  timezone: string,
-  csrfToken: string,
-  authConnection?: OverviewAuthConnection,
-): string {
-  const staleClass = provider.freshness.stale ? ' stale' : '';
-  const freshnessLabel =
-    provider.freshness.ageSeconds === null
-      ? provider.enabled
-        ? 'Waiting for the first update'
-        : 'Monitoring is paused'
-      : `Last checked ${formatAge(provider.freshness.ageSeconds)} ago`;
-  const windows = renderProviderWindows(provider, now, timezone, csrfToken);
+type OverviewTone = 'ok' | 'warn' | 'danger' | 'muted';
 
-  const displayName = providerDisplayName(provider.id, provider.kind);
-  const connectionState = !provider.enabled
-    ? 'Monitoring paused'
-    : provider.health === 'AUTH_REQUIRED'
-      ? 'Sign-in required'
-      : healthLabel(provider.health);
-  const isConnected = provider.enabled && provider.health === 'UP';
+function overviewConnectionTone(
+  provider: Pick<ProviderRead, 'enabled' | 'health' | 'freshness' | 'observation'>,
+): 'ok' | 'attention' | 'muted' {
+  if (!provider.enabled) return 'muted';
+  if (provider.health === 'UP') return provider.freshness.stale ? 'attention' : 'ok';
+  if (provider.health === 'AUTH_REQUIRED' || provider.health === 'DEGRADED') return 'attention';
+  if (provider.health === 'ERROR' || provider.health === 'UNAVAILABLE') return 'attention';
+  return provider.observation ? 'attention' : 'muted';
+}
+
+function overviewConnectionStatusTone(provider: ProviderRead): OverviewTone {
+  if (!provider.enabled) return 'muted';
+  if (provider.health === 'UP') return 'ok';
+  if (provider.health === 'ERROR' || provider.health === 'UNAVAILABLE') return 'danger';
+  if (provider.health === 'AUTH_REQUIRED' || provider.health === 'DEGRADED') return 'warn';
+  return 'muted';
+}
+
+function overviewAutomationState(provider: ProviderRead): string {
   const antigravitySchedules = provider.activationPolicies;
   const antigravityHasAnyPolicy = antigravitySchedules?.some(({ policy }) => policy !== null);
   const antigravityHasAutomaticPolicy = antigravitySchedules?.some(
@@ -1968,7 +1975,7 @@ function renderProviderCard(
     ({ policy }) => !policy?.enabled || policy.kind === 'manual',
   );
   const antigravityHasEnabledPolicy = antigravitySchedules?.some(({ policy }) => policy?.enabled);
-  const automationState = !provider.enabled
+  return !provider.enabled
     ? 'Automatic starts paused'
     : provider.activationPolicyNeedsAttention
       ? 'Schedule needs attention'
@@ -2000,6 +2007,62 @@ function renderProviderCard(
                         : provider.capabilities?.windowTrigger.supported === true
                           ? 'Automatic starts enabled'
                           : 'Automatic starts unavailable';
+}
+
+function pendingStateLabel(state: string): string {
+  const labels: Record<string, string> = {
+    uncertain: 'Outcome uncertain',
+    executing: 'Starting',
+    succeeded: 'Awaiting confirmation',
+  };
+  return labels[state] ?? state.replace(/_/g, ' ');
+}
+
+function renderPendingIntent(
+  provider: ProviderRead,
+  intent: NonNullable<ProviderRead['pendingActions']>[number],
+  now: Date,
+  timezone: string,
+  csrfToken: string,
+): string {
+  const ageMinutes = Math.max(0, Math.floor((now.getTime() - intent.createdAtMs) / 60000));
+  const windowName = windowDisplayName(provider.id, intent.windowKind, undefined);
+  const group = windowGroupDisplayName(intent.windowKind);
+  const lastCheck =
+    intent.lastCheckedAtMs === null
+      ? 'Not yet checked'
+      : formatLocalInstant(new Date(intent.lastCheckedAtMs).toISOString(), timezone);
+  return `<section class="notice notice-warning pending-intent"><h3>Unresolved start outcome</h3>
+    <dl class="pending-facts"><div><dt>Window</dt><dd>${escapeHtml(group ? `${group} · ${windowName}` : windowName)}</dd></div><div><dt>State</dt><dd>${escapeHtml(pendingStateLabel(intent.state))}</dd></div><div><dt>Age</dt><dd>${ageMinutes} minutes</dd></div><div><dt>Confirmation attempts</dt><dd>${intent.confirmationAttempts}</dd></div><div><dt>Last check</dt><dd>${escapeHtml(lastCheck)}</dd></div></dl>
+    <p>This blocks automatic starts across this provider. Review performs a read-only check; closure records an unknown outcome, not success or failure. The old prompt is never repeated. Any pending artifact cleanup remains required.</p>
+    ${intent.resolutionStatus ? `<p role="status">${escapeHtml(intent.resolutionStatus)}</p>` : ''}
+    ${intent.state === 'uncertain' ? `<form method="post" action="/actions/${encodeURIComponent(intent.id)}/resolve-unknown"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><button class="button button-secondary" type="submit">Review whether this old start can be closed</button></form>` : ''}</section>`;
+}
+
+function renderProviderCard(
+  provider: ProviderRead,
+  now: Date,
+  timezone: string,
+  csrfToken: string,
+  authConnection?: OverviewAuthConnection,
+): string {
+  const staleClass = provider.freshness.stale ? ' stale' : '';
+  const freshnessLabel =
+    provider.freshness.ageSeconds === null
+      ? provider.enabled
+        ? 'Waiting for the first update'
+        : 'Monitoring is paused'
+      : `Last checked ${formatAge(provider.freshness.ageSeconds)} ago`;
+  const windows = renderProviderWindows(provider, now, timezone, csrfToken);
+
+  const displayName = providerDisplayName(provider.id, provider.kind);
+  const connectionState = !provider.enabled
+    ? 'Monitoring paused'
+    : provider.health === 'AUTH_REQUIRED'
+      ? 'Sign-in required'
+      : healthLabel(provider.health);
+  const isConnected = provider.enabled && provider.health === 'UP';
+  const automationState = overviewAutomationState(provider);
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
   const claudeLogo = (provider.kind ?? provider.id) === 'claude_code';
   const logoHtml = logoUrl
@@ -2007,29 +2070,22 @@ function renderProviderCard(
     : '';
   const staleMessage =
     provider.freshness.stale && provider.freshness.observedAt
-      ? '<p class="stale-notice">This information may be out of date. Automatic starts wait for a fresh update.</p>'
+      ? '<p class="notice notice-warning stale-notice">This information may be out of date. Automatic starts wait for a fresh update.</p>'
       : '';
   const onboardingAction =
     authConnection && !authConnection.connected
-      ? `<a class="button button-primary provider-onboarding-cta" href="/settings?connect=${encodeURIComponent(provider.id)}#provider-${encodeURIComponent(provider.id)}">${authConnection.inProgress ? 'Continue sign-in' : `Connect ${escapeHtml(displayName)}`}</a>`
+      ? `<div class="notice notice-info provider-onboarding"><p>${authConnection.inProgress ? 'Sign-in has been started but is not finished.' : `${escapeHtml(displayName)} is not connected yet.`}</p><a class="button button-primary provider-onboarding-cta" href="/settings?connect=${encodeURIComponent(provider.id)}#provider-${encodeURIComponent(provider.id)}">${authConnection.inProgress ? 'Continue sign-in' : `Connect ${escapeHtml(displayName)}`}</a></div>`
       : '';
-  const onlineIndicator = isConnected
-    ? '<span class="online-indicator" aria-hidden="true"></span>'
-    : '';
-  const connectionBadgeClass = isConnected ? 'badge-success' : 'badge-warning';
+  const connectionStatus = `<span class="status status-${overviewConnectionStatusTone(provider)}${isConnected ? ' has-live-dot' : ''}">${isConnected ? '<span class="online-indicator" aria-hidden="true"></span>' : ''}${escapeHtml(connectionState)}</span>`;
+  const separator = '<span class="provider-status-separator" aria-hidden="true">·</span>';
+  const policyAttention = renderPolicyAttention(provider);
   const selectedPolicy = renderSelectedPolicy(provider);
-  const details = `<details class="provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
+  const details = `<details class="disclosure provider-details"><summary>Connection details</summary><dl><dt>Connection</dt><dd>${escapeHtml(healthLabel(provider.health))}</dd><dt>Last issue</dt><dd>${escapeHtml(errorLabel(provider.lastErrorCode))}</dd></dl></details>`;
   const pendingActions = (provider.pendingActions ?? [])
-    .map(
-      (intent) => `<section class="notice"><h3>Unresolved start outcome</h3>
-    <p>Window: ${escapeHtml(intent.windowKind)} · State: ${escapeHtml(intent.state)} · Age: ${Math.max(0, Math.floor((now.getTime() - intent.createdAtMs) / 60000))} minutes.</p>
-    <p>Confirmation attempts: ${intent.confirmationAttempts}. Last check: ${intent.lastCheckedAtMs === null ? 'Not yet checked' : escapeHtml(new Date(intent.lastCheckedAtMs).toISOString())}.</p>
-    <p>This blocks automatic starts across this provider. Review performs a read-only check; closure records an unknown outcome, not success or failure. The old prompt is never repeated. Any pending artifact cleanup remains required.</p>
-    ${intent.resolutionStatus ? `<p role="status">${escapeHtml(intent.resolutionStatus)}</p>` : ''}
-    ${intent.state === 'uncertain' ? `<form method="post" action="/actions/${encodeURIComponent(intent.id)}/resolve-unknown"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><button class="button button-secondary" type="submit">Review whether this old start can be closed</button></form>` : ''}</section>`,
-    )
+    .map((intent) => renderPendingIntent(provider, intent, now, timezone, csrfToken))
     .join('');
-  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta">${escapeHtml(freshnessLabel)}</p></div></div><div class="badges"><span class="badge ${connectionBadgeClass}">${onlineIndicator}${escapeHtml(connectionState)}</span><span class="badge">${escapeHtml(automationState)}</span></div></header>${staleMessage}${onboardingAction}${selectedPolicy}${pendingActions}${windows}${details}</article>`;
+  const attention = `${staleMessage}${onboardingAction}${pendingActions}${policyAttention}`;
+  return `<article class="provider${staleClass}"><header class="provider-header"><div class="provider-identity">${logoHtml}<div><h2>${escapeHtml(displayName)}</h2><p class="provider-meta provider-statusline">${connectionStatus}${separator}<span>${escapeHtml(freshnessLabel)}</span>${separator}<span>${escapeHtml(automationState)}</span></p></div></div></header>${attention ? `<div class="provider-attention">${attention}</div>` : ''}${windows}${selectedPolicy}${details}</article>`;
 }
 
 function renderProviderWindows(
@@ -2039,13 +2095,13 @@ function renderProviderWindows(
   csrfToken: string,
 ): string {
   if (provider.windows.length === 0) {
-    return '<div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div>';
+    return '<section class="provider-windows" aria-label="Usage windows"><div class="empty-state"><h3>Usage will appear here</h3><p>The first provider update has not arrived yet.</p></div></section>';
   }
 
-  const renderedWindows = (windows: readonly WindowSnapshot[], headingTag: 'h3' | 'h4' = 'h3') =>
-    windows
+  const renderedWindows = (windows: readonly WindowSnapshot[], headingTag: 'h4' | 'h5') =>
+    `<ul class="row-list window-rows">${windows
       .map((window) => renderWindow(provider, window, now, timezone, csrfToken, headingTag))
-      .join('');
+      .join('')}</ul>`;
 
   const groups = new Map<string | null, WindowSnapshot[]>();
   for (const window of provider.windows) {
@@ -2055,65 +2111,76 @@ function renderProviderWindows(
     groups.set(label, windows);
   }
 
+  const heading = '<h3 class="provider-section-title">Usage windows</h3>';
   if (groups.size === 1 && groups.has(null)) {
-    return `<div class="window-grid">${renderedWindows(provider.windows)}</div>`;
+    return `<section class="provider-windows" aria-label="Usage windows">${heading}${renderedWindows(provider.windows, 'h4')}</section>`;
   }
 
-  return `<div class="window-families">${Array.from(groups, ([label, windows]) =>
-    label
-      ? `<section class="window-family" aria-label="${escapeHtml(label)}"><h3>${escapeHtml(label)}</h3><div class="window-grid">${renderedWindows(windows, 'h4')}</div></section>`
-      : `<div class="window-grid">${renderedWindows(windows)}</div>`,
-  ).join('')}</div>`;
+  return `<section class="provider-windows" aria-label="Usage windows">${heading}<div class="window-families">${Array.from(
+    groups,
+    ([label, windows]) =>
+      label
+        ? `<section class="window-family" aria-label="${escapeHtml(label)}"><h4>${escapeHtml(label)}</h4>${renderedWindows(windows, 'h5')}</section>`
+        : renderedWindows(windows, 'h4'),
+  ).join('')}</div></section>`;
+}
+
+const POLICY_KIND_LABELS: Record<ActivationPolicy['kind'], string> = {
+  manual: 'Only when I ask',
+  auto: 'Whenever possible',
+  fixed: 'On a repeating cycle',
+  custom_schedule: 'At specific times',
+  active_hours: 'Within active hours',
+};
+
+function renderPolicyAttention(provider: ProviderRead): string {
+  if (provider.activationPolicies) {
+    return provider.activationPolicies
+      .filter((item) => item.needsAttention)
+      .map((item) => {
+        const href = `/schedule?providerId=${encodeURIComponent(provider.id)}&scope=${item.scope}`;
+        return `<p class="notice notice-warning policy-attention"><strong>${escapeHtml(quotaFamilyDisplayName(item.scope))} schedule needs review.</strong> Automatic starts for it stay off until you review it. <a href="${escapeHtml(href)}">Review schedule</a></p>`;
+      })
+      .join('');
+  }
+  if (!provider.activationPolicyNeedsAttention) return '';
+  const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}`;
+  return `<section class="notice notice-warning provider-policy" aria-label="Selected start policy"><strong>Saved policy needs attention</strong><p>Review the schedule before relying on automatic starts. <a href="${escapeHtml(scheduleHref)}">Review schedule</a></p></section>`;
 }
 
 function renderSelectedPolicy(provider: ProviderRead): string {
   if (provider.activationPolicies) {
-    return `<section class="provider-policy" aria-label="Selected start policies"><div><span class="field-label">Selected start policies</span><div class="provider-policy-families">${provider.activationPolicies
+    return `<section class="provider-policy" aria-label="Selected start policies"><h3 class="provider-section-title">Start policies</h3><ul class="row-list policy-list">${provider.activationPolicies
       .map((item) => renderProviderPolicyFamily(provider, item))
-      .join('')}</div></div></section>`;
+      .join('')}</ul></section>`;
   }
+  if (provider.activationPolicyNeedsAttention) return '';
   const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}`;
-  if (provider.activationPolicyNeedsAttention) {
-    return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>Saved policy needs attention</strong><p class="provider-meta">Review the schedule before relying on automatic starts.</p></div><a href="${escapeHtml(scheduleHref)}">Review schedule</a></section>`;
-  }
+  const heading = '<h3 class="provider-section-title">Start policy</h3>';
 
   const policy = provider.activationPolicy;
   if (!policy) {
-    return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>No start policy selected</strong><p class="provider-meta">Choose how and when a new window should start.</p></div><a href="${escapeHtml(scheduleHref)}">Choose policy</a></section>`;
+    return `<section class="provider-policy" aria-label="Selected start policy">${heading}<ul class="row-list policy-list"><li class="policy-row"><div class="policy-copy"><strong>No start policy selected</strong><p class="provider-meta">Choose how and when a new window should start.</p></div><a class="button button-ghost" href="${escapeHtml(scheduleHref)}">Choose policy</a></li></ul></section>`;
   }
 
-  const labels: Record<ActivationPolicy['kind'], string> = {
-    manual: 'Only when I ask',
-    auto: 'Whenever possible',
-    fixed: 'On a repeating cycle',
-    custom_schedule: 'At specific times',
-    active_hours: 'Within active hours',
-  };
   const description = selectedPolicyDescription(provider, policy);
   const status = selectedPolicyStatus(provider, policy);
   const statusMarkup = status ? `<p class="provider-policy-status">${escapeHtml(status)}</p>` : '';
-  return `<section class="provider-policy" aria-label="Selected start policy"><div><span class="field-label">Selected start policy</span><strong>${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p>${statusMarkup}</div><a href="${escapeHtml(scheduleHref)}">Change</a></section>`;
+  return `<section class="provider-policy" aria-label="Selected start policy">${heading}<ul class="row-list policy-list"><li class="policy-row"><div class="policy-copy"><strong>${escapeHtml(POLICY_KIND_LABELS[policy.kind])}</strong><p class="provider-meta">${escapeHtml(description)}</p>${statusMarkup}</div><a class="button button-ghost" href="${escapeHtml(scheduleHref)}">Change</a></li></ul></section>`;
 }
 
 function renderProviderPolicyFamily(provider: ProviderRead, item: ProviderPolicyRead): string {
   const family = quotaFamilyDisplayName(item.scope);
   const scheduleHref = `/schedule?providerId=${encodeURIComponent(provider.id)}&scope=${item.scope}`;
   if (item.needsAttention) {
-    return `<article class="provider-policy-family"><strong>${family}</strong><p class="provider-policy-status">Schedule needs review before automatic starts can resume.</p><a href="${escapeHtml(scheduleHref)}">Review schedule</a></article>`;
+    return `<li class="policy-row"><div class="policy-copy"><strong>${escapeHtml(family)}</strong><p class="provider-policy-status"><span class="status status-warn">Schedule needs review before automatic starts can resume.</span></p></div><a class="button button-ghost" href="${escapeHtml(scheduleHref)}">Review schedule</a></li>`;
   }
   const policy = item.policy;
   if (!policy) {
-    return `<article class="provider-policy-family"><strong>${family}</strong><p class="provider-meta">No start policy selected.</p><a href="${escapeHtml(scheduleHref)}">Choose policy</a></article>`;
+    return `<li class="policy-row"><div class="policy-copy"><strong>${escapeHtml(family)}</strong><p class="provider-meta">No start policy selected.</p></div><a class="button button-ghost" href="${escapeHtml(scheduleHref)}">Choose policy</a></li>`;
   }
-  const labels: Record<ActivationPolicy['kind'], string> = {
-    manual: 'Only when I ask',
-    auto: 'Whenever possible',
-    fixed: 'On a repeating cycle',
-    custom_schedule: 'At specific times',
-    active_hours: 'Within active hours',
-  };
   const status = selectedPolicyStatus(provider, policy);
-  return `<article class="provider-policy-family"><strong>${escapeHtml(family)} · ${escapeHtml(labels[policy.kind])}</strong><p class="provider-meta">${escapeHtml(selectedPolicyDescription(provider, policy))}</p>${status ? `<p class="provider-policy-status">${escapeHtml(status)}</p>` : ''}<a href="${escapeHtml(scheduleHref)}">Change</a></article>`;
+  return `<li class="policy-row"><div class="policy-copy"><strong>${escapeHtml(family)} · ${escapeHtml(POLICY_KIND_LABELS[policy.kind])}</strong><p class="provider-meta">${escapeHtml(selectedPolicyDescription(provider, policy))}</p>${status ? `<p class="provider-policy-status">${escapeHtml(status)}</p>` : ''}</div><a class="button button-ghost" href="${escapeHtml(scheduleHref)}">Change</a></li>`;
 }
 
 function selectedPolicyDescription(provider: ProviderRead, policy: ActivationPolicy): string {
@@ -2211,13 +2278,26 @@ function formatAge(ageSeconds: number): string {
   return `${Math.floor(ageSeconds / 86_400)} days`;
 }
 
+function windowPhaseTone(window: WindowSnapshot): OverviewTone {
+  switch (window.phase.value) {
+    case 'ACTIVE':
+      return 'ok';
+    case 'EXHAUSTED':
+      return 'danger';
+    case 'RESET_DUE':
+      return 'warn';
+    default:
+      return 'muted';
+  }
+}
+
 function renderWindow(
   provider: ProviderRead,
   window: WindowSnapshot,
   now: Date,
   timezone: string,
   csrfToken: string,
-  headingTag: 'h3' | 'h4' = 'h3',
+  headingTag: 'h4' | 'h5' = 'h4',
 ): string {
   const usage = window.usageRatio;
   const label = windowDisplayName(provider.id, window.windowKind, window.durationSeconds?.value);
@@ -2225,13 +2305,19 @@ function renderWindow(
   const remaining = window.remainingRatio?.value ?? (usage ? 1 - usage.value : null);
   const remainingIsEstimated =
     !window.remainingRatio || isEstimatedSource(window.remainingRatio.source);
+  const meterState =
+    percentUsed !== null && percentUsed >= 95
+      ? ' is-full'
+      : percentUsed !== null && percentUsed >= 75
+        ? ' is-high'
+        : '';
   const usageMarkup =
     usage && percentUsed !== null
-      ? `<div class="quota-values"><strong>${percentUsed}%</strong><span>used</span><strong>${remaining === null ? '—' : `${remainingIsEstimated ? 'About ' : ''}${Math.round(remaining * 100)}%`}</strong><span>left</span></div><progress class="quota-progress" max="100" value="${percentUsed}" aria-label="${percentUsed}% of ${escapeHtml(label)} used">${percentUsed}%</progress>`
-      : '<p class="muted">Usage has not been reported yet.</p>';
+      ? `<div class="window-usage"><p class="window-figures"><strong class="window-percent">${percentUsed}%</strong> <span>used</span>${remaining === null ? '' : ` <span class="window-left">${remainingIsEstimated ? 'About ' : ''}${Math.round(remaining * 100)}% left</span>`}</p><progress class="meter quota-progress${meterState}" max="100" value="${percentUsed}" aria-label="${percentUsed}% of ${escapeHtml(label)} used">${percentUsed}%</progress></div>`
+      : '<div class="window-usage"><p class="muted">Usage has not been reported yet.</p></div>';
   const phase = windowPhaseLabel(window);
   const reset = window.resetAt
-    ? `<div class="window-reset"><span class="field-label">Resets</span><strong>${isEstimatedSource(window.resetAt.source) ? 'About ' : ''}${escapeHtml(formatLocalInstant(window.resetAt.value, timezone))}</strong><span class="reset-relative">${escapeHtml(approximateResetText(window.resetAt, now))}</span><small>${escapeHtml(timeZoneDisplayName(timezone))} · local</small><small>${escapeHtml(formatUtc(window.resetAt.value))}</small></div>`
+    ? `<div class="window-reset"><span class="field-label">Resets</span><strong>${isEstimatedSource(window.resetAt.source) ? 'About ' : ''}${escapeHtml(formatLocalInstant(window.resetAt.value, timezone))}</strong><span class="reset-relative">${escapeHtml(approximateResetText(window.resetAt, now))}</span><small>${escapeHtml(timeZoneDisplayName(timezone))} · local · ${escapeHtml(formatUtc(window.resetAt.value))}</small></div>`
     : `<div class="window-reset"><span class="field-label">Reset time</span><strong class="unknown">Not available yet</strong></div>`;
   const model = triggerModelForWindow(provider, window);
   const targetLabel = windowGroupDisplayName(window.windowKind);
@@ -2240,7 +2326,7 @@ function renderWindow(
     canManuallyTrigger(provider, window) && (provider.kind !== 'antigravity' || model !== null)
       ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-awm-enhance="mutation" data-awm-target="overview-provider:${escapeHtml(provider.id)}" data-awm-uncertain-message="The start request may have been accepted. Refresh provider status; do not repeat the request until its result is clear."><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" data-awm-pending-label="Queueing start…" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
       : '';
-  return `<section class="window-card"><div class="window-header"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="badge">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction}</section>`;
+  return `<li class="window-row"><div class="window-title"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="status status-${windowPhaseTone(window)}">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction ? `<div class="window-action">${startAction}</div>` : ''}</li>`;
 }
 
 function canManuallyTrigger(provider: ProviderRead, window: WindowSnapshot): boolean {
