@@ -62,6 +62,7 @@ describe('shared application shell', () => {
   it('defines mobile, focus, reduced-motion and bounded graph styling without remote dependencies', () => {
     expect(APP_CSS).toContain('@media (max-width: 700px)');
     expect(APP_CSS).toContain(':focus-visible');
+    expect(APP_CSS).toContain('input[type="time"]:focus-within');
     expect(APP_CSS).toContain('min-height: 44px');
     expect(APP_CSS).toContain('.chart-tooltip[data-position="center"]');
     expect(APP_CSS).toContain('.chart-point-hit:hover .chart-point-active');

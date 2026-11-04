@@ -141,6 +141,8 @@ textarea { min-height: 96px; }
 input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { border-color: var(--text-faint); }
 input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px var(--accent-soft); }
 input:not([type="checkbox"]):not([type="radio"]):focus-visible, select:focus-visible, textarea:focus-visible { outline: 0; }
+/* Native date/time inputs focus an internal field; only :focus-within matches the host. */
+input[type="time"]:focus-within, input[type="date"]:focus-within { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px var(--accent-soft); }
 input:disabled, select:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
 input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; min-height: auto; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .checkbox-label { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 400; cursor: pointer; }
@@ -164,7 +166,7 @@ button:disabled, .button:disabled { opacity: .5; cursor: not-allowed; }
 .button-danger:hover { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
 
 /* Segmented control: works for links (aria-current) and labels wrapping radios. */
-.segmented { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 3px; overflow-x: auto; }
+.segmented { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 3px; }
 .segmented > a, .segmented > label { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; border: 1px solid transparent; border-radius: 4px; padding: 0 12px; color: var(--text-muted); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background-color .12s ease, color .12s ease, border-color .12s ease; }
 .segmented > a:hover, .segmented > label:hover { color: var(--text); text-decoration: none; }
 .segmented > a[aria-current], .segmented > label:has(input:checked) { border-color: var(--line-strong); background: var(--surface-raised); color: var(--text); }
