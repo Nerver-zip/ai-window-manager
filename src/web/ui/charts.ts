@@ -62,7 +62,7 @@ export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
     .map((instantMs, index) => {
       const x = chartXAt(instantMs, domain.fromMs, domain.toMs);
       const anchor = index === 0 ? 'start' : index === ticks.length - 1 ? 'end' : 'middle';
-      return `<text class="chart-axis-label chart-axis-time${anchor === 'middle' ? ' chart-axis-time-mid' : ''}" x="${x}" y="${PLOT_BOTTOM + 28}" text-anchor="${anchor}">${escapeHtml(formatChartTick(new Date(instantMs).toISOString(), input.range, domain.timeZone))}</text>`;
+      return `<text class="chart-axis-label chart-axis-time${anchor === 'middle' ? ' chart-axis-time-mid' : ''}" x="${x}" y="${PLOT_BOTTOM + 28}" text-anchor="${anchor}">${renderAxisTimeLabel(formatChartTick(new Date(instantMs).toISOString(), input.range, domain.timeZone))}</text>`;
     })
     .join('');
   const gridMarkup = input.yAxis.ticks
@@ -142,6 +142,13 @@ export function renderTimeSeriesChart(input: TimeSeriesChartInput): string {
 
 export function renderChartEmptyState(message = 'No usage observations in this range'): string {
   return `<div class="chart-empty" role="status"><span class="chart-empty-mark" aria-hidden="true">—</span><strong>${escapeHtml(message)}</strong><p>Saved observations will appear here after the provider is checked.</p></div>`;
+}
+
+/** Keep the zone in its own tspan so narrow layouts can drop it from middle ticks only. */
+function renderAxisTimeLabel(label: string): string {
+  const match = /^(\d{2}:\d{2}) (.+)$/.exec(label);
+  if (!match) return escapeHtml(label);
+  return `${escapeHtml(match[1])}<tspan class="chart-axis-zone"> ${escapeHtml(match[2])}</tspan>`;
 }
 
 export function formatRatioPercent(value: number): string {

@@ -133,6 +133,26 @@ describe('shared chart primitives', () => {
     expect(html).not.toContain('chart-legend-context');
   });
 
+  it('keeps the time zone of hourly axis ticks in a separable tspan', () => {
+    const html = renderTimeSeriesChart({
+      id: 'usage',
+      title: 'Usage',
+      range: '24h',
+      summary: [],
+      series: [{ key: 'used', label: 'Usage trend', colorIndex: 1, points: [] }],
+      yAxis: { min: 0, max: 1, ticks: [1, 0], format: formatRatioPercent },
+      timeDomain: {
+        fromAt: '2026-09-18T00:00:00.000Z',
+        toAt: '2026-09-19T00:00:00.000Z',
+        timeZone: 'UTC',
+      },
+      footer: '',
+    });
+
+    expect(html).toMatch(/>\d{2}:\d{2}<tspan class="chart-axis-zone"> UTC<\/tspan><\/text>/);
+    expect(html).toContain('chart-axis-time-mid');
+  });
+
   it('supports a degenerate domain and a stable empty state', () => {
     const html = renderTimeSeriesChart({
       id: 'single',

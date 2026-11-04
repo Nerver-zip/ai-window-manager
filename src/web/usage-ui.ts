@@ -300,7 +300,7 @@ function renderCalendar(
     return `<div class="usage-calendar-row" role="row">${cellsMarkup}</div>`;
   }).join('');
   return `<section class="usage-calendar-section" aria-labelledby="daily-usage-heading">
-    <div class="section-heading"><div><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Daily usage, in approximate percentage points of the weekly allowance · ${escapeHtml(data.fromDate)} – ${escapeHtml(data.today)}</p></div>${sourceSelector}</div>
+    <div class="section-heading"><div><h2 id="daily-usage-heading">${escapeHtml(selectedFamilyLabel)}</h2><p class="muted">Weekly allowance used per day, based on saved provider updates, in approximate percentage points · ${escapeHtml(data.fromDate)} – ${escapeHtml(data.today)}</p></div>${sourceSelector}</div>
     <div class="usage-calendar-layout">
       <div class="usage-weekdays" aria-hidden="true"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
       <div class="usage-calendar-scroll" tabindex="0" aria-label="Scrollable usage calendar">

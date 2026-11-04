@@ -534,6 +534,8 @@ describe('settings UI helpers', () => {
     expect(html).not.toContain('exact confidence');
     expect(html).not.toContain('confidence');
     expect(html).toContain('Next 24 hours');
+    expect(html).toContain('The latest saved usage information from your provider.');
+    expect(html).toContain('You can change it later without affecting the current window.');
     expect(html).toContain('role="img" aria-label="24-hour schedule view.');
     expect(regionValues(html).filter((value) => value === 'schedule-workspace')).toHaveLength(1);
     const scheduleForms = formsForTarget(html, 'schedule-workspace');

@@ -119,6 +119,7 @@ describe('Usage page', () => {
     expect(html).toContain('<h1>Usage</h1>');
     expect(html).toContain('aria-label="Daily weekly allowance usage');
     expect(html).toContain('aria-rowcount="7"');
+    expect(html).toContain('based on saved provider updates');
     expect(html.match(/class="usage-calendar-row" role="row"/g)).toHaveLength(7);
     const gridCells = [...html.matchAll(/<a class="usage-cell[^>]*role="gridcell"[^>]*>/g)];
     expect(gridCells).toHaveLength(365);
