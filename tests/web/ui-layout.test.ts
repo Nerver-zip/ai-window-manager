@@ -65,9 +65,9 @@ describe('shared application shell', () => {
     expect(APP_CSS).toContain('min-height: 44px');
     expect(APP_CSS).toContain('.chart-tooltip[data-position="center"]');
     expect(APP_CSS).toContain('.chart-point-hit:hover .chart-point-active');
-    expect(APP_CSS).toContain('stroke-width: 1.6');
-    expect(APP_CSS).toContain('.chart-svg { height: 205px; }');
-    expect(APP_CSS).toContain('.chart-axis-label, .chart-axis-time { font-size: 18px; }');
+    expect(APP_CSS).toContain('stroke-width: 2; vector-effect');
+    expect(APP_CSS).toContain('.chart-svg { display: block; width: 100%; height: auto;');
+    expect(APP_CSS).toContain('.chart-axis-label, .chart-axis-time { font-size: 23px; }');
     expect(APP_CSS).toContain('prefers-reduced-motion');
     expect(APP_CSS).toContain('.log-tag-filters');
     expect(APP_CSS).toContain('.online-indicator');

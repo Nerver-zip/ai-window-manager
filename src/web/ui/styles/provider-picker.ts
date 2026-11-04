@@ -34,5 +34,6 @@ export const PROVIDER_PICKER_CSS = `
 @media (max-width: 760px) {
   .provider-picker-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .provider-picker-card { min-height: 40px; }
+  .provider-picker-options { flex-wrap: wrap; width: auto; overflow-x: visible; }
 }
 `;

@@ -112,6 +112,7 @@ export interface SettingsProviderView {
   staleAfterSeconds?: number | undefined;
   configured?: boolean | undefined;
   connectionLabel?: string | undefined;
+  connectionTone?: 'ok' | 'attention' | 'muted' | undefined;
   triggerModels?: { gemini: string; claudeGpt: string; argon?: string } | undefined;
   providerClientUpdate?: {
     packagedVersion: string | null;
@@ -208,6 +209,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
       kind: provider.kind,
       ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
       ...(provider.connectionLabel ? { statusLabel: provider.connectionLabel } : {}),
+      ...(provider.connectionTone ? { tone: provider.connectionTone } : {}),
     })),
     selectedValue: providerId,
     required: input.providers.length > 0,
@@ -253,39 +255,41 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
     page: 'schedule',
     title: 'Schedule',
     description: 'Choose when a new usage window should start.',
-    content: `<div class="settings-page" data-awm-region="schedule-workspace">${input.notice ? renderNotice(input.notice) : ''}
-      <section class="card current-window-summary" aria-labelledby="current-window-title">
-        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Usage right now</p><h2 id="current-window-title">Current window</h2><p class="muted">This is the latest saved usage information from your provider.</p></div></div>
-        ${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}
-      </section>
-      <section class="card" aria-labelledby="activation-policy-title">
-        <div class="card-header"><div class="heading-copy"><p class="eyebrow">Your preference</p><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">Choose a pattern. We only start when fresh usage information and provider safety checks allow it.</p></div></div>
+    content: `<div class="settings-page schedule-page" data-awm-region="schedule-workspace">${input.notice ? renderNotice(input.notice) : ''}
+      <div class="schedule-layout">
+      <div class="schedule-policy">
+        <div class="schedule-policy-heading"><h2 id="activation-policy-title">When should a new window start?</h2><p class="muted">We only start when fresh usage information and provider safety checks allow it.</p></div>
         <form class="schedule-provider-selection" method="get" action="/schedule" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="schedule-workspace">
           ${providerPicker}
           <input type="hidden" name="scope" value="${escapeAttribute(policyScope)}">
           <noscript><div class="form-actions"><button type="submit">View provider schedule</button></div></noscript>
         </form>
         ${selectedProvider?.kind === 'antigravity' ? renderPolicyScopeNavigation(providerId, policyScope) : ''}
-        ${input.policyNeedsReview ? '<p class="notice" role="status">Review and save this family schedule before automatic starts can resume. No action will run until you save it.</p>' : ''}
+        ${input.policyNeedsReview ? '<p class="notice notice-warning" role="status">Review and save this family schedule before automatic starts can resume. No action will run until you save it.</p>' : ''}
         <form method="post" action="/schedule" data-policy-form data-schedule-preview-form data-awm-enhance="mutation" data-awm-target="schedule-workspace">
           ${csrfInput(csrfToken)}
           <input type="hidden" name="providerId" value="${escapeAttribute(providerId)}">
           <input type="hidden" name="scope" value="${escapeAttribute(policyScope)}">
           <input type="hidden" name="timezone" value="${escapeAttribute(timezone)}">
           <input type="hidden" name="toleranceSeconds" value="${tolerance}">
-          <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><p class="field-help">Choose a pattern. You can change it later without affecting the current window.</p><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value, noObservedTargets && value !== 'manual')).join('')}</div></fieldset>
-          <p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change</a></p>
           ${windowField}
+          <fieldset class="policy-choice-group"><legend>How should a new window start?</legend><div class="policy-choice-grid">${policyOptions.map(([value, label, description, icon]) => renderPolicyChoice(value, label, description, icon, kind === value, noObservedTargets && value !== 'manual')).join('')}</div></fieldset>
           ${renderPolicyFields('auto', kind === 'auto' && !noObservedTargets, '<p class="policy-guidance">The service checks for a newly available window and starts it only when fresh provider data and provider safety checks agree.</p>')}
           ${renderPolicyFields('custom_schedule', kind === 'custom_schedule' && !noObservedTargets, `<div class="policy-controls-grid">${renderPolicyListField('custom-times', 'Daily start times', 'times', customTimes, 'time', 'Times use your saved local time zone.', 'custom-times-help', true)}</div><p class="policy-guidance">A scheduled time is an opportunity, not a guarantee. The service checks periodically and still requires fresh, safe provider data.</p>`)}
           ${renderPolicyFields('fixed', kind === 'fixed' && !noObservedTargets, `<div class="policy-controls-grid">${renderField('fixed-anchor', 'Cycle start time', `<div class="time-input-group"><input id="fixed-anchor" name="anchorLocalTime" type="time" value="${escapeAttribute(anchor)}" step="60" required><div class="time-stepper" aria-label="Adjust start time"><button type="button" class="button button-secondary button-step" data-time-step="-60" aria-label="Subtract 1 hour" title="1 hour earlier">−1h</button><button type="button" class="button button-secondary button-step" data-time-step="60" aria-label="Add 1 hour" title="1 hour later">+1h</button></div></div><div class="schedule-presets" aria-label="Suggested cycle start times"><button type="button" class="button button-secondary" data-anchor-preset="08:00">Morning <span>08:00</span></button><button type="button" class="button button-secondary" data-anchor-preset="13:00">Afternoon <span>13:00</span></button><button type="button" class="button button-secondary" data-anchor-preset="18:00">Evening <span>18:00</span></button></div>`, 'The local time to use for each cycle.', 'fixed-anchor-help')}</div><p class="policy-guidance">Missed starts are skipped, never caught up unexpectedly.</p>`)}
           ${renderPolicyFields('active_hours', kind === 'active_hours' && !noObservedTargets, `<div class="policy-controls-grid">${renderActiveHoursField(activePeriods)}</div><p class="policy-guidance">The service avoids starting a full window when too little of your chosen period remains.</p>`)}
           ${renderPolicyFields('manual', kind === 'manual', '<p class="policy-guidance">Monitoring continues. The service will not start a window automatically.</p>')}
-          <div class="form-actions"><button type="submit" data-awm-pending-label="Saving schedule…"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div>
+          <div class="schedule-form-footer"><p class="field-help" id="activation-policy-timezone"><strong>Time zone:</strong> ${escapeHtml(timezoneText)} · <a href="/settings">Change</a></p><div class="form-actions"><button type="submit" data-awm-pending-label="Saving schedule…"${input.providers.length ? '' : ' disabled'}>Save schedule</button></div></div>
         </form>
-      </section>
-      <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
-      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}${policyScope === 'argon' || selectedProvider?.kind === 'claude_code' ? renderScheduleSafety(selectedProvider, policyScope) : ''}</section>
+      </div>
+      <aside class="schedule-outlook" aria-labelledby="schedule-details-title">
+        <h2 id="schedule-details-title">What happens next</h2>
+        <section class="current-window-summary schedule-outlook-section" aria-labelledby="current-window-title"><h3 id="current-window-title">Current window</h3>${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}</section>
+        <section class="schedule-details schedule-outlook-section" aria-label="Next decision">${scheduleExplanation}</section>
+        <section class="schedule-horizon-card schedule-outlook-section" aria-labelledby="horizon-title"><h3 id="horizon-title">Next 24 hours</h3><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
+        ${policyScope === 'argon' || selectedProvider?.kind === 'claude_code' ? `<section class="schedule-outlook-section" aria-label="Safety notes">${renderScheduleSafety(selectedProvider, policyScope)}</section>` : ''}
+      </aside>
+      </div>
     </div>`,
   });
 }
@@ -297,10 +301,10 @@ function renderPolicyScopeNavigation(
   const options = activationPolicyScopes('antigravity')
     .filter((scope): scope is Exclude<ActivationPolicyScope, 'default'> => scope !== 'default')
     .map((scope) => [scope, quotaFamilyDisplayName(scope)] as const);
-  return `<nav class="policy-scope-navigation" aria-label="Antigravity quota family">${options
+  return `<nav class="policy-scope-navigation segmented" aria-label="Antigravity quota family">${options
     .map(
       ([scope, label]) =>
-        `<a class="button${selectedScope === scope ? ' button-primary' : ' button-secondary'}" href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}" data-awm-soft-nav data-awm-target="schedule-workspace"${selectedScope === scope ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`,
+        `<a href="/schedule?providerId=${encodeURIComponent(providerId)}&amp;scope=${scope}" data-awm-soft-nav data-awm-target="schedule-workspace"${selectedScope === scope ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`,
     )
     .join('')}</nav>`;
 }
@@ -321,7 +325,7 @@ function renderCurrentWindowSummary(
   };
   const status = statusLabels[currentWindow.status];
   const details = currentWindow.expectedEndAt
-    ? `<p class="muted"><span>Expected reset</span><br><time datetime="${escapeAttribute(currentWindow.expectedEndAt.value)}">${escapeHtml(formatReadableInstant(currentWindow.expectedEndAt.value, timeZone))}</time></p>`
+    ? `<p class="muted">Expected reset <time datetime="${escapeAttribute(currentWindow.expectedEndAt.value)}">${escapeHtml(formatReadableInstant(currentWindow.expectedEndAt.value, timeZone))}</time></p>`
     : '<p class="muted">Expected reset is not available yet.</p>';
   const selectedSnapshot = provider?.windows?.find(
     (window) => window.windowKind === currentWindow.windowKind,
@@ -337,7 +341,7 @@ function renderCurrentWindowSummary(
     ? windowGroupDisplayName(currentWindow.windowKind)
     : null;
   const targetLabel = groupLabel ? `${groupLabel} · ${windowLabel}` : windowLabel;
-  return `<div class="current-window-read"><div><span class="eyebrow">${escapeHtml(label)}</span><strong class="current-window-status">${escapeHtml(status)}</strong><p class="muted">${escapeHtml(targetLabel)}</p></div>${details}</div>`;
+  return `<div class="current-window-read"><span class="muted">${escapeHtml(label)} · ${escapeHtml(targetLabel)}</span><strong class="current-window-status status ${currentWindow.status === 'ACTIVE' ? 'status-info' : currentWindow.status === 'INACTIVE' ? 'status-ok' : 'status-muted'}">${escapeHtml(status)}</strong>${details}</div>`;
 }
 
 function renderPlannerPreview(decision: PlannerDecision | null | undefined): string {
@@ -946,12 +950,17 @@ export function renderSettingsPage(input: SettingsPageInput): string {
     title: 'Settings',
     description: 'Choose what to monitor, when to check, and your local time zone.',
     content: `<div class="settings-page">${input.notice ? renderNotice(input.notice) : ''}
-      <section class="card timezone-settings" aria-labelledby="timezone-settings-title" data-awm-region="settings-timezone"${input.notice ? ` data-awm-announcement="${escapeAttribute(input.notice)}"` : ''}><div class="card-header"><div class="heading-copy"><p class="eyebrow">Dates and schedules</p><h2 id="timezone-settings-title">Time Zone</h2><p class="muted">Schedules and window resets are displayed in this time zone.</p></div></div>${input.notice ? `<span hidden data-awm-announcement="${escapeAttribute(input.notice)}">${escapeHtml(input.notice)}</span>` : ''}<form method="post" action="/settings/timezone" data-timezone-settings data-awm-enhance="mutation" data-awm-target="settings-timezone"><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="form-grid">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}</div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p><div class="form-actions"><button type="submit" data-awm-pending-label="Saving time zone…">Save time zone</button></div></form></section>
-      <section aria-labelledby="provider-settings-title">
-        <div class="section-heading"><div class="heading-copy"><p class="eyebrow">Accounts</p><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>
+      <div class="settings-layout">
+      <nav class="settings-nav" aria-label="Settings sections"><a href="#timezone-settings">Time zone</a>${input.providers.map((provider) => `<a href="#provider-${safeId(provider.id)}">${escapeHtml(providerDisplayName(provider.id, provider.kind))}</a>`).join('')}<a href="#data-retention">Data retention</a></nav>
+      <div class="settings-sections">
+      <section id="timezone-settings" class="timezone-settings settings-section" aria-labelledby="timezone-settings-title" data-awm-region="settings-timezone"${input.notice ? ` data-awm-announcement="${escapeAttribute(input.notice)}"` : ''}><div class="heading-copy"><h2 id="timezone-settings-title">Time zone</h2><p class="muted">Schedules and window resets are displayed in this time zone.</p></div>${input.notice ? `<span hidden data-awm-announcement="${escapeAttribute(input.notice)}">${escapeHtml(input.notice)}</span>` : ''}<form method="post" action="/settings/timezone" data-timezone-settings data-awm-enhance="mutation" data-awm-target="settings-timezone"><input type="hidden" name="csrfToken" value="${csrfToken}"><div class="timezone-row">${renderField('account-timezone', 'Your time zone', timezoneField, 'Choose a city in your region. The current UTC offset is shown beside each choice.', 'account-timezone-help')}<div class="form-actions"><button type="submit" data-awm-pending-label="Saving time zone…">Save time zone</button></div></div><input type="hidden" name="source" value="manual"><p class="field-help timezone-detection-status" data-timezone-status aria-live="polite"></p></form></section>
+      <section class="settings-section" aria-labelledby="provider-settings-title">
+        <div class="section-heading"><div class="heading-copy"><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>
         <div class="settings-stack">${providerSections}</div>
       </section>
       ${renderRetentionSummary()}
+      </div>
+      </div>
     </div>`,
   });
 }
@@ -1095,7 +1104,7 @@ function renderProviderCard(
     : '';
 
   return `<article id="provider-${id}" class="card provider-settings${connectTargetClass}" aria-labelledby="provider-${id}-title" data-awm-region="settings-provider:${id}"${announcementAttribute} data-provider-connected="${connected ? 'true' : 'false'}"${connectTargetAttributes}>
-    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><span class="badge provider-connection-badge" data-provider-connection-status data-connection-state="${connection.state}" aria-label="${escapeHtml(displayName)} account status"><span class="online-indicator" aria-hidden="true"></span><span data-provider-connection-label>${escapeHtml(connection.label)}</span></span></header>
+    <header class="provider-header"><div class="provider-identity">${logoHtml}<div><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><span class="badge provider-connection-badge" data-provider-connection-status data-connection-state="${connection.state}" aria-label="${escapeHtml(displayName)} account status"><span class="online-indicator" aria-hidden="true"></span><span data-provider-connection-label>${escapeHtml(connection.label)}</span></span></header>
     ${announcementMarkup}
     ${authArea}
     <p class="provider-monitoring-note" data-provider-monitoring-note${controlsLocked ? '' : ' hidden'}>Connect your account to customize monitoring settings.</p>

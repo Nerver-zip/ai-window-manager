@@ -483,7 +483,7 @@ describe('settings UI helpers', () => {
     expect(cards[1]).toContain('Reconnect Antigravity');
     expect(cards[1]).toMatch(/data-provider-settings-form[^>]*>/);
     expect(cards[1]).not.toMatch(/data-provider-settings-form[^>]* hidden>/);
-    expect(html).toContain('Time Zone');
+    expect(html).toContain('Time zone');
     expect(html).toContain('Schedules and window resets are displayed in this time zone.');
     expect(html).toContain('Manage connected accounts and update frequencies.');
     expect(html).not.toContain('Provider accounts');
@@ -518,7 +518,6 @@ describe('settings UI helpers', () => {
     });
 
     expect(html).toContain('Current window');
-    expect(html).toContain('Usage right now');
     expect(html).toContain('Available');
     expect(html).not.toContain('Inactive');
     expect(html).toContain('Cycle start time');
@@ -534,7 +533,7 @@ describe('settings UI helpers', () => {
     expect(html).not.toContain('reasonCode');
     expect(html).not.toContain('exact confidence');
     expect(html).not.toContain('confidence');
-    expect(html).toContain('Your schedule at a glance');
+    expect(html).toContain('Next 24 hours');
     expect(html).toContain('role="img" aria-label="24-hour schedule view.');
     expect(regionValues(html).filter((value) => value === 'schedule-workspace')).toHaveLength(1);
     const scheduleForms = formsForTarget(html, 'schedule-workspace');
@@ -1078,7 +1077,7 @@ describe('settings UI helpers', () => {
     });
 
     expect(html).toContain(
-      '<div class="section-heading"><div class="heading-copy"><p class="eyebrow">Accounts</p><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>',
+      '<div class="section-heading"><div class="heading-copy"><h2 id="provider-settings-title">Providers</h2><p class="muted">Manage connected accounts and update frequencies.</p></div></div>',
     );
   });
 

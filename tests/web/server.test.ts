@@ -414,14 +414,14 @@ describe('web server persisted overview', () => {
 
     const connectedPage = await app.inject('/?provider=fake');
     expect(connectedPage.body).toContain(
-      '<span class="badge badge-success"><span class="online-indicator" aria-hidden="true"></span>Connected</span>',
+      '<span class="status status-ok has-live-dot"><span class="online-indicator" aria-hidden="true"></span>Connected</span>',
     );
     expect(connectedPage.body.match(/class="online-indicator"/g)).toHaveLength(1);
     expect((await app.inject('/?provider=paused')).body).toContain(
-      '<span class="badge badge-warning">Monitoring paused</span>',
+      '<span class="status status-muted">Monitoring paused</span>',
     );
     expect((await app.inject('/?provider=failed')).body).toContain(
-      '<span class="badge badge-warning">Needs attention</span>',
+      '<span class="status status-danger">Needs attention</span>',
     );
 
     const css = await app.inject('/assets/app.css');
@@ -836,8 +836,8 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=gemini"');
     expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=claude_gpt"');
     expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=argon"');
-    expect(page.body).toContain('<h4>Weekly window</h4>');
-    expect(page.body).toContain('<h4>5-hour window</h4>');
+    expect(page.body).toContain('<h5>Weekly window</h5>');
+    expect(page.body).toContain('<h5>5-hour window</h5>');
     expect(page.body).not.toContain('>Usage window<');
     expect(page.body).not.toContain('antigravity_gemini');
     expect(page.body).not.toContain('antigravity_claude_gpt');
@@ -884,7 +884,7 @@ describe('web server persisted overview', () => {
     expect(overview.statusCode).toBe(200);
     expect(overview.body).toContain('aria-label="Gemini 4 Argon"');
     expect(overview.body).toContain('Gemini 4 Argon · Only when I ask');
-    expect(overview.body).toContain('<h4>Weekly window</h4>');
+    expect(overview.body).toContain('<h5>Weekly window</h5>');
     expect(overview.body).not.toContain('antigravity_argon_five_hour');
 
     const scheduling = await app.inject('/api/v1/scheduling');

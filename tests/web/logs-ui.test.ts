@@ -404,7 +404,8 @@ describe('history UI helpers', () => {
     ]);
 
     expect(html).toContain('Activity update');
-    expect(html).toContain('>Info<');
+    expect(html).toContain('Info: </span>Activity update');
+    expect(html).toContain('event-info');
     expect(html).toContain('More details are not available for this update.');
   });
 
@@ -455,7 +456,7 @@ describe('history UI helpers', () => {
     expect(html).toContain('Timeline');
     expect(html).toContain('aria-label="Filter logs by category"');
     expect(html).toContain('class="log-tag-filter is-active"');
-    expect(html).toContain('badge-tag-trigger');
+    expect(html).toContain('log-event-tag-trigger');
     expect(html).toContain('Usage');
     expect(html).not.toContain('<style');
     expect(html).not.toContain(' style=');
@@ -484,7 +485,7 @@ describe('history UI helpers', () => {
     expectSoftNavigationContract(html);
     expect(html.match(/data-awm-region="logs-results"/g)).toHaveLength(1);
     expect(html).toContain(
-      '<form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="logs-results">',
+      '<form class="history-toolbar" method="get" action="/logs" aria-label="Log filters" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="logs-results">',
     );
     expect(html).toContain('value="12h" selected');
     expect(html).toContain(
@@ -510,6 +511,19 @@ describe('history UI helpers', () => {
     expect(html).toContain('href="/usage?provider=codex"');
     expect(html).not.toContain('href="/usage?provider=codex" data-awm-soft-nav');
     expect(html).toContain('method="get" action="/logs"');
+  });
+
+  it('groups events under local-day headings and falls back to UTC for invalid zones', () => {
+    const events = [
+      event({ id: 3, occurredAt: '2026-09-19T04:30:00.000Z' }),
+      event({ id: 2, occurredAt: '2026-09-19T01:30:00.000Z' }),
+    ];
+    const grouped = renderTimeline(events, undefined, 'America/Sao_Paulo');
+    expect(grouped.match(/timeline-day-title/g)).toHaveLength(2);
+    const fallback = renderTimeline(events, undefined, 'Not/AZone');
+    expect(fallback.match(/timeline-day-title/g)).toHaveLength(1);
+    expect(fallback).toContain('>04:30</time>');
+    expect(fallback).toContain('<span class="visually-hidden">');
   });
 
   it('preserves the selected event type in the GET filter form', () => {
@@ -546,7 +560,8 @@ describe('history UI helpers', () => {
     });
 
     expect(html).toContain('Times shown in São Paulo.');
-    expect(html).toContain('>Sep 19, 2026, 8:00 AM GMT-3</time>');
+    expect(html).toContain('>08:00</time>');
+    expect(html).toContain('<h3 class="timeline-day-title">Saturday, 19 Sept 2026</h3>');
     expect(html).not.toContain('2026-09-19 11:00:00.000Z');
     expect(html).not.toContain('aria-label="Log pages"');
     expect(html).not.toContain('event · page 1');

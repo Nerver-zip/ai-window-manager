@@ -69,6 +69,7 @@ export interface UsageProviderOption {
   kind?: string;
   configured?: boolean;
   statusLabel?: string;
+  tone?: 'ok' | 'attention' | 'muted';
 }
 
 export interface UsageSeriesOption {

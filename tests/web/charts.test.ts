@@ -106,7 +106,7 @@ describe('shared chart primitives', () => {
     expect(html).toContain('id="chart-unknown-title"');
     expect(html).toContain('&lt;Usage&gt;');
     expect(html).toContain('&lt;not raw html&gt;');
-    expect(html).toContain('viewBox="0 0 640 230"');
+    expect(html).toContain('viewBox="0 0 640 300"');
     expect(html).toContain('class="chart-line chart-series-1"');
     expect(html).toContain('class="chart-line chart-series-2"');
     expect(html).toContain('data-chart-point');
@@ -198,7 +198,7 @@ describe('shared chart primitives', () => {
 
     expect(html.match(/class="chart-area chart-series-1"/g)).toHaveLength(2);
     expect(html.match(/class="chart-line chart-series-1"/g)).toHaveLength(2);
-    expect(html).toContain(' L 624,188 Z"');
+    expect(html).toContain(' L 624,256 Z"');
     expect(APP_CSS).toContain('.chart-area.chart-series-1 { fill: var(--chart-1); stroke: none; }');
   });
 

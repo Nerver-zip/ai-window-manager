@@ -56,6 +56,7 @@ export interface HistoryProviderOption {
   kind?: string;
   configured?: boolean;
   statusLabel?: string;
+  tone?: 'ok' | 'attention' | 'muted';
 }
 
 /** The only event fields consumed by the renderer. Raw event data is excluded. */
@@ -379,6 +380,7 @@ export function renderLogsPage(input: HistoryPageInput): string {
         ...(provider.kind ? { kind: provider.kind } : {}),
         ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
         ...(provider.statusLabel !== undefined ? { statusLabel: provider.statusLabel } : {}),
+        ...(provider.tone ? { tone: provider.tone } : {}),
       })),
     ],
     selectedValue: selectedProvider,
@@ -391,7 +393,7 @@ export function renderLogsPage(input: HistoryPageInput): string {
     `<a class="log-tag-filter${selectedTag === 'all' ? ' is-active' : ''}" href="${escapeAttribute(logTagHref('all', view.range, view.providerId))}" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-tag-all"${selectedTag === 'all' ? ' aria-current="page"' : ''}>All</a>`,
     ...LOG_TAGS.map(
       (tag) =>
-        `<a class="log-tag-filter${selectedTag === tag.value ? ' is-active' : ''}" href="${escapeAttribute(logTagHref(tag.value, view.range, view.providerId))}" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-tag-${tag.value}"${selectedTag === tag.value ? ' aria-current="page"' : ''}><span aria-hidden="true">${tag.icon}</span> ${tag.label}</a>`,
+        `<a class="log-tag-filter${selectedTag === tag.value ? ' is-active' : ''}" href="${escapeAttribute(logTagHref(tag.value, view.range, view.providerId))}" data-awm-soft-nav data-awm-target="${LOGS_RESULTS_REGION}" data-awm-focus-key="logs-tag-${tag.value}"${selectedTag === tag.value ? ' aria-current="page"' : ''}>${tag.label}</a>`,
     ),
   ].join('');
   const hiddenTag = view.tag
@@ -406,24 +408,19 @@ export function renderLogsPage(input: HistoryPageInput): string {
   const timeZone = input.timeZone ?? 'UTC';
   const content = `<div class="logs-page" data-awm-region="${LOGS_RESULTS_REGION}">
     ${usageNotice}
-    <form class="history-toolbar card" method="get" action="/logs" aria-label="Log filters" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="${LOGS_RESULTS_REGION}">
+    <form class="history-toolbar" method="get" action="/logs" aria-label="Log filters" data-provider-picker-auto-submit data-awm-enhance="navigation" data-awm-target="${LOGS_RESULTS_REGION}">
       ${hiddenTag}${hiddenType}
-      <div class="history-toolbar-summary">
-        <span class="eyebrow">Explore</span>
-        <strong>Activity logs</strong>
-        <span class="muted">Review saved provider updates and why decisions were made.</span>
-      </div>
-      <div class="history-toolbar-fields">
-        ${providerPicker}
-        <label class="field">
-          <span class="field-label">Timeline range</span>
-          <select name="range" data-chart-range-select data-awm-focus-key="logs-range">${rangeOptions}</select>
-        </label>
-        <noscript><button class="button button-primary" type="submit">Apply filters</button></noscript>
-      </div>
+      ${providerPicker}
+      <label class="field history-range">
+        <span class="field-label">Timeline range</span>
+        <select name="range" data-chart-range-select data-awm-focus-key="logs-range">${rangeOptions}</select>
+      </label>
+      <noscript><button class="button button-primary" type="submit">Apply filters</button></noscript>
     </form>
-    <nav class="log-tag-filters" aria-label="Filter logs by category">${tagFilters}</nav>
-    ${routineToggle}
+    <div class="history-filter-row">
+      <nav class="log-tag-filters segmented" aria-label="Filter logs by category">${tagFilters}</nav>
+      ${routineToggle}
+    </div>
     <div class="history-sections">
       ${renderTimeline(view.events, pagination, timeZone, view.eventType, view.tag)}
     </div>
@@ -464,11 +461,10 @@ export function renderTimeline(
         selectedTag === 'sync' ||
         eventType === 'provider_inspected',
     );
+  const heading = `<div><h2 id="timeline-title">Timeline</h2><p class="muted">Times shown in ${escapeHtml(timeZoneDisplayName(timeZone))}.</p></div>`;
   if (safeEvents.length === 0) {
-    return `<section class="history-section card" aria-labelledby="timeline-title">
-      <div class="section-heading">
-        <div><span class="eyebrow">Activity</span><h2 id="timeline-title">Timeline</h2><p class="muted">Times shown in ${escapeHtml(timeZoneDisplayName(timeZone))}.</p></div>
-      </div>
+    return `<section class="history-section" aria-labelledby="timeline-title">
+      <div class="section-heading">${heading}</div>
       <div class="empty-state" role="status">
         <strong>No notable activity in this range</strong>
         <p class="unknown">Important usage and schedule changes will appear here.</p>
@@ -477,36 +473,50 @@ export function renderTimeline(
   }
 
   const visibleEvents = safeEvents.slice(0, MAX_HISTORY_EVENTS);
-  const items = visibleEvents
-    .map((event) => {
-      const severity = safeSeverity(event.displaySeverity);
-      return `<li class="timeline-item event event-${severity}">
+  const days: { key: string; label: string; events: HistoryTimelineItem[] }[] = [];
+  for (const event of visibleEvents) {
+    const key = formatDayKey(event.occurredAt, timeZone);
+    const current = days[days.length - 1];
+    if (current && current.key === key) current.events.push(event);
+    else days.push({ key, label: formatDayLabel(event.occurredAt, timeZone), events: [event] });
+  }
+  const renderItem = (event: HistoryTimelineItem): string => {
+    const severity = safeSeverity(event.displaySeverity);
+    const logoUrl = event.providerId ? providerLogoUrl(event.providerId) : null;
+    const claude = event.providerId === 'claude_code';
+    const logo = logoUrl
+      ? `<img class="provider-logo-xs${claude ? ' provider-logo-xs--claude-code' : ''}" src="${logoUrl}" alt="" width="${claude ? '16' : '14'}" height="${claude ? '16' : '14'}">`
+      : '';
+    return `<li class="timeline-item event event-${severity}">
+        <time class="timeline-time" datetime="${escapeAttribute(event.occurredAt)}">${escapeHtml(
+          formatClock(event.occurredAt, timeZone),
+        )}</time>
         <span class="timeline-marker" aria-hidden="true"></span>
         <div class="timeline-content">
-          <div class="timeline-meta">
-            <time class="timeline-time" datetime="${escapeAttribute(event.occurredAt)}">${escapeHtml(
-              formatTimestamp(event.occurredAt, timeZone),
-            )}</time>
-            <span class="badge badge-${severity}">${escapeHtml(severityLabel(severity))}</span>
-            <span class="log-event-tags" aria-label="Event categories">${renderLogTagBadges(event.tags ?? classifyLogEvent(event.type, event.severity, event.data))}</span>
-            <span class="timeline-provider">${event.providerId && providerLogoUrl(event.providerId) ? `<img class="provider-logo-xs${event.providerId === 'claude_code' ? ' provider-logo-xs--claude-code' : ''}" src="${providerLogoUrl(event.providerId)}" alt="" width="${event.providerId === 'claude_code' ? '16' : '14'}" height="${event.providerId === 'claude_code' ? '16' : '14'}">` : ''}${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
-          </div>
-          <h3 class="timeline-event">${escapeHtml(event.displayType)}</h3>
+          <p class="timeline-event"><span class="visually-hidden">${escapeHtml(severityLabel(severity))}: </span>${escapeHtml(event.displayType)}</p>
+          <p class="timeline-meta"><span class="timeline-provider">${logo}${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span><span class="log-event-tags" aria-label="Event categories">${renderLogTagBadges(event.tags ?? classifyLogEvent(event.type, event.severity, event.data))}</span></p>
           <p class="timeline-reason"><span class="timeline-label">Why</span>${escapeHtml(
             event.displayReason,
           )}</p>
         </div>
       </li>`;
-    })
+  };
+  const groups = days
+    .map(
+      (day) => `<div class="timeline-day">
+      <h3 class="timeline-day-title">${escapeHtml(day.label)}</h3>
+      <ol class="timeline">${day.events.map(renderItem).join('')}</ol>
+    </div>`,
+    )
     .join('');
   const pageInfo = normalizePagination(pagination);
   const pageLabel = pageInfo.page > 1 || pageInfo.hasNext ? ` · page ${pageInfo.page}` : '';
-  return `<section class="history-section card" aria-labelledby="timeline-title">
+  return `<section class="history-section" aria-labelledby="timeline-title">
     <div class="section-heading">
-      <div><span class="eyebrow">Activity</span><h2 id="timeline-title">Timeline</h2><p class="muted">Times shown in ${escapeHtml(timeZoneDisplayName(timeZone))}.</p></div>
+      ${heading}
       <span class="section-count">${visibleEvents.length} event${visibleEvents.length === 1 ? '' : 's'}${pageLabel}</span>
     </div>
-    <ol class="timeline">${items}</ol>
+    ${groups}
     ${renderHistoryPagination(pagination, visibleEvents.length)}
   </section>`;
 }
@@ -522,7 +532,7 @@ export function renderUsageSeries(
   if (series.length === 0) {
     return `<section class="history-section" aria-labelledby="usage-title">
       <div class="section-heading">
-        <div><span class="eyebrow">Usage over time</span><h2 id="usage-title">Usage</h2></div>
+        <div><h2 id="usage-title">Usage over time</h2></div>
       </div>
       ${renderChartEmptyState()}
     </section>`;
@@ -547,7 +557,7 @@ export function renderUsageSeries(
     .join('');
   return `<section class="history-section" aria-labelledby="usage-title">
     <div class="section-heading">
-      <div><span class="eyebrow">Usage over time</span><h2 id="usage-title">Usage</h2></div>
+      <div><h2 id="usage-title">Usage over time</h2></div>
       <span class="section-count">${visibleSeries.length} window${visibleSeries.length === 1 ? '' : 's'}</span>
     </div>
     <div class="chart-grid">${charts}</div>
@@ -777,7 +787,7 @@ function renderLogTagBadges(tags: readonly LogTag[]): string {
     .map((tag) => {
       const descriptor = LOG_TAGS.find((candidate) => candidate.value === tag);
       if (!descriptor) return '';
-      return `<span class="badge badge-tag badge-tag-${tag}">${descriptor.label}</span>`;
+      return `<span class="log-event-tag log-event-tag-${tag}">${descriptor.label}</span>`;
     })
     .join('');
 }
@@ -788,6 +798,7 @@ function safeProviderOptions(providers: readonly HistoryProviderOption[]): Array
   kind?: string;
   configured?: boolean;
   statusLabel?: string;
+  tone?: 'ok' | 'attention' | 'muted';
 }> {
   const seen = new Set<string>();
   return providers.flatMap((provider) => {
@@ -803,6 +814,7 @@ function safeProviderOptions(providers: readonly HistoryProviderOption[]): Array
         ...(provider.kind ? { kind: provider.kind } : {}),
         ...(provider.configured !== undefined ? { configured: provider.configured } : {}),
         ...(statusLabel ? { statusLabel } : {}),
+        ...(provider.tone ? { tone: provider.tone } : {}),
       },
     ];
   });
@@ -847,30 +859,37 @@ function normalizeProviderFilter(value: unknown): string | undefined {
   return provider ?? undefined;
 }
 
-function formatTimestamp(value: string, timeZone: string): string {
+function formatInZone(
+  value: string,
+  timeZone: string,
+  options: Intl.DateTimeFormatOptions,
+): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return 'unknown';
   try {
-    return new Intl.DateTimeFormat('en', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      timeZone,
-      timeZoneName: 'short',
-    }).format(new Date(timestamp));
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone }).format(new Date(timestamp));
   } catch {
-    return new Intl.DateTimeFormat('en', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      timeZone: 'UTC',
-      timeZoneName: 'short',
-    }).format(new Date(timestamp));
+    return new Intl.DateTimeFormat('en-GB', { ...options, timeZone: 'UTC' }).format(
+      new Date(timestamp),
+    );
   }
+}
+
+function formatClock(value: string, timeZone: string): string {
+  return formatInZone(value, timeZone, { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function formatDayKey(value: string, timeZone: string): string {
+  return formatInZone(value, timeZone, { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
+function formatDayLabel(value: string, timeZone: string): string {
+  return formatInZone(value, timeZone, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function normalizePagination(value: HistoryPagination | undefined): HistoryPagination {
