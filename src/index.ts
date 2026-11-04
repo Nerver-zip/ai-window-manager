@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import {
+  CLAUDE_CODE_RELEASE_KEY_FINGERPRINT,
+  createGpgvManifestVerifier,
   createOfficialReleaseSource,
   type ProviderArchitecture,
 } from '../scripts/provider-clients-core.js';
@@ -9,6 +11,7 @@ import type { ProviderAdapter } from './providers/provider.js';
 import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
 import { AntigravityProvider } from './providers/antigravity/index.js';
+import { ClaudeCodeProvider } from './providers/claude-code/index.js';
 import { filterVisibleProviders } from './providers/visibility.js';
 import { AuthSessionManager } from './auth/session-manager.js';
 import { OperatorAuthService } from './auth/operator-auth.js';
@@ -54,6 +57,7 @@ import { PROVIDER_CLIENT_IDS, type ProviderClientId } from './provider-clients/r
 import type { ProviderClientUpdateWebControls } from './provider-clients/web-controls.js';
 
 const config = loadConfig();
+const CLAUDE_CODE_MIN_POLL_INTERVAL_SECONDS = 120;
 const providerRuntimeStore = await initializeProviderRuntime();
 const providerExecutables = {
   codex: providerRuntimeStore
@@ -62,6 +66,9 @@ const providerExecutables = {
   antigravity: providerRuntimeStore
     ? await providerRuntimeStore.resolveExecutable('antigravity')
     : config.AWM_ANTIGRAVITY_EXECUTABLE,
+  claude_code: providerRuntimeStore
+    ? await providerRuntimeStore.resolveExecutable('claude_code')
+    : config.AWM_CLAUDE_CODE_EXECUTABLE,
 };
 const db = openDatabase(config.AWM_DB_PATH);
 const repositories = createRepositories(db);
@@ -74,6 +81,7 @@ let requestReconcile: (providerId?: string) => void = () => undefined;
 registerFakeProvider();
 registerCodexProvider();
 registerAntigravityProvider();
+registerClaudeCodeProvider();
 hydrateMetricsFromState();
 const readBackoff = new ProviderReadBackoff({
   db,
@@ -91,12 +99,14 @@ const reconciler = new Reconciler({
   adapters,
   inspections: providerInspections,
   resolveTargetResetAt,
-  isProviderRuntimeChanging: (providerId) =>
-    (providerId === 'codex' || providerId === 'antigravity') &&
-    ((providerClientUpdateTasks?.isRuntimeChanging(providerId) ?? false) ||
-      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(
-        authSessions.status(providerId).state,
-      )),
+  isProviderRuntimeChanging: (providerId) => {
+    const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
+    if (!clientId) return false;
+    return (
+      (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false) ||
+      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authenticationState(clientId))
+    );
+  },
   onObservation: (observation) => {
     recordObservation(observation);
     requestUsageAggregation();
@@ -157,7 +167,15 @@ const authSessions = new AuthSessionManager({
 const providerClientUpdateService = providerRuntimeStore
   ? new ProviderClientUpdateService({
       runtimeStore: providerRuntimeStore,
-      resolveOfficialRelease: createOfficialReleaseSource(),
+      resolveOfficialRelease: createOfficialReleaseSource(fetch, {
+        verifyClaudeCodeManifest: createGpgvManifestVerifier({
+          armoredPublicKey: await readFile(
+            path.resolve(process.cwd(), 'provider-keys/claude-code-release.asc'),
+            'utf8',
+          ),
+          expectedFingerprint: CLAUDE_CODE_RELEASE_KEY_FINGERPRINT,
+        }),
+      }),
       architecture: providerArchitectureFromNode(process.arch),
       clock,
       isProviderBusy: (providerId) => providerIsBusy(providerId),
@@ -189,7 +207,7 @@ const executor = new ActionExecutor({
   isProviderRuntimeChanging: (providerId) => {
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
     if (!clientId) return false;
-    const authentication = authSessions.status(clientId).state;
+    const authentication = authenticationState(clientId);
     return (
       ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authentication) ||
       (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false)
@@ -262,6 +280,7 @@ const cleanupBudgetMs =
     Math.max(
       config.AWM_CODEX_ACTION_TIMEOUT_SECONDS,
       config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
+      config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS,
     ) *
       1000);
 loopMonitor.register('reconcile', {
@@ -437,8 +456,42 @@ function registerAntigravityProvider(): void {
   );
 }
 
+/** Claude Code sign-in runs through the official CLI terminal, not a browser auth session. */
+function authenticationState(providerId: ProviderClientId): string {
+  return providerId === 'codex' || providerId === 'antigravity'
+    ? authSessions.status(providerId).state
+    : 'IDLE';
+}
+
+function registerClaudeCodeProvider(): void {
+  if (!config.AWM_CLAUDE_CODE_ENABLED) return;
+  const provider = new ClaudeCodeProvider({
+    configDirectory: config.AWM_CLAUDE_CODE_HOME,
+    executable: providerExecutables.claude_code,
+    triggerEnabled: config.AWM_CLAUDE_CODE_TRIGGER_ENABLED,
+    triggerModel: config.AWM_CLAUDE_CODE_TRIGGER_MODEL,
+    actionTimeoutMs: config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS * 1000,
+  });
+  // No cleanup adapter: trigger runs use --no-session-persistence, so no
+  // provider-side conversation artifact is created for later deletion.
+  adapters.set(provider.id, provider);
+  seedProvider(
+    {
+      id: provider.id,
+      kind: 'claude_code',
+      config: {
+        home: config.AWM_CLAUDE_CODE_HOME,
+        triggerEnabled: config.AWM_CLAUDE_CODE_TRIGGER_ENABLED,
+      },
+    },
+    config.AWM_CLAUDE_CODE_TRIGGER_ENABLED,
+    // The official /usage read is a server request; poll it gently.
+    CLAUDE_CODE_MIN_POLL_INTERVAL_SECONDS,
+  );
+}
+
 function providerIsBusy(providerId: ProviderClientId): boolean {
-  const authentication = authSessions.status(providerId).state;
+  const authentication = authenticationState(providerId);
   const activeAuthentication =
     authentication === 'STARTING' ||
     authentication === 'AWAITING_USER_ACTION' ||
@@ -534,12 +587,16 @@ function startAutomaticProviderClientUpdates(): void {
 function seedProvider(
   input: { id: string; kind: string; config: unknown },
   triggerEnabled = false,
+  minimumPollIntervalSeconds = 30,
 ): void {
   seedBootstrapProviderDefaults({
     repositories,
     provider: input,
     nowMs: clock.now().getTime(),
-    pollIntervalSeconds: Math.max(30, config.AWM_RECONCILE_INTERVAL_SECONDS),
+    pollIntervalSeconds: Math.max(
+      minimumPollIntervalSeconds,
+      config.AWM_RECONCILE_INTERVAL_SECONDS,
+    ),
     timezone: config.AWM_TIMEZONE,
     triggerEnabled,
   });
@@ -616,6 +673,7 @@ async function initializeProviderRuntime(): Promise<ProviderClientRuntimeStore |
     packagedClients: packagedProviderClients(manifestValue, {
       codex: '/opt/codex/bin/codex',
       antigravity: '/opt/antigravity/bin/agy',
+      claude_code: '/opt/claude-code/bin/claude',
     }),
     downloadArchive: createOfficialArchiveDownloader({ architecture }),
     compatibilityProbe: async (request, signal) => {
@@ -633,15 +691,27 @@ async function initializeProviderRuntime(): Promise<ProviderClientRuntimeStore |
               requestTimeoutMs: 20_000,
               triggerEnabled: false,
             })
-          : new AntigravityProvider({
-              executable: request.executablePath,
-              cwd: config.AWM_ANTIGRAVITY_HOME,
-              timeoutMs: 45_000,
-              triggerEnabled: false,
-            });
+          : request.providerId === 'claude_code'
+            ? new ClaudeCodeProvider({
+                configDirectory: config.AWM_CLAUDE_CODE_HOME,
+                executable: request.executablePath,
+                readTimeoutMs: 45_000,
+                triggerEnabled: false,
+              })
+            : new AntigravityProvider({
+                executable: request.executablePath,
+                cwd: config.AWM_ANTIGRAVITY_HOME,
+                timeoutMs: 45_000,
+                triggerEnabled: false,
+              });
+      // Read-only: Claude Code runs only its local /usage command (no model turn).
       const observation = await adapter.inspect({ signal });
       const expectedAuthSummary =
-        request.providerId === 'codex' ? 'CODEX_AUTH_REQUIRED' : 'AGY_AUTH_REQUIRED';
+        request.providerId === 'codex'
+          ? 'CODEX_AUTH_REQUIRED'
+          : request.providerId === 'claude_code'
+            ? 'CLAUDE_CODE_AUTH_REQUIRED'
+            : 'AGY_AUTH_REQUIRED';
       if (
         observation.health === 'UP' ||
         observation.health === 'DEGRADED' ||

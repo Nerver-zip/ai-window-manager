@@ -18,7 +18,7 @@ import { Readable } from 'node:stream';
 import { finished } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 
-export const PROVIDER_CLIENT_IDS = ['codex', 'antigravity'] as const;
+export const PROVIDER_CLIENT_IDS = ['codex', 'antigravity', 'claude_code'] as const;
 export type ProviderClientId = (typeof PROVIDER_CLIENT_IDS)[number];
 
 export type RuntimeStoreErrorCode =
@@ -56,6 +56,11 @@ export interface PackagedProviderClient {
   readonly packagedVersion: string;
   /** Executable path inside the official release archive, using POSIX separators. */
   readonly archiveExecutablePath: string;
+  /**
+   * `tar.gz` (default) extracts an official archive. `binary` installs a single
+   * official executable whose digest was verified, at `archiveExecutablePath`.
+   */
+  readonly artifactFormat?: 'tar.gz' | 'binary';
 }
 
 export type PackagedProviderClients = Readonly<Record<ProviderClientId, PackagedProviderClient>>;
@@ -180,7 +185,7 @@ interface RuntimePointer {
 }
 
 const DEFAULT_LIMITS: RuntimeStoreLimits = Object.freeze({
-  maxCompressedBytes: 256 * 1024 * 1024,
+  maxCompressedBytes: 512 * 1024 * 1024,
   maxExpandedBytes: 768 * 1024 * 1024,
   maxFileBytes: 512 * 1024 * 1024,
   maxEntries: 4096,
@@ -377,13 +382,13 @@ function validateArchiveExecutablePath(input: string): string {
 
 function validatePackagedClients(input: PackagedProviderClients): PackagedProviderClients {
   if (!input || typeof input !== 'object') {
-    fail('INVALID_CONFIGURATION', 'Both packaged provider client descriptors are required');
+    fail('INVALID_CONFIGURATION', 'All packaged provider client descriptors are required');
   }
   const keys = Object.keys(input).sort();
   if (keys.join(',') !== [...PROVIDER_CLIENT_IDS].sort().join(',')) {
     fail(
       'INVALID_CONFIGURATION',
-      'Packaged provider client descriptors must be codex and antigravity',
+      `Packaged provider client descriptors must be ${PROVIDER_CLIENT_IDS.join(', ')}`,
     );
   }
 
@@ -394,7 +399,10 @@ function validatePackagedClients(input: PackagedProviderClients): PackagedProvid
       !descriptor ||
       !path.isAbsolute(descriptor.packagedExecutablePath) ||
       !parseStableVersion(descriptor.packagedVersion) ||
-      typeof descriptor.archiveExecutablePath !== 'string'
+      typeof descriptor.archiveExecutablePath !== 'string' ||
+      (descriptor.artifactFormat !== undefined &&
+        descriptor.artifactFormat !== 'tar.gz' &&
+        descriptor.artifactFormat !== 'binary')
     ) {
       fail('INVALID_CONFIGURATION', `Invalid packaged ${providerId} descriptor`);
     }
@@ -402,6 +410,7 @@ function validatePackagedClients(input: PackagedProviderClients): PackagedProvid
       packagedExecutablePath: path.resolve(descriptor.packagedExecutablePath),
       packagedVersion: descriptor.packagedVersion,
       archiveExecutablePath: validateArchiveExecutablePath(descriptor.archiveExecutablePath),
+      artifactFormat: descriptor.artifactFormat ?? 'tar.gz',
     });
   }
   return Object.freeze(result);
@@ -798,13 +807,14 @@ async function sha256File(
 
 function parseVersionOutput(providerId: ProviderClientId, output: string): string | undefined {
   const normalized = output.trim();
-  const match =
+  const pattern =
     providerId === 'codex'
-      ? /^codex-cli (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(normalized)
-      : /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(normalized);
-  if (!match) return undefined;
-  const version = providerId === 'codex' ? normalized.slice('codex-cli '.length) : normalized;
-  return parseStableVersion(version) ? version : undefined;
+      ? /^codex-cli ((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
+      : providerId === 'claude_code'
+        ? /^((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)) \(Claude Code\)$/
+        : /^((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/;
+  const version = pattern.exec(normalized)?.[1];
+  return version && parseStableVersion(version) ? version : undefined;
 }
 
 function abortError(): ProviderClientRuntimeStoreError {
@@ -894,7 +904,12 @@ export class ProviderClientRuntimeStore {
       const paths = this.providerPaths(providerId);
       const stagingRoot = path.join(paths.providerRoot, `.staging-${randomUUID()}`);
       const payloadRoot = path.join(stagingRoot, 'payload');
-      const archivePath = path.join(stagingRoot, 'candidate.tar.gz');
+      const archivePath = path.join(
+        stagingRoot,
+        this.packagedClients[providerId].artifactFormat === 'binary'
+          ? 'candidate.binary'
+          : 'candidate.tar.gz',
+      );
       const versionRoot = path.join(paths.versionsRoot, candidate.version);
       let movedToVersions = false;
       let activated = false;
@@ -931,8 +946,12 @@ export class ProviderClientRuntimeStore {
           );
         }
 
-        await extractTarGzip(this.fileSystem, archivePath, payloadRoot, this.limits);
         const descriptor = this.packagedClients[providerId];
+        if (descriptor.artifactFormat === 'binary') {
+          await this.stageVerifiedBinary(archivePath, payloadRoot, descriptor);
+        } else {
+          await extractTarGzip(this.fileSystem, archivePath, payloadRoot, this.limits);
+        }
         const candidateExecutable = assertWithin(
           payloadRoot,
           path.join(payloadRoot, descriptor.archiveExecutablePath),
@@ -974,7 +993,7 @@ export class ProviderClientRuntimeStore {
         }
         if (signal.aborted) throw abortError();
 
-        await this.fileSystem.rm(archivePath);
+        if (descriptor.artifactFormat !== 'binary') await this.fileSystem.rm(archivePath);
         try {
           await this.fileSystem.lstat(versionRoot);
           fail('RUNTIME_VERSION_EXISTS', 'Candidate runtime version already exists on disk');
@@ -1376,6 +1395,22 @@ export class ProviderClientRuntimeStore {
     };
     await this.pruneRuntimeVersions(providerId, state);
     return state;
+  }
+
+  /** Move a digest-verified single executable into the staging payload; no extraction. */
+  private async stageVerifiedBinary(
+    downloadedPath: string,
+    payloadRoot: string,
+    descriptor: PackagedProviderClient,
+  ): Promise<void> {
+    const target = assertWithin(
+      payloadRoot,
+      path.join(payloadRoot, descriptor.archiveExecutablePath),
+    );
+    await this.fileSystem.mkdir(payloadRoot, 0o700, false);
+    const parent = path.dirname(target);
+    if (parent !== payloadRoot) await this.fileSystem.mkdir(parent, 0o700, true);
+    await this.fileSystem.rename(downloadedPath, target);
   }
 
   private async assertExecutableVersion(

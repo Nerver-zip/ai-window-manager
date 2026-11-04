@@ -3,6 +3,8 @@ import { rm as removeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import {
+  CLAUDE_CODE_MAX_BINARY_BYTES,
+  CLAUDE_CODE_RELEASE_BASE_URL,
   PROVIDER_CLIENTS,
   type ProviderArchitecture,
 } from '../../scripts/provider-clients-core.js';
@@ -15,6 +17,7 @@ const SAFE_DOWNLOAD_HOSTS = new Set([
   'github.com',
   'release-assets.githubusercontent.com',
   'objects.githubusercontent.com',
+  'downloads.claude.ai',
 ]);
 
 export interface OfficialArchiveDownloaderOptions {
@@ -24,12 +27,12 @@ export interface OfficialArchiveDownloaderOptions {
   timeoutMs?: number;
 }
 
-/** Downloads only fixed release assets from the two allowlisted official repositories. */
+/** Downloads only fixed release assets from the allowlisted official release locations. */
 export function createOfficialArchiveDownloader(
   options: OfficialArchiveDownloaderOptions,
 ): RuntimeArchiveDownloader {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const maxBytes = options.maxBytes ?? 256 * 1024 * 1024;
+  const maxBytes = options.maxBytes ?? CLAUDE_CODE_MAX_BINARY_BYTES;
   const timeoutMs = options.timeoutMs ?? 120_000;
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new RangeError('archive maxBytes must be a positive safe integer');
@@ -117,6 +120,10 @@ function officialAssetUrl(
   if (!Object.hasOwn(PROVIDER_CLIENTS, providerId)) throw new Error('unsupported provider client');
   if (!STABLE_VERSION_PATTERN.test(version)) throw new Error('invalid stable provider version');
   const provider = PROVIDER_CLIENTS[providerId];
+  if (providerId === 'claude_code') {
+    // `${version}/linux-x64/claude`: the single executable named by the signed manifest.
+    return new URL(`${CLAUDE_CODE_RELEASE_BASE_URL}/${version}/${provider.assets[architecture]}`);
+  }
   const tag = providerId === 'codex' ? `rust-v${version}` : version;
   const asset = provider.assets[architecture];
   return new URL(

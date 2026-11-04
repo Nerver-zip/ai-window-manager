@@ -84,6 +84,25 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
       return { window: { ...window, phase }, cycle: previous };
   }
 
+  // A meter that reports zero use and no reset is only weak (medium) evidence
+  // of inactivity. After this window's previously anchored reset has passed,
+  // the observed cycle certainly ended and no replacement window is reported,
+  // so the reading becomes actionable. No anchor means no upgrade.
+  if (
+    !temporal &&
+    phase.value === 'INACTIVE' &&
+    phase.source === 'inferred' &&
+    phase.confidence === 'medium' &&
+    reset === null &&
+    zero &&
+    window.usageRatio !== undefined &&
+    actionable(window.usageRatio.confidence) &&
+    oldAnchor !== null &&
+    oldAnchor <= at
+  ) {
+    phase = { ...phase, confidence: 'high' };
+  }
+
   const known = actionable(phase.confidence);
   const inactiveTransition =
     previous &&

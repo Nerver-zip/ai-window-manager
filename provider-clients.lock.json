@@ -30,6 +30,21 @@
           "sha256": "045aa7112f574ef97f8320a65d30a555c4ce9bdd5e3d56d40fce7e262ca98cda"
         }
       }
+    },
+    "claude_code": {
+      "repository": "downloads.claude.ai/claude-code-releases",
+      "version": "2.1.311",
+      "tag": "2.1.311",
+      "assets": {
+        "amd64": {
+          "name": "linux-x64/claude",
+          "sha256": "86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada"
+        },
+        "arm64": {
+          "name": "linux-arm64/claude",
+          "sha256": "2e2496c9a8065df93acb0fca2d341f59a6b8777649b2e025ab8c9bcd5eef61f3"
+        }
+      }
     }
   }
 }
