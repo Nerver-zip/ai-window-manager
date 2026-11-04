@@ -201,11 +201,42 @@ honor the original HTTPS scheme and set `Secure` cookies. Do not set broad
 entries such as `0.0.0.0/0` or `::/0`; do not trust headers from arbitrary LAN
 clients.
 
+## Claude Code setup
+
+1. Set `AWM_CLAUDE_CODE_ENABLED=true` and restart. Keep
+   `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false` unless you have accepted
+   [ADR-009](adr/009-claude-code-provider.md).
+2. Sign in with the official CLI in the container. AWM never sees the code or
+   tokens:
+
+   ```bash
+   docker compose exec ai-window-manager claude-code-cli auth login
+   docker compose exec ai-window-manager claude-code-cli auth status --text
+   ```
+
+   Open the printed URL in your browser and paste the login code back into the
+   same terminal. The credentials are written by Claude Code to the
+   `awm-claude-code-state` volume (`/claude-state`, UID 10001, mode 0700).
+
+3. Within the poll interval (120 s by default), Settings and Overview show the
+   five-hour and weekly windows. `AUTH_REQUIRED` with
+   `CLAUDE_CODE_AUTH_REQUIRED` means the sign-in is missing or expired.
+4. To sign out, run `docker compose exec ai-window-manager claude-code-cli auth logout`.
+   Deleting the `awm-claude-code-state` volume also removes the sign-in.
+
+Restarting or recreating the container keeps the sign-in, because it lives in
+the named volume. An image upgrade keeps the active validated client in
+`/provider-clients`, and the packaged client remains the fallback. Claude Code's
+own updater is disabled. Updates go only through Settings → provider app
+updates, which verify the signed manifest and run a read-only `/usage` probe.
+Recovery: if readings stop with `CLAUDE_CODE_CONTRACT_CHANGED`, roll back the
+client in Settings and report the change; last-known-good readings are kept.
+
 ## Provider homes/secrets
 
 Do not mount `$HOME`. Each provider gets only the exact official-client state
-it needs. Codex and Antigravity runtime state volumes are isolated from the
-SQLite volume. With `AWM_ANTIGRAVITY_ENABLED` unset, the base Compose default is
+it needs. Codex, Antigravity and Claude Code runtime state volumes are isolated
+from the SQLite volume. Do not mount a workstation `~/.claude`. With `AWM_ANTIGRAVITY_ENABLED` unset, the base Compose default is
 disabled; the checked-in `.env.example` explicitly enables Antigravity for its
 local `awm` profile. The same distinction applies to Codex. Review the
 configuration table near the top of this guide before first startup.
@@ -323,6 +354,20 @@ docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
 The command must report the Codex version pinned in
 `provider-clients.lock.json` and a successful app-server `initialize`. It
 deliberately does not log in or call `account/rateLimits/read`.
+
+The Claude Code image check, without credentials or a model request, is:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 --user 10001:10001 \
+  --entrypoint /usr/local/bin/claude-code-cli -e AWM_CLAUDE_CODE_HOME=/tmp/cc \
+  ai-window-manager:dev --version          # "<pinned version> (Claude Code)"
+docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 --user 10001:10001 \
+  --entrypoint /usr/local/bin/claude-code-cli -e AWM_CLAUDE_CODE_HOME=/tmp/cc \
+  ai-window-manager:dev auth status --text # "Not logged in", exit 1
+```
+
+The image build itself fails unless the release manifest's OpenPGP signature
+verifies against the pinned key and the binary matches the pinned SHA-256.
 
 The Antigravity image check, without credentials or a provider request, is:
 

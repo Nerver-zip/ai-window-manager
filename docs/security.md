@@ -98,10 +98,45 @@ auth/keyring material and unrelated IDs are out of scope. This depends on an
 observed local storage layout, not an official API contract. Cleanup is
 separately durable and retries deletion only; it never causes another `Hi!`.
 
+### Claude Code
+
+AWM invokes only the official Claude Code binary pinned in
+`provider-clients.lock.json`, in a dedicated `CLAUDE_CONFIG_DIR`
+(`/claude-state`), from an empty private working directory. It uses an
+allowlisted environment: `HOME`/`CLAUDE_CONFIG_DIR`, `PATH`, locale and `TZ`, with
+Claude Code's updater, auto-memory and prompt history disabled. Inherited
+variables, including `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
+AWM's own secrets, never reach the CLI. `--bare`, `setup-token` and API keys are
+not used.
+
+Sign-in happens only in the official CLI terminal:
+`docker compose exec ai-window-manager claude-code-cli auth login`. The wrapper
+accepts only `auth login|status|logout` and `--version`. AWM's browser UI shows
+instructions only; it never accepts, relays, stores or logs Claude.ai
+authorization codes, tokens or credentials, as Anthropic's legal page forbids
+third parties from intermediating them. `auth status` output is reduced to a
+truncated one-way account fingerprint and a sanitized plan label. Email and
+organization values are never stored or returned.
+
+Usage reads run the local `/usage` command and discard all text. A
+model-produced message makes the read fail closed. The default-off start sends
+one fixed `Hi!` with no tools, MCP servers, slash commands or settings sources,
+and `--no-session-persistence`. It verifies `system/init` (no tools,
+`apiKeySource: none`, the approved model) and discards the response. It never
+persists a transcript, so no conversation cleanup is required.
+
+The binary's integrity rests on Anthropic's detached OpenPGP manifest signature,
+verified with `gpgv` against the repository-pinned key
+`provider-keys/claude-code-release.asc` (fingerprint
+`31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`), and on the manifest's SHA-256 for
+that architecture. Downloads come only from fixed paths under
+`downloads.claude.ai/claude-code-releases`.
+
 ### Provider client updates
 
-Provider-client source and runtime updates are limited to two fixed official
-repositories. The canonical lock manifest records stable semantic versions
+Provider-client source and runtime updates are limited to fixed official
+sources: the Codex and Antigravity GitHub repositories and Anthropic's signed
+Claude Code release bucket. The canonical lock manifest records stable semantic versions
 and published SHA-256 digests for each supported architecture. The runtime
 updater rejects arbitrary URLs/versions, constrains redirects to known GitHub
 release hosts, bounds archive size and contents, verifies the digest, checks

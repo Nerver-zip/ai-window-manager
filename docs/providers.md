@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Provider research last refreshed: **2026-10-20**.
+Provider research last refreshed: **2026-11-03** (Claude Code); **2026-10-20** (Codex, Antigravity).
 
 ## Normalized adapter contract
 
@@ -282,9 +282,79 @@ delete any other ID. This uses an observed local storage layout rather than an
 official deletion API; if that layout changes, cleanup fails safely and the
 durable job remains pending. Never automate the Antigravity conversation TUI.
 
+## Anthropic Claude Code
+
+Details, sources and probe evidence: [SPIKE-007](research/spikes/SPIKE-007-claude-code.md).
+Decision: [ADR-009](adr/009-claude-code-provider.md). Pinned client: `2.1.311`
+(stable channel).
+
+### Supported
+
+- Pro, Max and other subscription plans have a five-hour session limit plus a
+  weekly limit. "The period starts when you send your first message, and your
+  limit resets in full five hours later." Claude, Claude Code and Desktop share
+  these limits.
+- Headless `claude -p` with `--output-format stream-json`,
+  `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`,
+  `--setting-sources`, `--disable-slash-commands`, `--model` and `--max-turns`.
+- `claude auth status --json` (exit 0 when signed in, 1 when not) and the
+  browser-plus-pasted-code `claude auth login`.
+- An experimental `usage_report` (SDK `SDKUsageReport`) on the message that
+  delivers a `/usage` result.
+- Signed release manifests: an OpenPGP detached signature over per-platform
+  SHA-256 checksums.
+
+### Observed
+
+- `claude -p /usage` runs as a local command: a synthetic model, `num_turns: 0`
+  and `duration_api_ms: 0`. This was checked on 2.1.311 and 2.1.318 without
+  credentials. Rows are `{kind, group, percent, resets_at, scope?, severity, is_active}`
+  with kinds `session`, `weekly_all` and `weekly_scoped`.
+- With the trigger flags, `system/init` reports no tools, no MCP servers and
+  `apiKeySource: "none"`. A missing login is reported as
+  `authentication_failed` before any API call.
+- `--no-session-persistence` with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` writes no
+  transcript. This was checked on the auth-failure path only.
+
+### Inferred
+
+- `session` is the five-hour window and `weekly_all` is the weekly window.
+- `/usage` consumes no model allowance; it is still a server read and is
+  polled at most every 120 s by default.
+- One ordinary `Hi!` anchors the five-hour window and also counts against the
+  weekly allowance.
+
+### Unknown
+
+- Authenticated `usage_report` rows and the idle-window shape, because no
+  authenticated read was authorized.
+- The window-anchoring effect, its cost per plan and model, and whether
+  scheduled starts are acceptable under Anthropic's Consumer Terms. This needs
+  an owner decision.
+
+### Risk / policy
+
+Anthropic permits subscribers to sign in to the unmodified binary for ordinary
+use. It forbids third parties from offering Claude.ai login or intermediating
+Claude.ai credentials, and it forbids routing other users' requests through a
+subscription. AWM is single-operator: it never touches credentials, and sign-in
+happens only in the official CLI terminal. AWM never calls private Anthropic
+endpoints and never modifies the binary.
+
+**Implemented capability**
+
+```text
+usageRead / resetRead = official_supported; official /usage local command, experimental report
+windowTrigger         = disabled unless AWM_CLAUDE_CODE_TRIGGER_ENABLED=true (default false);
+                        claude_code_five_hour only; consumesQuota=true
+weekly / scoped meters= monitored only, never targets
+confirmation          = fresh independent /usage read; process exit never confirms
+cleanup               = none required (--no-session-persistence)
+```
+
 ## Provider contract change detection
 
-For both providers:
+For all providers:
 
 1. keep sanitized fixtures of official-client output/protocol payloads;
 2. validate structure strictly at the adapter boundary;
