@@ -489,7 +489,7 @@ export function renderTimeline(
             )}</time>
             <span class="badge badge-${severity}">${escapeHtml(severityLabel(severity))}</span>
             <span class="log-event-tags" aria-label="Event categories">${renderLogTagBadges(event.tags ?? classifyLogEvent(event.type, event.severity, event.data))}</span>
-            <span class="timeline-provider">${event.providerId && providerLogoUrl(event.providerId) ? `<img class="provider-logo-xs" src="${providerLogoUrl(event.providerId)}" alt="" width="14" height="14">` : ''}${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
+            <span class="timeline-provider">${event.providerId && providerLogoUrl(event.providerId) ? `<img class="provider-logo-xs${event.providerId === 'claude_code' ? ' provider-logo-xs--claude-code' : ''}" src="${providerLogoUrl(event.providerId)}" alt="" width="${event.providerId === 'claude_code' ? '16' : '14'}" height="${event.providerId === 'claude_code' ? '16' : '14'}">` : ''}${escapeHtml(event.providerId ? providerDisplayName(event.providerId) : 'Provider unavailable')}</span>
           </div>
           <h3 class="timeline-event">${escapeHtml(event.displayType)}</h3>
           <p class="timeline-reason"><span class="timeline-label">Why</span>${escapeHtml(

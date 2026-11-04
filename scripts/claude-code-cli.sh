@@ -1,7 +1,8 @@
 #!/bin/sh
-# Operator-only entry to the official Claude Code CLI inside the AWM container:
+# Operator-only manual fallback to the official Claude Code CLI inside AWM:
 #   docker compose exec ai-window-manager claude-code-cli auth login
-# Sign-in stays in the official CLI; AWM never relays Claude.ai codes or tokens.
+# Use this if Settings-based sign-in is unavailable or you prefer to keep the
+# browser-returned code entirely outside the AWM process.
 # Only account commands are allowed so the dedicated state volume is not used
 # for interactive sessions, and Claude Code's own updater stays disabled.
 set -eu

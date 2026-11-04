@@ -203,26 +203,44 @@ clients.
 
 ## Claude Code setup
 
-1. Set `AWM_CLAUDE_CODE_ENABLED=true` and restart. Keep
-   `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false` unless you have accepted
-   [ADR-009](adr/009-claude-code-provider.md).
-2. Sign in with the official CLI in the container. AWM never sees the code or
-   tokens:
+1. Set `AWM_CLAUDE_CODE_ENABLED=true` and restart. Window starts are allowed by
+   default (see [ADR-009](adr/009-claude-code-provider.md)). Set
+   `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`, or choose monitoring only in
+   Settings, to opt out.
+2. In Settings, select Claude Code and choose **Connect Claude Code**. AWM
+   starts the unmodified official `claude auth login` CLI in the dedicated
+   Claude configuration directory and shows its sign-in link. Complete the
+   browser flow. If Anthropic shows a one-time code, enter it in the active
+   Settings session; AWM forwards it to that CLI process, clears it immediately,
+   and does not write it to the database or logs. AWM checks sign-in separately
+   with `claude auth status --json`; it does not make a model request to verify
+   login.
+
+   The URL and optional code pass through the authenticated AWM page. Use HTTPS
+   or a trusted VPN on networks where local HTTP is not private. Anthropic's
+   terms do not clearly resolve whether this self-hosted, one-operator code
+   handoff counts as credential intermediation. To keep the code entirely out
+   of AWM, use the official CLI directly instead:
 
    ```bash
    docker compose exec ai-window-manager claude-code-cli auth login
    docker compose exec ai-window-manager claude-code-cli auth status --text
    ```
 
-   Open the printed URL in your browser and paste the login code back into the
-   same terminal. The credentials are written by Claude Code to the
-   `awm-claude-code-state` volume (`/claude-state`, UID 10001, mode 0700).
+   In that fallback, open the printed URL and paste any login code into the
+   terminal. Credentials are written only by Claude Code to the
+   `awm-claude-code-state` volume (`/claude-state`, UID 10001, mode 0700). The
+   manual CLI process is not tracked by AWM's auth-session busy checks, so do
+   not install or roll back the Claude Code client until that command exits.
 
 3. Within the poll interval (120 s by default), Settings and Overview show the
    five-hour and weekly windows. `AUTH_REQUIRED` with
    `CLAUDE_CODE_AUTH_REQUIRED` means the sign-in is missing or expired.
-4. To sign out, run `docker compose exec ai-window-manager claude-code-cli auth logout`.
-   Deleting the `awm-claude-code-state` volume also removes the sign-in.
+4. Sign-in sessions are bounded and can be canceled from Settings. To replace an
+   existing account, explicitly sign out with
+   `docker compose exec ai-window-manager claude-code-cli auth logout`, then
+   connect again. Deleting the `awm-claude-code-state` volume also removes the
+   sign-in.
 
 Restarting or recreating the container keeps the sign-in, because it lives in
 the named volume. An image upgrade keeps the active validated client in

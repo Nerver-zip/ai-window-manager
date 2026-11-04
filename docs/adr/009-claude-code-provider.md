@@ -1,6 +1,6 @@
-# ADR-009 — Claude Code provider: official `/usage` read and default-off start
+# ADR-009 — Claude Code provider: official `/usage` read and gated window start
 
-Status: Accepted for monitoring. The window start awaits an owner decision.
+Status: Accepted. The owner accepted the window start for their own subscription on 2026-11-03.
 
 ## Context
 
@@ -46,16 +46,29 @@ Claude.ai credentials".
    reset has passed. No existing adapter emits medium `INACTIVE`, so Codex and
    Antigravity are unaffected.
 
-4. **Authentication.** Sign-in, status and sign-out use only the official CLI in
-   a terminal:
-   `docker compose exec ai-window-manager claude-code-cli auth {login|status|logout}`.
-   The wrapper allows only these account commands. The web UI shows
-   instructions and connection health. It never accepts, stores or forwards
-   authorization codes or tokens. Credentials stay in the CLI-owned
-   `/claude-state` volume. `setup-token`, `--bare` and API keys are not used.
-5. **Window start.** `AWM_CLAUDE_CODE_TRIGGER_ENABLED` defaults to **false**. This
-   deliberately departs from the Codex/Antigravity default, as allowed by the
-   goal's D5 and by the Argon precedent. When the gate is enabled, the
+4. **Authentication.** The original implementation used only the official CLI
+   in a terminal; the follow-up uses AWM's shared `AuthSessionManager` to run
+   the unmodified `claude auth login` in a bounded PTY and guide the browser
+   flow in Settings. Only HTTPS URLs from the exact observed host `claude.com`
+   are exposed. When the CLI requests a one-time code, the authenticated UI
+   forwards it to the active CLI process in memory; AWM does not persist or log
+   it. The official `claude auth status --json` command independently verifies
+   sign-in, without a model request. The CLI-owned `/claude-state` volume remains
+   dedicated and unchanged. Manual recovery remains available through
+   `docker compose exec ai-window-manager claude-code-cli auth
+{login|status|logout}`. `setup-token`, `--bare` and API keys are not used.
+
+   Anthropic's current guidance permits an end user to sign into the unmodified
+   CLI with their own subscription, including where a platform hosts it, and
+   separately bars developers from collecting, storing or intermediating
+   credentials. It does not clearly determine whether a self-hosted,
+   single-operator AWM instance forwarding a one-time code is credential
+   intermediation. This remains an operator risk decision. The terminal fallback
+   keeps the code outside AWM.
+
+5. **Window start.** `AWM_CLAUDE_CODE_TRIGGER_ENABLED` defaults to **true**, like
+   the other configured providers (AGENTS.md). Operators opt out with `false` or
+   with persisted monitoring-only/manual settings. When the gate is enabled, the
    capability advertises only `claude_code_five_hour`, with
    `consumesQuota: true`. The action:
    - passes the executor's final dispatch gate immediately before spawning;
@@ -85,15 +98,21 @@ Claude.ai credentials".
 
 - Monitoring needs only a container sign-in; no host integration is required.
 - Automatic starts only become possible after a window has been observed
-  anchored and then ended, and only when the owner enables the gate.
+  anchored and then ended, and only while the gate is enabled.
 - The `usage_report` shape is experimental. Schema drift pauses readings with
   `CLAUDE_CODE_CONTRACT_CHANGED` and keeps last-known-good state.
 - The image grows by about 300 MB per architecture for the official binary.
+- Settings uses the shared authentication routes and state machine; its
+  optional one-time code is transient process input and never a durable AWM
+  record. AWM supports manual CLI recovery for operators who choose not to relay
+  the code through the app.
+- The supplied provider mark is used only as a provider-identification icon,
+  displayed larger with no background or border to preserve visibility.
 
-## Owner decision required
+## Owner decision (2026-11-03)
 
-Before setting `AWM_CLAUDE_CODE_TRIGGER_ENABLED=true`, the owner must accept that
-a scheduled ordinary request is acceptable for their own subscription under
-Anthropic's Consumer Terms and Usage Policy. This is project authorization, not
-Anthropic approval. The owner should also authorize one live acceptance
-(`/usage` plus one `Hi!`) to confirm the inferred semantics.
+The owner accepted that scheduled ordinary requests are acceptable for their own
+subscription under Anthropic's Consumer Terms and Usage Policy. This is project
+authorization, not Anthropic approval. Other operators must make their own
+assessment and can opt out. The owner also authorized one live acceptance, a
+`/usage` read plus one `Hi!`; SPIKE-007 records the results.

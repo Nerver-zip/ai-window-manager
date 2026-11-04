@@ -130,6 +130,8 @@ const authSessions = new AuthSessionManager({
     codexExecutable: providerExecutables.codex,
     antigravityHome: config.AWM_ANTIGRAVITY_HOME,
     antigravityExecutable: providerExecutables.antigravity,
+    claudeCodeHome: config.AWM_CLAUDE_CODE_HOME,
+    claudeCodeExecutable: providerExecutables.claude_code,
   }),
   sessionTimeoutMs: config.AWM_AUTH_SESSION_TIMEOUT_SECONDS * 1000,
   onAuthenticationReadRequested: (providerId, phase) => {
@@ -456,9 +458,8 @@ function registerAntigravityProvider(): void {
   );
 }
 
-/** Claude Code sign-in runs through the official CLI terminal, not a browser auth session. */
 function authenticationState(providerId: ProviderClientId): string {
-  return providerId === 'codex' || providerId === 'antigravity'
+  return providerId === 'codex' || providerId === 'antigravity' || providerId === 'claude_code'
     ? authSessions.status(providerId).state
     : 'IDLE';
 }

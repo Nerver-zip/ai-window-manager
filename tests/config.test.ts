@@ -29,7 +29,7 @@ describe('loadConfig', () => {
     expect(config.AWM_ANTIGRAVITY_HOME).toBe('./data/antigravity');
     expect(config.AWM_ANTIGRAVITY_EXECUTABLE).toBe('agy');
     expect(config.AWM_CLAUDE_CODE_ENABLED).toBe(false);
-    expect(config.AWM_CLAUDE_CODE_TRIGGER_ENABLED).toBe(false);
+    expect(config.AWM_CLAUDE_CODE_TRIGGER_ENABLED).toBe(true);
     expect(config.AWM_CLAUDE_CODE_TRIGGER_MODEL).toBe('haiku');
     expect(config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS).toBe(60);
     expect(config.AWM_CLAUDE_CODE_HOME).toBe('./data/claude-code');
@@ -51,16 +51,16 @@ describe('loadConfig', () => {
     });
   });
 
-  it('keeps the Claude Code quota action opt-in and validates its approved model', () => {
+  it('allows the Claude Code quota action to be disabled and validates its approved model', () => {
     const config = loadTestConfig({
       AWM_CLAUDE_CODE_ENABLED: 'true',
-      AWM_CLAUDE_CODE_TRIGGER_ENABLED: 'true',
+      AWM_CLAUDE_CODE_TRIGGER_ENABLED: 'false',
       AWM_CLAUDE_CODE_TRIGGER_MODEL: 'claude-haiku-5-5',
       AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: '90',
     });
     expect(config).toMatchObject({
       AWM_CLAUDE_CODE_ENABLED: true,
-      AWM_CLAUDE_CODE_TRIGGER_ENABLED: true,
+      AWM_CLAUDE_CODE_TRIGGER_ENABLED: false,
       AWM_CLAUDE_CODE_TRIGGER_MODEL: 'claude-haiku-5-5',
       AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: 90,
     });

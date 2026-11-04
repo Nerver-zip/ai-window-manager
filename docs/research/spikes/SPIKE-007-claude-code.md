@@ -5,10 +5,10 @@
 **Pinned CLI:** Claude Code `2.1.311` (official `stable` channel). Static
 inspection and probes were repeated on `2.1.318` (`latest`) where noted.
 
-**Status:** Monitoring and runtime are implemented. The quota-consuming window
-start is implemented, but it stays **off by default** and needs an owner
-decision. It has no live acceptance. No prompt was sent with any account, and no
-authenticated `/usage` read was run.
+**Status:** Monitoring, runtime and the quota-consuming start are implemented.
+The owner accepted the start on 2026-11-03 and authorized a one-time live
+acceptance: one authenticated `/usage` read and one `Hi!`, both on the owner's
+account (see [Live acceptance](#live-acceptance-2026-11-03)).
 
 **Scope:** Official documentation, release metadata, the signed release
 manifest, static string inspection of the official binary, and unauthenticated
@@ -37,8 +37,9 @@ rejected (see [Rejected alternatives](#rejected-alternatives)).
 The window start is one ordinary `claude -p "Hi!"` request with tools,
 slash-commands, MCP servers, settings sources and session persistence disabled.
 Anthropic's terms neither clearly permit nor clearly forbid scheduling a request
-to position a usage window. AWM therefore ships the start disabled
-(`AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`) and records the decision as ADR-009.
+to position a usage window. The owner accepted that risk for their own
+subscription (ADR-009). The gate therefore follows the repository default
+(enabled), and `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false` opts out.
 
 ## Sources (accessed 2026-11-03)
 
@@ -86,6 +87,30 @@ to position a usage window. AWM therefore ships the start disabled
   auth in `-p` mode. AWM builds an allowlisted environment, so the variable can
   never reach the CLI.
 - **UNKNOWN:** whether `auth status` makes a network request.
+
+#### Shared onboarding follow-up (2026-11-04)
+
+- **OBSERVED (pinned CLI 2.1.311):** `claude auth login` launched in a PTY with
+  an empty throwaway config attempted browser launch, emitted an authorization
+  URL on the exact host `claude.com`, and displayed a code-entry prompt. The
+  probe was stopped before opening the URL or submitting any code. The URL path
+  and query were discarded; no account or quota was involved.
+- The probe confirmed that the CLI can be managed as a PTY subprocess and that
+  its URL and code-prompt signals are available. It did not determine whether a
+  PTY is strictly required, whether browser callback can finish without a code,
+  or how successful login, expiry and cancellation behave. Those remain
+  unverified against a live account. Official docs describe the optional `c`
+  clipboard shortcut, code prompt, and `Login successful` followed by Enter:
+  [Authentication](https://code.claude.com/docs/en/authentication).
+- The AWM driver now launches only the official `auth login` command, validates
+  the exact observed HTTPS host, forwards an optional user-entered code only to
+  the active PTY, and uses the provider's official `auth status --json` for
+  independent verification. The CLI-owned config remains on the dedicated
+  volume. AWM does not read its credential file or make a model request for
+  verification.
+- Docker was unavailable during this follow-up, so the in-container flow was
+  not runtime-smoke-tested. Fake-process tests exercise the bounded shared
+  session lifecycle and protected web routes.
 
 ### Usage read (`/usage`)
 
@@ -183,13 +208,35 @@ The phase is computed at the completion time of the official read:
 4. **One bounded ordinary request?** Yes: `-p`, one turn, no tools, no MCP, no
    slash commands, a fixed `Hi!`, an explicit model and a 60 s bound.
 5. **No persistent conversation?** Yes, via `--no-session-persistence` and
-   `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1`. This is observed on the auth-failure
-   path only. No cleanup job is needed.
+   `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1`. This was verified on both the
+   auth-failure path and the live successful `Hi!`. No cleanup job is needed.
 6. **Independent confirmation?** Yes. The executor confirms with a fresh
    `/usage` read; the process exit alone never confirms.
-7. **Acceptable under the terms?** **Undetermined.** Usage reads are ordinary
-   use of the unmodified CLI. Scheduled starts are not addressed by the terms.
-   They are default-off and need an owner decision (ADR-009).
+7. **Acceptable under the terms?** The terms do not address scheduled starts.
+   The **owner accepted** them for their own subscription on 2026-11-03
+   (ADR-009). This is project authorization, not Anthropic approval. Usage reads
+   are ordinary use of the unmodified CLI.
+
+## Live acceptance (2026-11-03)
+
+The owner authorized this test. The real adapter code (`ClaudeCodeProvider`) ran
+its exact argument vectors against the owner's already signed-in host Claude
+Code, version 2.1.318 (not the pinned 2.1.311), from an empty working
+directory. `ANTHROPIC_API_KEY` and OAuth-token variables were removed from the
+environment. No credential file was read or copied. Values below are rounded
+and the response text was discarded.
+
+| Step          | Result                                                                                                                                                                                                                                                                                                          |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/usage` read | `UP`. Rows `session` and `weekly_all` with integer `percent`, ISO `resets_at` with a `+00:00` offset and `scope: null`. Result: `local_command: usage`, `num_turns: 0`, `duration_api_ms: 0`. Normalized: five-hour `ACTIVE/high` (about 28 %, reset in about 4.3 h); weekly `ACTIVE/high` (about 13 %).        |
+| `Hi!` start   | `init`: `claude-haiku-5-5`, `apiKeySource: none`, `tools: []`, `mcp_servers: []`. One real model turn, then `result.subtype: success`, `is_error: false`, `num_turns: 1`, `terminal_reason: completed`. A `rate_limit_event` was emitted. Adapter outcome: `succeeded` / `CLAUDE_CODE_TURN_COMPLETED` in 2.7 s. |
+| Confirmation  | A fresh `/usage` read 4 s later showed `claude_code_five_hour` `ACTIVE/high`. The reset was unchanged, because the window was already running from the owner's own activity.                                                                                                                                    |
+| Persistence   | No `projects/<workspace>` directory and no file written under `~/.claude/projects` after dispatch. The workspace stayed empty.                                                                                                                                                                                  |
+
+**Limitation:** the five-hour window was already active, so anchoring a _new_
+window from an idle state was not observed. The support article documents that
+behaviour ("starts when you send your first message"). The idle-state `/usage`
+shape also remains unobserved, and it is handled conservatively.
 
 ## Rejected alternatives
 
@@ -199,17 +246,25 @@ The phase is computed at the completion time of the official read:
   associated without extra identity plumbing. A usable start would still need a
   fresh read. The official `/usage` read removes all of these problems.
 - **`rate_limit_event` from stream-json.** It is documented only as "emitted
-  when the session encounters a rate limit", its per-window detail is marked
-  internal, and it is available only during a quota-consuming request.
+  when the session encounters a rate limit", and its per-window detail is marked
+  internal. It is available only during a quota-consuming request. The live
+  `Hi!` showed it is emitted on a normal turn, but AWM keeps confirmation on an
+  independent `/usage` read.
 - **Calling Claude's usage HTTP endpoint directly.** That is a private endpoint
   and requires token handling, so it is prohibited by AGENTS.md.
 - **`--bare`.** It never reads subscription credentials.
 - **`claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN`.** AWM would have to store
   and inject a long-lived credential.
-- **Browser-mediated sign-in (the Antigravity pattern).** Relaying the Claude.ai
-  authorization code through AWM conflicts with the "may not … intermediate
-  Claude.ai credentials" clause. Sign-in therefore happens only in the official
-  CLI terminal (`docker compose exec … claude-code-cli auth login`).
+- **Authentication interpretation risk.** The initial implementation kept
+  sign-in in the official CLI terminal because Anthropic's legal guidance bars
+  developers from collecting, storing or intermediating Claude.ai credentials.
+  The current guidance also says an end user may sign in to the unmodified
+  binary with their own subscription, including where a platform hosts it. It
+  does not clearly settle whether a self-hosted, single-operator AWM instance
+  forwarding an operator-entered one-time code is credential intermediation.
+  The shared UI flow keeps that code only in its active process session and
+  offers a terminal fallback for operators who want the code outside AWM. See
+  [legal and compliance](https://code.claude.com/docs/en/legal-and-compliance).
 - **musl binaries.** The runtime image is glibc, and the manifest-verified glibc
   build is the default the installer selects.
 

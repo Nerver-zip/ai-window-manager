@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { AuthOnboardingStatus } from '../../src/web/ui/auth-onboarding.js';
 import type { ProviderCapabilities, WindowSnapshot } from '../../src/domain/types.js';
 import { renderActivationSchedulePage, renderSettingsPage } from '../../src/web/settings-ui.js';
 import {
@@ -55,7 +56,9 @@ function claudeProvider(triggerSupported: boolean) {
 describe('Claude Code presentation', () => {
   it('labels the provider and windows without guessing scoped meter cadence', () => {
     expect(providerDisplayName('claude_code', 'claude_code')).toBe('Claude Code');
-    expect(providerLogoUrl('claude_code', 'claude_code')).toBeUndefined();
+    expect(providerLogoUrl('claude_code', 'claude_code')).toBe(
+      '/assets/images/providers/claude-code.png',
+    );
     expect(windowDisplayName('claude_code', 'claude_code_five_hour', 18_000)).toBe('5-hour window');
     expect(windowDisplayName('claude_code', 'claude_code_seven_day', 604_800)).toBe(
       'Weekly window',
@@ -69,14 +72,32 @@ describe('Claude Code presentation', () => {
 });
 
 describe('Claude Code settings', () => {
-  it('shows CLI-only sign-in guidance and the monitoring-only default', () => {
-    const html = renderSettingsPage({ csrfToken: 'csrf', providers: [claudeProvider(false)] });
-    expect(html).toContain('Claude Code sign-in');
+  it('uses shared onboarding as the primary sign-in and keeps manual CLI recovery secondary', () => {
+    const status: AuthOnboardingStatus = {
+      providerId: 'claude_code',
+      state: 'FAILED',
+      startedAt: null,
+      expiresAt: null,
+      authorizationUrl: null,
+      userCode: null,
+      requiresCodeSubmission: false,
+      reasonCode: 'AUTH_REQUIRED',
+    };
+    const html = renderSettingsPage({
+      csrfToken: 'csrf',
+      providers: [claudeProvider(false)],
+      authProviders: [{ providerId: 'claude_code', status, configured: true }],
+    });
+    expect(html).toContain('data-auth-provider-id="claude_code"');
+    expect(html).toContain('Connect Claude Code');
+    expect(html).toContain('/api/v1/providers/claude_code/auth/start');
+    expect(html).toContain('provider-logo--claude-code');
+    expect(html).toContain('width="40" height="40"');
+    expect(html).toContain('<summary>Use the official CLI instead</summary>');
     expect(html).toContain('docker compose exec ai-window-manager claude-code-cli auth login');
     expect(html).toContain('claude-code-cli auth status --text');
     expect(html).toContain('claude-code-cli auth logout');
-    expect(html).toContain('never sees your Claude.ai password');
-    expect(html).toContain('AWM_CLAUDE_CODE_TRIGGER_ENABLED=true');
+    expect(html).toContain('AWM_CLAUDE_CODE_TRIGGER_ENABLED=false');
     expect(html).not.toContain('Uses your allowance');
     expect(html).not.toMatch(/name="code"|authorization code<\/label>/i);
   });

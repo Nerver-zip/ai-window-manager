@@ -12,7 +12,7 @@ export const AUTH_SESSION_STATES = [
 ] as const;
 
 export type AuthSessionState = (typeof AUTH_SESSION_STATES)[number];
-export type AuthProviderId = 'codex' | 'antigravity';
+export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code';
 export type AuthReasonCode =
   | 'ALREADY_AUTHENTICATED'
   | 'AUTH_STATUS_UNAVAILABLE'
@@ -119,6 +119,7 @@ const PROCESS_STOP_GRACE_MS = 500;
 const ALLOWED_AUTH_HOSTS: Readonly<Record<AuthProviderId, ReadonlySet<string>>> = {
   codex: new Set(['auth.openai.com']),
   antigravity: new Set(['accounts.google.com']),
+  claude_code: new Set(['claude.com']),
 };
 
 export class AuthSessionManager {

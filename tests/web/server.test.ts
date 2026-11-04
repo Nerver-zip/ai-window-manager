@@ -470,6 +470,10 @@ describe('web server persisted overview', () => {
     expect(agy.statusCode).toBe(200);
     expect(agy.headers['content-type']).toBe('image/png');
 
+    const claudeCode = await app.inject('/assets/images/providers/claude-code.png');
+    expect(claudeCode.statusCode).toBe(200);
+    expect(claudeCode.headers['content-type']).toBe('image/png');
+
     const favicon = await app.inject('/favicon.ico');
     expect(favicon.statusCode).toBe(200);
     expect(favicon.headers['content-type']).toBe('image/png');

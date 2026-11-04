@@ -228,6 +228,7 @@ export function providerDisplayName(id: string, kind?: string): string {
 export function providerLogoUrl(id: string, kind?: string): string | undefined {
   const normalized = (kind ?? id).trim().toLowerCase();
   if (normalized === 'codex') return '/assets/images/providers/codex.png';
+  if (normalized === 'claude_code') return '/assets/images/providers/claude-code.png';
   if (normalized === 'agy' || normalized === 'antigravity')
     return '/assets/images/providers/agy.png';
   return undefined;

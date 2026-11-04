@@ -85,9 +85,11 @@ class TestDriver implements ProviderAuthDriver {
       authorizationUrl:
         this.providerId === 'codex'
           ? 'https://auth.openai.com/codex/device'
-          : 'https://accounts.google.com/o/oauth2/auth?state=synthetic',
+          : this.providerId === 'antigravity'
+            ? 'https://accounts.google.com/o/oauth2/auth?state=synthetic'
+            : 'https://claude.com/oauth/authorize?state=synthetic',
       ...(this.providerId === 'codex' ? { userCode: 'ABCD-EFGH' } : {}),
-      requiresCodeSubmission: this.providerId === 'antigravity',
+      requiresCodeSubmission: this.providerId !== 'codex',
     };
   }
 
@@ -225,6 +227,7 @@ describe('provider auth routes', () => {
   it.each([
     { providerId: 'codex' as const, action: 'Connect Codex' },
     { providerId: 'antigravity' as const, action: 'Connect Antigravity' },
+    { providerId: 'claude_code' as const, action: 'Connect Claude Code' },
   ])(
     'links a disconnected $providerId from Overview to its own Settings connection card',
     async ({ providerId, action }) => {
@@ -342,6 +345,47 @@ describe('provider auth routes', () => {
     expect(driver.submittedCodes).toEqual([code]);
     expect(driver.process.inputs).toEqual([`${code}\r`]);
 
+    const history = db.prepare('SELECT type, reason_code, data_json FROM events').all();
+    expect(JSON.stringify(history)).not.toContain(code);
+    await auth.shutdown();
+  });
+
+  it('forwards a Claude Code one-time code only to the active session and does not persist it', async () => {
+    const { app, auth, db, driver } = createAuthApp('claude_code', true);
+    const headers = {
+      origin: 'http://127.0.0.1:8787',
+      host: '127.0.0.1:8787',
+      cookie: `awm_csrf=${CSRF}`,
+      'x-csrf-token': CSRF,
+    };
+
+    const started = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/claude_code/auth/start',
+      headers,
+    });
+    await flushMicrotasks();
+    driver.process.output('stdout', 'auth-prompt\n');
+    const awaiting = await app.inject('/api/v1/providers/claude_code/auth/status');
+    const code = 'synthetic/claude-one-time-code';
+    const submitted = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/claude_code/auth/submit',
+      headers: { ...headers, 'content-type': 'application/json' },
+      payload: { code },
+    });
+
+    expect(started.statusCode).toBe(202);
+    expect(awaiting.json()).toMatchObject({
+      providerId: 'claude_code',
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+      requiresCodeSubmission: true,
+    });
+    expect(submitted.statusCode).toBe(202);
+    expect(submitted.body).not.toContain(code);
+    expect(driver.submittedCodes).toEqual([code]);
+    expect(driver.process.inputs).toEqual([`${code}\r`]);
     const history = db.prepare('SELECT type, reason_code, data_json FROM events').all();
     expect(JSON.stringify(history)).not.toContain(code);
     await auth.shutdown();

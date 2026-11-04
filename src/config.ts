@@ -119,11 +119,11 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
-  // Off by default: the window-start effect and its terms posture require an
-  // explicit operator decision (see ADR-009). Monitoring never needs it.
+  // Enabled by default like the other configured providers (owner decision,
+  // ADR-009); operators opt out with false or monitoring-only/manual settings.
   AWM_CLAUDE_CODE_TRIGGER_ENABLED: z
     .enum(['true', 'false'])
-    .default('false')
+    .default('true')
     .transform((value) => value === 'true'),
   AWM_CLAUDE_CODE_TRIGGER_MODEL: z
     .string()

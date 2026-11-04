@@ -109,17 +109,31 @@ variables, including `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
 AWM's own secrets, never reach the CLI. `--bare`, `setup-token` and API keys are
 not used.
 
-Sign-in happens only in the official CLI terminal:
-`docker compose exec ai-window-manager claude-code-cli auth login`. The wrapper
-accepts only `auth login|status|logout` and `--version`. AWM's browser UI shows
-instructions only; it never accepts, relays, stores or logs Claude.ai
-authorization codes, tokens or credentials, as Anthropic's legal page forbids
-third parties from intermediating them. `auth status` output is reduced to a
-truncated one-way account fingerprint and a sanitized plan label. Email and
-organization values are never stored or returned.
+The primary sign-in starts the unmodified CLI through the shared
+`AuthSessionManager` in a bounded PTY. The adapter exposes only HTTPS URLs from
+the exact observed host `claude.com`. If the CLI asks for a browser-returned
+one-time code, the authenticated Settings page forwards it directly to that
+process; the session manager clears it after submission, and it is not stored in
+SQLite, events, logs or responses. Successful sign-in is checked separately
+with the official `claude auth status --json`; no model request is used. The
+operator can use `docker compose exec ai-window-manager claude-code-cli auth
+login` as a fallback that keeps the code out of AWM. The wrapper accepts only
+`auth login|status|logout` and `--version`.
+
+The one-time code is authentication material while it is in flight. AWM
+protects the route with operator authentication, Origin, CSRF and rate-limit
+checks, but plain HTTP does not encrypt it on the network; use HTTPS or VPN on
+untrusted networks. Anthropic's current guidance both permits an end user to
+sign in to the unmodified CLI on a hosted platform and bars developers from
+intermediating credentials. It does not clearly settle whether this
+self-hosted, single-operator handoff is covered. The code is not persisted, but
+operators who want no ambiguity can use the terminal fallback. The official
+CLI's credentials remain in the dedicated `/claude-state` volume. `auth status`
+output is reduced to a truncated one-way account fingerprint and a sanitized
+plan label; email and organization values are never stored or returned.
 
 Usage reads run the local `/usage` command and discard all text. A
-model-produced message makes the read fail closed. The default-off start sends
+model-produced message makes the read fail closed. The gated start (opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`) sends
 one fixed `Hi!` with no tools, MCP servers, slash commands or settings sources,
 and `--no-session-persistence`. It verifies `system/init` (no tools,
 `apiKeySource: none`, the approved model) and discards the response. It never

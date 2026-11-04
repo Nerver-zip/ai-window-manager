@@ -77,8 +77,9 @@ function renderLinkOption(input: ProviderPickerLinksInput, option: ProviderPicke
 
 function renderOptionContent(option: ProviderPickerOption): string {
   const logoUrl = providerLogoUrl(option.value, option.kind);
+  const claudeLogo = (option.kind ?? option.value) === 'claude_code';
   const logo = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="" width="34" height="34">`
+    ? `<img src="${escapeHtml(logoUrl)}" alt="" width="${claudeLogo ? '40' : '34'}" height="${claudeLogo ? '40' : '34'}">`
     : `<span class="provider-picker-fallback" aria-hidden="true">${escapeHtml(option.value ? providerInitials(option.label) : 'ALL')}</span>`;
   const status =
     option.statusLabel !== undefined
@@ -91,7 +92,7 @@ function renderOptionContent(option: ProviderPickerOption): string {
   const statusMarkup = status
     ? `<span class="provider-picker-status">${escapeHtml(status)}</span>`
     : '';
-  return `<span class="provider-picker-logo">${logo}</span><span class="provider-picker-copy"><span class="provider-picker-name">${escapeHtml(option.label)}</span>${statusMarkup}</span>`;
+  return `<span class="provider-picker-logo${claudeLogo ? ' provider-picker-logo--claude-code' : ''}">${logo}</span><span class="provider-picker-copy"><span class="provider-picker-name">${escapeHtml(option.label)}</span>${statusMarkup}</span>`;
 }
 
 function providerInitials(label: string): string {

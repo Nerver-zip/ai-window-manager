@@ -299,6 +299,12 @@ Decision: [ADR-009](adr/009-claude-code-provider.md). Pinned client: `2.1.311`
   `--setting-sources`, `--disable-slash-commands`, `--model` and `--max-turns`.
 - `claude auth status --json` (exit 0 when signed in, 1 when not) and the
   browser-plus-pasted-code `claude auth login`.
+- AWM Settings can guide the official `claude auth login` flow through the
+  shared authentication session. It accepts HTTPS URLs only from the exact
+  observed host `claude.com`; a code is forwarded directly to the active CLI
+  process and is not retained. The dedicated Claude state volume remains
+  isolated. See [ADR-009](adr/009-claude-code-provider.md) for the contractual
+  interpretation risk and terminal fallback.
 - An experimental `usage_report` (SDK `SDKUsageReport`) on the message that
   delivers a `/usage` result.
 - Signed release manifests: an OpenPGP detached signature over per-platform
@@ -324,28 +330,48 @@ Decision: [ADR-009](adr/009-claude-code-provider.md). Pinned client: `2.1.311`
 - One ordinary `Hi!` anchors the five-hour window and also counts against the
   weekly allowance.
 
+- Live acceptance (owner-authorized, 2026-11-03, host CLI 2.1.318): an
+  authenticated `/usage` read returned `session` and `weekly_all` rows
+  (integer `percent`, ISO resets) with `num_turns: 0`. One `Hi!` through the
+  adapter succeeded (`haiku`, no tools or MCP, `apiKeySource: none`), and a
+  fresh `/usage` read confirmed the five-hour window `ACTIVE`. No session file
+  was written. See SPIKE-007.
+
 ### Unknown
 
-- Authenticated `usage_report` rows and the idle-window shape, because no
-  authenticated read was authorized.
-- The window-anchoring effect, its cost per plan and model, and whether
-  scheduled starts are acceptable under Anthropic's Consumer Terms. This needs
-  an owner decision.
+- The idle-window `/usage` shape, and whether a `Hi!` from an idle state anchors
+  a new window on every plan. The live test ran inside an already active window.
+- Whether scheduled starts are acceptable under Anthropic's Consumer Terms in
+  general. The owner accepted this for their own subscription (ADR-009); other
+  operators can opt out.
 
 ### Risk / policy
 
-Anthropic permits subscribers to sign in to the unmodified binary for ordinary
-use. It forbids third parties from offering Claude.ai login or intermediating
-Claude.ai credentials, and it forbids routing other users' requests through a
-subscription. AWM is single-operator: it never touches credentials, and sign-in
-happens only in the official CLI terminal. AWM never calls private Anthropic
-endpoints and never modifies the binary.
+Anthropic's [current guidance](https://code.claude.com/docs/en/legal-and-compliance)
+says an end user may sign in to the unmodified Claude Code binary with their own
+subscription, including on a hosted platform, and also says developers may not
+collect, store or intermediate Claude.ai credentials or session tokens. AWM is
+self-hosted and single-operator, but the Settings flow briefly forwards an
+operator-entered one-time code to the official CLI. The guidance does not
+clearly settle whether that handoff is considered credential intermediation in
+this deployment. AWM keeps the code only in the active process session and
+offers a terminal fallback for operators who want the code to stay entirely
+between their browser and the official CLI. AWM never reads credential files,
+calls private Anthropic endpoints, or modifies the binary.
+
+The trigger still uses the `haiku` alias and does not set an effort flag. The
+pinned CLI probe resolved `haiku` to `claude-haiku-5-5`; AWM passes an explicit
+`--model` and disables user/project/local settings sources for the isolated
+trigger, so saved settings do not override model or effort selection. No
+`--effort` argument is passed; the CLI default applies, and the probe did not
+measure the effective effort. A model-ID or effort change is a separate
+operator decision.
 
 **Implemented capability**
 
 ```text
 usageRead / resetRead = official_supported; official /usage local command, experimental report
-windowTrigger         = disabled unless AWM_CLAUDE_CODE_TRIGGER_ENABLED=true (default false);
+windowTrigger         = enabled by default; AWM_CLAUDE_CODE_TRIGGER_ENABLED=false opts out;
                         claude_code_five_hour only; consumesQuota=true
 weekly / scoped meters= monitored only, never targets
 confirmation          = fresh independent /usage read; process exit never confirms

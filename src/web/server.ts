@@ -122,6 +122,7 @@ const STATIC_IMAGE_ASSETS = [
   ['logo.png', 'logo.png'],
   ['providers/agy.png', 'providers/agy.png'],
   ['providers/antigravity.png', 'providers/antigravity.png'],
+  ['providers/claude-code.png', 'providers/claude-code.png'],
   ['providers/codex.png', 'providers/codex.png'],
 ] as const;
 const DEFAULT_REQUEST_RATE_LIMIT = 300;
@@ -130,7 +131,7 @@ const REQUEST_RATE_LIMIT_CACHE_SIZE = 5_000;
 const PROVIDER_AUTH_OPERATION_RATE_LIMIT = 12;
 const PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS = 5 * 60_000;
 const PROVIDER_CLIENT_OPERATION_RATE_LIMIT = 6;
-const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity'];
+const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity', 'claude_code'];
 const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}\n${OPERATOR_AUTH_CSS}`;
 const APP_JS_WITH_ENHANCEMENTS = `${APP_JS}\n${AUTH_ONBOARDING_JS}\n${PROGRESSIVE_INTERACTIONS_JS}`;
 
@@ -2000,8 +2001,9 @@ function renderProviderCard(
                           ? 'Automatic starts enabled'
                           : 'Automatic starts unavailable';
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
+  const claudeLogo = (provider.kind ?? provider.id) === 'claude_code';
   const logoHtml = logoUrl
-    ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
+    ? `<img class="provider-logo${claudeLogo ? ' provider-logo--claude-code' : ''}" src="${logoUrl}" alt="" width="${claudeLogo ? '40' : '34'}" height="${claudeLogo ? '40' : '34'}">`
     : '';
   const staleMessage =
     provider.freshness.stale && provider.freshness.observedAt

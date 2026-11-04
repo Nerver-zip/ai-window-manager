@@ -106,9 +106,11 @@ class FakeDriver implements ProviderAuthDriver {
         authorizationUrl:
           this.providerId === 'codex'
             ? 'https://auth.openai.com/codex/device'
-            : 'https://accounts.google.com/o/oauth2/auth?state=synthetic',
+            : this.providerId === 'antigravity'
+              ? 'https://accounts.google.com/o/oauth2/auth?state=synthetic'
+              : 'https://claude.com/oauth/authorize?state=synthetic',
         userCode: this.providerId === 'codex' ? 'ABCD-EFGH' : null,
-        requiresCodeSubmission: this.providerId === 'antigravity',
+        requiresCodeSubmission: this.providerId !== 'codex',
       };
     }
     if (line === 'bad-code')
@@ -416,6 +418,29 @@ describe('AuthSessionManager', () => {
     expect(driver.codeSubmissions).toEqual(['ABCD']);
   });
 
+  it('uses the exact Claude auth host and keeps its one-time code out of the status snapshot', async () => {
+    const driver = new FakeDriver('claude_code');
+    const requestReconcile = { count: 0 };
+    const { manager } = createManager({ driver, requestReconcile });
+    manager.start('claude_code');
+    await flushMicrotasks();
+    driver.process.output('stdout', 'auth-prompt\n');
+
+    expect(manager.status('claude_code')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+      requiresCodeSubmission: true,
+    });
+    const code = 'synthetic/one-time-code';
+    const submitted = manager.submitCode('claude_code', code);
+    await flushMicrotasks();
+
+    expect(submitted.providerId).toBe('claude_code');
+    expect(driver.codeSubmissions).toEqual([code]);
+    expect(JSON.stringify(manager.status('claude_code'))).not.toContain(code);
+    expect(requestReconcile.count).toBe(1);
+  });
+
   it.each([undefined, null, 12345, 'ABC', 'bad code', 'x'.repeat(129)])(
     'rejects malformed submitted code %s',
     async (code) => {
@@ -457,22 +482,26 @@ describe('AuthSessionManager', () => {
   });
 
   it.each([
-    'https://evil.example.test/login',
-    'https://auth.openai.com/device?access_token=synthetic-value',
+    { providerId: 'codex' as const, url: 'https://evil.example.test/login' },
+    {
+      providerId: 'codex' as const,
+      url: 'https://auth.openai.com/device?access_token=synthetic-value',
+    },
+    { providerId: 'claude_code' as const, url: 'https://claude.com.evil.example/login' },
   ])(
-    'drops untrusted auth material from %s instead of returning it to the browser',
-    async (url) => {
-      const driver = new FakeDriver();
+    'drops untrusted auth material from $url instead of returning it to the browser',
+    async ({ providerId, url }) => {
+      const driver = new FakeDriver(providerId);
       driver.parseOutput = () => ({
         awaitingUserAction: true,
         authorizationUrl: url,
         userCode: 'SENSITIVE-1234',
       });
       const { manager } = createManager({ driver });
-      manager.start('codex');
+      manager.start(providerId);
       await flushMicrotasks();
       driver.process.output('stdout', 'anything\n');
-      expect(manager.status('codex')).toMatchObject({
+      expect(manager.status(providerId)).toMatchObject({
         state: 'STARTING',
         authorizationUrl: null,
         userCode: null,

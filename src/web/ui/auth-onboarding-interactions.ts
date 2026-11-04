@@ -46,7 +46,7 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return null;
     try {
       const url = new URL(value, window.location.origin);
-      const expectedHost = providerId === 'codex' ? 'auth.openai.com' : providerId === 'antigravity' ? 'accounts.google.com' : null;
+      const expectedHost = providerId === 'codex' ? 'auth.openai.com' : providerId === 'antigravity' ? 'accounts.google.com' : providerId === 'claude_code' ? 'claude.com' : null;
       return url.protocol === 'https:' && expectedHost && url.hostname.toLowerCase() === expectedHost ? url.toString() : null;
     } catch {
       return null;

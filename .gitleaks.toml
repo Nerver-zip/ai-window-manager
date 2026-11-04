@@ -22,3 +22,10 @@ id = "generic-api-key"
   paths = [ '''^tests/providers/antigravity/provider\.test\.ts$''' ]
   regexTarget = "match"
   regexes = [ '''dedupe-synthetic-[0-9]+''' ]
+
+  [[rules.allowlists]]
+  description = "Public OpenPGP fingerprint of Anthropic's Claude Code release-signing key (downloads.claude.ai/keys/claude-code.asc), not a credential."
+  condition = "AND"
+  paths = [ '''^scripts/provider-clients-core\.ts$''' ]
+  regexTarget = "match"
+  regexes = [ '''31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE''' ]

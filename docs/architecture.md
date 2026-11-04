@@ -102,12 +102,16 @@ planned intent
 ```
 
 For Claude Code, monitoring runs the official CLI's `/usage` local command
-(no model request), and the default-off action is one bounded
+(no model request), and the gated action (enabled by default; opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`) is one bounded
 `claude -p "Hi!"` with tools, MCP servers, slash commands, settings sources and
 session persistence disabled. It creates no persisted conversation and so
-registers no cleanup job. Claude Code sign-in happens only through the official
-CLI in a terminal (`docker compose exec … claude-code-cli auth login`), never
-through the AWM browser UI. See ADR-009.
+registers no cleanup job. Claude Code sign-in uses the shared
+`AuthSessionManager` to run the unmodified official CLI in a PTY, show its
+validated Anthropic sign-in URL, and forward an optional one-time code only to
+that active process. The code is memory-only and the CLI's read-only
+`auth status --json` independently confirms success. The CLI's dedicated state
+volume remains separate. See ADR-009 for the security boundary and manual
+terminal fallback.
 
 For Codex the action is one `turn/start` through the official app-server. For
 Antigravity the experimental action uses the official `agy` stream-JSON

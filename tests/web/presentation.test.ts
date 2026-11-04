@@ -41,6 +41,8 @@ describe('human-facing presentation labels', () => {
   it.each([
     ['codex', undefined, '/assets/images/providers/codex.png'],
     ['provider-1', 'codex', '/assets/images/providers/codex.png'],
+    ['claude_code', undefined, '/assets/images/providers/claude-code.png'],
+    ['provider-claude', 'claude_code', '/assets/images/providers/claude-code.png'],
     ['antigravity', undefined, '/assets/images/providers/agy.png'],
     ['agy', undefined, '/assets/images/providers/agy.png'],
     ['provider-2', 'agy', '/assets/images/providers/agy.png'],

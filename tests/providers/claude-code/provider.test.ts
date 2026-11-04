@@ -189,6 +189,62 @@ describe('ClaudeCodeProvider usage reads', () => {
     expect(JSON.stringify(observation)).not.toContain('synthetic');
   });
 
+  it('accepts the live authenticated row shape observed on 2026-11-03 (synthetic values)', async () => {
+    const { adapter } = provider([
+      {
+        lines: [
+          INIT_EVENT,
+          usageMessage({
+            session: {
+              total_cost_usd: 0,
+              total_api_duration_ms: 0,
+              total_duration_ms: 0,
+              total_lines_added: 0,
+              total_lines_removed: 0,
+              model_usage: {},
+            },
+            rate_limits: {
+              limits: [
+                {
+                  kind: 'session',
+                  group: 'session',
+                  percent: 31,
+                  resets_at: '2026-11-03T16:10:00.123456+00:00',
+                  scope: null,
+                  severity: 'normal',
+                  is_active: true,
+                },
+                {
+                  kind: 'weekly_all',
+                  group: 'weekly',
+                  percent: 9,
+                  resets_at: '2026-11-06T13:00:00+00:00',
+                  scope: null,
+                  severity: 'normal',
+                  is_active: false,
+                },
+              ],
+              extra_usage: {
+                is_enabled: false,
+                monthly_limit: null,
+                used_credits: null,
+                utilization: null,
+              },
+            },
+          }),
+          USAGE_RESULT,
+        ],
+      },
+    ]);
+    const observation = await adapter.inspect({});
+    expect(observation.health).toBe('UP');
+    expect(observation.windows.map((window) => [window.windowKind, window.phase.value])).toEqual([
+      [CLAUDE_CODE_FIVE_HOUR_WINDOW, 'ACTIVE'],
+      [CLAUDE_CODE_SEVEN_DAY_WINDOW, 'ACTIVE'],
+    ]);
+    expect(observation.windows[0]?.resetAt?.value).toBe('2026-11-03T16:10:00.123Z');
+  });
+
   it.each([
     {
       label: 'exhausted allowance',

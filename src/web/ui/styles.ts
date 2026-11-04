@@ -109,7 +109,9 @@ main { width: 100%; max-width: var(--content-width); min-width: 0; margin: auto;
 .provider-header { border-bottom: 1px solid var(--border); margin-bottom: 22px; padding-bottom: 20px; }
 .provider-identity { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .provider-logo { width: 34px; height: 34px; border-radius: 8px; object-fit: contain; flex-shrink: 0; background: var(--surface-raised); border: 1px solid var(--border); padding: 2px; }
+.provider-logo--claude-code { width: 40px; height: 40px; border: 0; padding: 0; background: transparent; }
 .provider-logo-xs { width: 14px; height: 14px; border-radius: 3px; object-fit: contain; vertical-align: -2px; margin-right: 6px; }
+.provider-logo-xs--claude-code { width: 16px; height: 16px; border-radius: 0; vertical-align: -3px; margin-right: 5px; }
 .provider-header h2, .provider-header h3 { margin-bottom: 4px; }
 .provider-meta { margin: 0; color: var(--text-muted); font-size: 12px; }
 .provider-policy { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; margin: -4px 0 22px; border-bottom: 1px solid var(--border); padding: 0 0 18px; }
@@ -410,6 +412,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .provider-picker-option.is-unconfigured.is-selected .provider-picker-card { border-color: var(--accent); background: #1b2432; }
 .provider-picker-logo { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); }
 .provider-picker-logo img { display: block; width: 34px; height: 34px; object-fit: contain; }
+.provider-picker-logo--claude-code { width: 42px; height: 42px; flex-basis: 42px; border: 0; border-radius: 0; background: transparent; }
+.provider-picker-logo--claude-code img { width: 40px; height: 40px; }
 .provider-picker-option.is-unconfigured .provider-picker-logo img { filter: grayscale(1); opacity: .58; }
 .provider-picker-fallback { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .4px; }
 .provider-picker-option.is-unconfigured .provider-picker-fallback { color: var(--text-muted); }

@@ -1066,8 +1066,9 @@ function renderProviderCard(
       : 'Connect and verify this provider before automatic starts are available.';
   const displayName = providerDisplayName(provider.id, provider.kind);
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
+  const claudeLogo = (provider.kind ?? provider.id) === 'claude_code';
   const logoHtml = logoUrl
-    ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
+    ? `<img class="provider-logo${claudeLogo ? ' provider-logo--claude-code' : ''}" src="${logoUrl}" alt="" width="${claudeLogo ? '40' : '34'}" height="${claudeLogo ? '40' : '34'}">`
     : '';
   const connected = connection.ready;
   const authPanel = authProvider
@@ -1117,28 +1118,25 @@ function renderProviderCard(
   </article>`;
 }
 
-/**
- * Claude Code sign-in deliberately stays in the official CLI terminal: AWM never
- * relays Claude.ai authorization codes or tokens through the browser.
- */
 function renderClaudeCodeConnection(provider: SettingsProviderView): string {
-  const id = safeId(provider.id);
   const triggerSupported = provider.capabilities?.windowTrigger.supported === true;
   const command = (args: string) =>
     `<code>docker compose exec ai-window-manager claude-code-cli ${escapeHtml(args)}</code>`;
-  return `<section class="claude-code-connection" aria-labelledby="provider-${id}-cli-title">
-    <h4 id="provider-${id}-cli-title">Claude Code sign-in</h4>
-    <p>Sign in directly with the official Claude Code CLI inside the container. The app never sees your Claude.ai password, authorization code or tokens; they stay in the dedicated Claude Code state volume.</p>
-    <ol class="claude-code-steps">
-      <li>Sign in: ${command('auth login')}</li>
-      <li>Check status: ${command('auth status --text')}</li>
-      <li>Sign out: ${command('auth logout')}</li>
-    </ol>
+  return `<section class="claude-code-connection" aria-label="Claude Code usage and recovery">
+    <details class="claude-code-manual-signin">
+      <summary>Use the official CLI instead</summary>
+      <p>If browser-assisted sign-in is unavailable, run these commands in a terminal on the server:</p>
+      <ol class="claude-code-steps">
+        <li>Sign in: ${command('auth login')}</li>
+        <li>Check status: ${command('auth status --text')}</li>
+        <li>Sign out before replacing an existing account: ${command('auth logout')}</li>
+      </ol>
+    </details>
     <p class="field-help">Usage is read with the official <code>/usage</code> command (no model request) at the monitoring interval. Readings are only as fresh as the last successful check.</p>
     ${
       triggerSupported
         ? '<p class="notice"><span class="badge badge-warning">Uses your allowance</span> A Claude Code window start sends one ordinary “Hi!” request with the configured model. It counts against both the five-hour and the weekly allowance and cannot be undone.</p>'
-        : '<p class="notice"><span class="badge">Monitoring only</span> Claude Code window starts are off. They require <code>AWM_CLAUDE_CODE_TRIGGER_ENABLED=true</code> and an explicit operator decision about quota use and provider terms.</p>'
+        : '<p class="notice"><span class="badge">Monitoring only</span> Claude Code window starts are turned off for this deployment (<code>AWM_CLAUDE_CODE_TRIGGER_ENABLED=false</code>). Remove the opt-out to allow manual or scheduled starts.</p>'
     }
   </section>`;
 }
