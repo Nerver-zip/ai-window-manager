@@ -58,3 +58,19 @@ Representative repositories inspected through the GitHub connector:
 - `Nerver-zip/fisiotrack`: Docker-first deployment docs, Compose validation, backend/frontend tests and image smoke test in CI.
 
 See `docs/PLAN.md` section B for conventions adopted and consciously rejected.
+
+## Anthropic Claude Code
+
+Research snapshot: **2026-11-03**. Details in
+[SPIKE-007](spikes/SPIKE-007-claude-code.md).
+
+- CLI reference, headless, status line, settings, setup, authentication,
+  env vars, sessions, data usage: https://code.claude.com/docs/en/
+- Agent SDK TypeScript reference (`SDKUsageReport`, `SDKRateLimitEvent`):
+  https://code.claude.com/docs/en/agent-sdk/typescript
+- Legal and compliance: https://code.claude.com/docs/en/legal-and-compliance
+- Consumer Terms: https://www.anthropic.com/legal/consumer-terms
+- Usage Policy: https://www.anthropic.com/legal/aup
+- Usage limits: https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work
+- Release bucket and signing key: https://downloads.claude.ai/claude-code-releases/,
+  https://downloads.claude.ai/keys/claude-code.asc

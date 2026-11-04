@@ -18,3 +18,4 @@ docs/plans/
 ai-memory.toml
 scripts/ai-jail.sh
 scripts/agents.sh
+GOAL.md
