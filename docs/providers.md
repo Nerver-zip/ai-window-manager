@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Provider research last refreshed: **2026-10-20**.
+Provider research last refreshed: **2026-11-04** (Claude Code); **2026-10-20** (Codex, Antigravity).
 
 ## Normalized adapter contract
 
@@ -282,9 +282,125 @@ delete any other ID. This uses an observed local storage layout rather than an
 official deletion API; if that layout changes, cleanup fails safely and the
 durable job remains pending. Never automate the Antigravity conversation TUI.
 
+## Anthropic Claude Code
+
+Details, sources and probe evidence: [SPIKE-007](research/spikes/SPIKE-007-claude-code.md).
+Decision: [ADR-009](adr/009-claude-code-provider.md). Pinned client: `2.1.311`
+(stable channel).
+
+### Supported
+
+- Pro, Max and other subscription plans have a five-hour session limit plus a
+  weekly limit. "The period starts when you send your first message, and your
+  limit resets in full five hours later." Claude, Claude Code and Desktop share
+  these limits.
+- Headless `claude -p` with `--output-format stream-json`,
+  `--no-session-persistence`, `--tools ""`, `--strict-mcp-config`,
+  `--setting-sources`, `--disable-slash-commands`, `--model` and `--max-turns`.
+- `claude auth status --json` (exit 0 when signed in, 1 when not) and the
+  browser-plus-pasted-code `claude auth login`.
+- AWM Settings can guide the official `claude auth login` flow through the
+  shared authentication session. It accepts HTTPS URLs only from the exact
+  observed host `claude.com`; the CLI's one-time bootstrap URL is allowed only
+  at `/cai/oauth/authorize` with the observed OAuth parameter names, each once:
+  `code`, `client_id`, `response_type`, `redirect_uri`, `scope`,
+  `code_challenge`, `code_challenge_method` and `state`. Values are bounded;
+  the code is nonempty and printable within the 2,048-character URL limit,
+  `response_type` must be `code`, the
+  PKCE method must be `S256`, and the callback must be
+  `https://platform.claude.com/oauth/code/callback`. Unknown
+  or duplicate parameters and other callbacks are rejected. That URL is exposed
+  only through the authenticated, in-memory sign-in session, is never
+  persisted or logged, and the operator opens it explicitly; AWM does not open
+  browser tabs on its own. PTY parsing accepts visible URLs and OSC 8
+  terminal-link targets, and reassembles the bootstrap URL if terminal width
+  wraps it across lines. A browser-returned code is forwarded directly to the
+  active CLI process and is not retained. The dedicated Claude state volume
+  remains isolated. See [ADR-009](adr/009-claude-code-provider.md) for the
+  contractual interpretation risk and terminal fallback.
+- An experimental `usage_report` (SDK `SDKUsageReport`) on the message that
+  delivers a `/usage` result.
+- Signed release manifests: an OpenPGP detached signature over per-platform
+  SHA-256 checksums.
+
+### Observed
+
+- `claude -p /usage` runs as a local command: a synthetic model, `num_turns: 0`
+  and `duration_api_ms: 0`. This was checked on 2.1.311 and 2.1.318 without
+  credentials. Rows are `{kind, group, percent, resets_at, scope?, severity, is_active}`
+  with kinds `session`, `weekly_all` and `weekly_scoped`.
+- With the trigger flags, `system/init` reports no tools, no MCP servers and
+  `apiKeySource: "none"`. A missing login is reported as
+  `authentication_failed` before any API call.
+- `--no-session-persistence` with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` writes no
+  transcript. This was checked on the auth-failure path only.
+
+### Inferred
+
+- `session` is the five-hour window and `weekly_all` is the weekly window.
+- `/usage` consumes no model allowance; it is still a server read and is
+  polled at most every 120 s by default.
+- Operator-provided official CLI evidence (2026-11-04) showed that an
+  unstarted current session reports 0% used without a reset. AWM therefore
+  treats only the unscoped canonical `session` meter with exact zero use and no
+  reset as `INACTIVE`/high, allowing an explicitly enabled auto policy to
+  bootstrap its first five-hour window. Nonzero use without a reset and
+  zero-use future resets remain non-actionable. This interpretation should be
+  rechecked if the CLI changes its `/usage` output.
+- One ordinary `Hi!` anchors the five-hour window and also counts against the
+  weekly allowance.
+
+- Live acceptance (owner-authorized, 2026-11-03, host CLI 2.1.318): an
+  authenticated `/usage` read returned `session` and `weekly_all` rows
+  (integer `percent`, ISO resets) with `num_turns: 0`. One `Hi!` through the
+  adapter succeeded (`haiku`, no tools or MCP, `apiKeySource: none`), and a
+  fresh `/usage` read confirmed the five-hour window `ACTIVE`. No session file
+  was written. See SPIKE-007.
+
+### Unknown
+
+- The idle-window `/usage` shape, and whether a `Hi!` from an idle state anchors
+  a new window on every plan. The live test ran inside an already active window.
+- Whether scheduled starts are acceptable under Anthropic's Consumer Terms in
+  general. The owner accepted this for their own subscription (ADR-009); other
+  operators can opt out.
+
+### Risk / policy
+
+Anthropic's [current guidance](https://code.claude.com/docs/en/legal-and-compliance)
+says an end user may sign in to the unmodified Claude Code binary with their own
+subscription, including on a hosted platform, and also says developers may not
+collect, store or intermediate Claude.ai credentials or session tokens. AWM is
+self-hosted and single-operator, but the Settings flow briefly forwards an
+operator-entered one-time code to the official CLI. The guidance does not
+clearly settle whether that handoff is considered credential intermediation in
+this deployment. AWM keeps the code only in the active process session and
+offers a terminal fallback for operators who want the code to stay entirely
+between their browser and the official CLI. AWM never reads credential files,
+calls private Anthropic endpoints, or modifies the binary.
+
+The trigger still uses the `haiku` alias and does not set an effort flag. The
+pinned CLI probe resolved `haiku` to `claude-haiku-5-5`; AWM passes an explicit
+`--model` and disables user/project/local settings sources for the isolated
+trigger, so saved settings do not override model or effort selection. No
+`--effort` argument is passed; the CLI default applies, and the probe did not
+measure the effective effort. A model-ID or effort change is a separate
+operator decision.
+
+**Implemented capability**
+
+```text
+usageRead / resetRead = official_supported; official /usage local command, experimental report
+windowTrigger         = enabled by default; AWM_CLAUDE_CODE_TRIGGER_ENABLED=false opts out;
+                        claude_code_five_hour only; consumesQuota=true
+weekly / scoped meters= monitored only, never targets
+confirmation          = fresh independent /usage read; process exit never confirms
+cleanup               = none required (--no-session-persistence)
+```
+
 ## Provider contract change detection
 
-For both providers:
+For all providers:
 
 1. keep sanitized fixtures of official-client output/protocol payloads;
 2. validate structure strictly at the adapter boundary;

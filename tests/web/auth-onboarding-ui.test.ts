@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Script } from 'node:vm';
 import {
   renderAuthOnboarding,
+  type AuthProviderId,
   type AuthOnboardingStatus,
 } from '../../src/web/ui/auth-onboarding.js';
 import { AUTH_ONBOARDING_CSS } from '../../src/web/ui/auth-onboarding-styles.js';
@@ -40,15 +41,24 @@ class AuthUiNode {
 }
 
 interface AuthUiHarnessOptions {
+  providerId?: AuthProviderId;
   initialCode: string;
   refreshedCode: string;
   clipboard?: { writeText: (value: string) => Promise<void> } | undefined;
   legacyCopyWorks?: boolean;
   authorizationUrl?: string;
   selectionAvailable?: boolean;
+  submitErrorCode?: string;
+  refreshedReasonCode?: string | null;
 }
 
 function createAuthUiHarness(options: AuthUiHarnessOptions) {
+  const providerId = options.providerId ?? 'codex';
+  const authorizationUrl =
+    options.authorizationUrl ??
+    (providerId === 'claude_code'
+      ? 'https://claude.com/oauth/authorize?state=synthetic'
+      : 'https://auth.openai.com/device');
   const selectors = [
     '[data-auth-status-detail]',
     '[data-auth-error]',
@@ -65,23 +75,23 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     '[data-auth-copy-code]',
     '[data-auth-copy-url]',
     '[data-auth-code-input]',
+    '[data-auth-submit]',
   ];
   const nodes = new Map(selectors.map((selector) => [selector, new AuthUiNode()]));
   const code = nodes.get('[data-auth-user-code]');
   const authorization = nodes.get('[data-auth-authorization]');
   if (code) code.textContent = options.initialCode;
-  if (authorization)
-    authorization.href = options.authorizationUrl ?? 'https://auth.openai.com/device';
+  if (authorization) authorization.href = authorizationUrl;
 
   const panel = {
     dataset: {
       authState: 'AWAITING_USER_ACTION',
-      authProviderId: 'codex',
+      authProviderId: providerId,
       authRole: 'connect',
-      authStatusUrl: '/api/v1/providers/codex/auth/status',
-      authStartUrl: '/api/v1/providers/codex/auth/start',
-      authSubmitUrl: '/api/v1/providers/codex/auth/submit',
-      authCancelUrl: '/api/v1/providers/codex/auth/cancel',
+      authStatusUrl: `/api/v1/providers/${providerId}/auth/status`,
+      authStartUrl: `/api/v1/providers/${providerId}/auth/start`,
+      authSubmitUrl: `/api/v1/providers/${providerId}/auth/submit`,
+      authCancelUrl: `/api/v1/providers/${providerId}/auth/cancel`,
     },
     querySelector: (selector: string) => nodes.get(selector) ?? null,
     closest: () => null,
@@ -103,9 +113,11 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
   const legacyCopies: string[] = [];
   let legacyTextarea: { value: string } | null = null;
   const refreshedStatus = status({
+    providerId,
     state: 'AWAITING_USER_ACTION',
-    authorizationUrl: options.authorizationUrl ?? 'https://auth.openai.com/device',
+    authorizationUrl,
     userCode: options.refreshedCode,
+    reasonCode: options.refreshedReasonCode ?? null,
   });
 
   const document = {
@@ -171,6 +183,12 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     URL,
     fetch: (url: string, request: { method: string; body?: string }) => {
       fetchRequests.push({ url, method: request.method, body: request.body });
+      if (request.method === 'POST' && options.submitErrorCode) {
+        return Promise.resolve({
+          ok: false,
+          json: () => Promise.resolve({ error: { code: options.submitErrorCode } }),
+        });
+      }
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(refreshedStatus),
@@ -238,7 +256,7 @@ describe('auth onboarding UI', () => {
 
   it.each([
     ['IDLE', 'Connect Codex', 'Sign in with OpenAI to start tracking your usage windows.'],
-    ['STARTING', 'Opening sign-in…', 'Opening sign-in…'],
+    ['STARTING', 'Preparing sign-in…', 'Preparing sign-in…'],
     ['VERIFYING', 'Checking your account…', 'Checking your account…'],
     ['SUCCEEDED', 'Connected. Usage checks are ready.', 'Connected. Usage checks are ready.'],
     [
@@ -300,6 +318,83 @@ describe('auth onboarding UI', () => {
     expect(html).toContain('Enter the code shown by the provider.');
     expect(html).toContain('data-auth-submit');
     expect(html).toMatch(/data-auth-device-code hidden/);
+  });
+
+  it('explains Claude Code browser and transient code handoff in the shared panel', () => {
+    const html = renderAuthOnboarding({
+      providerId: 'claude_code',
+      status: status({
+        providerId: 'claude_code',
+        state: 'AWAITING_USER_ACTION',
+        authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+        requiresCodeSubmission: true,
+      }),
+    });
+
+    expect(html).toContain('Open the sign-in page. If Anthropic gives you a code, enter it below.');
+    expect(html).toContain(
+      'AWM forwards this one-time code to the active official CLI process and clears it after submission.',
+    );
+    expect(html).toContain('maxlength="2048"');
+  });
+
+  it('forwards a full Claude callback code with state and clears it after acceptance', async () => {
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: '',
+      refreshedCode: '',
+    });
+    const code = `${'a'.repeat(180)}#${'b'.repeat(180)}`;
+    const input = harness.nodes.get('[data-auth-code-input]');
+    const submit = harness.nodes.get('[data-auth-submit]');
+    if (!input || !submit) throw new Error('Expected the code form controls.');
+    input.value = code;
+
+    await submit.click();
+
+    const request = harness.fetchRequests.find((entry) => entry.method === 'POST');
+    expect(request).toMatchObject({
+      url: '/api/v1/providers/claude_code/auth/submit',
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    expect(input.value).toBe('');
+  });
+
+  it('keeps the code and explains a rejected submission instead of failing silently', async () => {
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: '',
+      refreshedCode: '',
+      submitErrorCode: 'AUTH_CODE_INVALID',
+    });
+    const code = 'synthetic#state';
+    const input = harness.nodes.get('[data-auth-code-input]');
+    const submit = harness.nodes.get('[data-auth-submit]');
+    const error = harness.nodes.get('[data-auth-error]');
+    if (!input || !submit || !error) throw new Error('Expected the code form controls.');
+    input.value = code;
+
+    await submit.click();
+
+    expect(input.value).toBe(code);
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain('pasted the complete code');
+  });
+
+  it('shows the official CLI rejection after returning to the awaiting state', async () => {
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: '',
+      refreshedCode: '',
+      refreshedReasonCode: 'AUTH_CODE_REJECTED',
+    });
+    const error = harness.nodes.get('[data-auth-error]');
+
+    await waitForAuthRefresh();
+
+    expect(error?.hidden).toBe(false);
+    expect(error?.textContent).toContain('Sign-in code was not accepted');
   });
 
   it('does not render unsafe or out-of-state authorization material', () => {
@@ -523,6 +618,22 @@ describe('auth onboarding UI', () => {
     expect(unavailable.nodes.get('[data-auth-copy-status]')?.textContent).toBe(
       'Copy is unavailable here. The link is selected — press Ctrl+C / Cmd+C.',
     );
+  });
+
+  it('allows the exact observed Claude sign-in host through shared link handling', async () => {
+    const url = 'https://claude.com/oauth/authorize?state=synthetic';
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: 'OLD-CODE',
+      refreshedCode: 'NEW-CODE',
+      authorizationUrl: url,
+      clipboard: { writeText: () => Promise.resolve() },
+    });
+    await waitForAuthRefresh();
+
+    await harness.nodes.get('[data-auth-copy-url]')?.click();
+
+    expect(harness.clipboardWrites).toEqual([url]);
   });
 
   it('renders the provider code unchanged in a selectable semantic output', () => {

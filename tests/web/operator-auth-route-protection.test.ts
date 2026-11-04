@@ -165,6 +165,7 @@ describe('operator authentication route protection', () => {
       '/assets/app.js',
       '/assets/images/logo.png',
       '/assets/images/providers/codex.png',
+      '/assets/images/providers/claude-code.png',
       '/favicon.ico',
       '/login',
     ]) {

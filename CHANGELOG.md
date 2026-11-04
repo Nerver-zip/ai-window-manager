@@ -4,6 +4,11 @@
 
 ### Added
 
+- Guide Claude Code's official sign-in through the shared AWM authentication
+  session. Validate `claude.com` links, forward an optional one-time code only
+  to the active CLI process, verify with `auth status --json`, and keep the
+  terminal fallback and dedicated provider volume. Add the supplied Claude Code
+  provider mark to Settings, provider selection and history.
 - Optional dedicated read-only Prometheus credential for exact GET/HEAD
   `/metrics`, with local random-token provisioning, server-side digest-only
   configuration and restart-based rotation. Browser/API authorization remains
@@ -18,6 +23,21 @@
   review-required and targetless; its additional trigger gate defaults off.
 
 ### Fixed
+
+- Make packaged static assets readable by the non-root runtime, including when
+  the local build context has restrictive file permissions.
+
+- Preserve authorization URLs carried as PTY terminal links, recognize complete
+  URLs that arrive in a final output fragment, reassemble Claude bootstrap URLs
+  wrapped by the PTY, and describe authentication as
+  preparing until a sign-in link is ready. Permit Claude Code's exact one-time
+  bootstrap URL shape in the authenticated sign-in session while continuing to
+  reject code-bearing URLs elsewhere. Remove Claude-only Settings copy so
+  provider panels use the shared capability explanations.
+
+- Apply the open Dependabot updates for Node typings, ESLint, typescript-eslint
+  and CodeQL; update Vitest and Vite to patched releases and override the
+  vulnerable minimatch 10.2.6 resolution to 11.0.4 so dependency audit passes.
 
 - Await gzip stream completion when validating provider-client archives so early
   or late CRC failures reject installation without unhandled stream errors.

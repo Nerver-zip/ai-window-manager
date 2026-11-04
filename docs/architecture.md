@@ -101,6 +101,20 @@ planned intent
   -> fresh inspection confirmation or uncertain state
 ```
 
+For Claude Code, monitoring runs the official CLI's `/usage` local command
+(no model request), and the gated action (enabled by default; opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`) is one bounded
+`claude -p "Hi!"` with tools, MCP servers, slash commands, settings sources and
+session persistence disabled. It creates no persisted conversation and so
+registers no cleanup job. Claude Code sign-in uses the shared
+`AuthSessionManager` to run the unmodified official CLI in a PTY, show its
+validated Anthropic sign-in URL, including the exact CLI-emitted bootstrap URL
+shape, and forward an optional one-time code only to that active process. Both
+one-time values are restricted to the authenticated in-memory session; the
+code is not stored. The CLI's read-only
+`auth status --json` independently confirms success. The CLI's dedicated state
+volume remains separate. See ADR-009 for the security boundary and manual
+terminal fallback.
+
 For Codex the action is one `turn/start` through the official app-server. For
 Antigravity the experimental action uses the official `agy` stream-JSON
 headless protocol, registers its returned conversation ID durably, then sends
@@ -125,8 +139,9 @@ serialized across families until confirmation or safe terminal resolution.
 
 Provider clients have immutable image-packaged fallbacks and a separate
 writable `/provider-clients` volume for staged runtime versions. Updates resolve
-only from the two official stable-release sources, require published SHA-256
-digests, run bounded version and read-only compatibility probes, and activate
+only from the fixed official stable-release sources (two GitHub repositories
+and Anthropic's signed Claude Code manifest, verified with `gpgv` against a
+pinned key), require published SHA-256 digests, run bounded version and read-only compatibility probes, and activate
 atomically with one rollback version. No credentials or quota-consuming
 actions are used for update validation; automatic stable updates are an
 off-by-default SQLite preference.

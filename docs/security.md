@@ -98,10 +98,70 @@ auth/keyring material and unrelated IDs are out of scope. This depends on an
 observed local storage layout, not an official API contract. Cleanup is
 separately durable and retries deletion only; it never causes another `Hi!`.
 
+### Claude Code
+
+AWM invokes only the official Claude Code binary pinned in
+`provider-clients.lock.json`, in a dedicated `CLAUDE_CONFIG_DIR`
+(`/claude-state`), from an empty private working directory. It uses an
+allowlisted environment: `HOME`/`CLAUDE_CONFIG_DIR`, `PATH`, locale and `TZ`, with
+Claude Code's updater, auto-memory and prompt history disabled. Inherited
+variables, including `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
+AWM's own secrets, never reach the CLI. `--bare`, `setup-token` and API keys are
+not used.
+
+The primary sign-in starts the unmodified CLI through the shared
+`AuthSessionManager` in a bounded PTY. The adapter exposes only HTTPS URLs from
+the exact observed host `claude.com`. The CLI's one-time bootstrap URL is
+accepted only at `/cai/oauth/authorize` with exactly one of each observed
+parameter: `code`, `client_id`, `response_type`, `redirect_uri`, `scope`,
+`code_challenge`, `code_challenge_method` and `state`. Values are bounded; the
+code is nonempty and printable within the 2,048-character URL limit,
+`response_type` must be `code`, the PKCE
+method must be `S256`, and the callback must be
+`https://platform.claude.com/oauth/code/callback`; unknown or duplicate
+parameters and other callbacks are rejected. The complete URL is available to
+the authenticated Settings session only in memory and is not stored in SQLite,
+events or logs. If the CLI asks for a browser-returned one-time code, the
+authenticated Settings page forwards it directly to that process; the session
+manager clears it after submission, and it is not stored in SQLite, events,
+logs or responses. Successful sign-in is checked separately with the official
+`claude auth status --json`; no model request is used. The operator can use
+`docker compose exec ai-window-manager claude-code-cli auth
+login` as a fallback that keeps both one-time values out of AWM. The wrapper
+accepts only `auth login|status|logout` and `--version`.
+
+The bootstrap URL and returned one-time code are authentication material while
+in flight. AWM protects the URL response and code-submission route with operator
+authentication, Origin, CSRF and rate-limit checks, but plain HTTP does not
+encrypt them on the network; use HTTPS or VPN on untrusted networks.
+Anthropic's current guidance both permits an end user to
+sign in to the unmodified CLI on a hosted platform and bars developers from
+intermediating credentials. It does not clearly settle whether this
+self-hosted, single-operator handoff is covered. The code is not persisted, but
+operators who want no ambiguity can use the terminal fallback. The official
+CLI's credentials remain in the dedicated `/claude-state` volume. `auth status`
+output is reduced to a truncated one-way account fingerprint and a sanitized
+plan label; email and organization values are never stored or returned.
+
+Usage reads run the local `/usage` command and discard all text. A
+model-produced message makes the read fail closed. The gated start (opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`) sends
+one fixed `Hi!` with no tools, MCP servers, slash commands or settings sources,
+and `--no-session-persistence`. It verifies `system/init` (no tools,
+`apiKeySource: none`, the approved model) and discards the response. It never
+persists a transcript, so no conversation cleanup is required.
+
+The binary's integrity rests on Anthropic's detached OpenPGP manifest signature,
+verified with `gpgv` against the repository-pinned key
+`provider-keys/claude-code-release.asc` (fingerprint
+`31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`), and on the manifest's SHA-256 for
+that architecture. Downloads come only from fixed paths under
+`downloads.claude.ai/claude-code-releases`.
+
 ### Provider client updates
 
-Provider-client source and runtime updates are limited to two fixed official
-repositories. The canonical lock manifest records stable semantic versions
+Provider-client source and runtime updates are limited to fixed official
+sources: the Codex and Antigravity GitHub repositories and Anthropic's signed
+Claude Code release bucket. The canonical lock manifest records stable semantic versions
 and published SHA-256 digests for each supported architecture. The runtime
 updater rejects arbitrary URLs/versions, constrains redirects to known GitHub
 release hosts, bounds archive size and contents, verifies the digest, checks

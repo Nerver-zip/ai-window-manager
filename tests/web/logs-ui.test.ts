@@ -382,8 +382,14 @@ describe('history UI helpers', () => {
   });
 
   it('renders provider logos in timeline items when available', () => {
-    const html = renderTimeline([event({ providerId: 'codex' }), event({ providerId: 'fake' })]);
+    const html = renderTimeline([
+      event({ providerId: 'codex' }),
+      event({ providerId: 'claude_code' }),
+      event({ providerId: 'fake' }),
+    ]);
     expect(html).toContain('/assets/images/providers/codex.png');
+    expect(html).toContain('/assets/images/providers/claude-code.png');
+    expect(html).toContain('provider-logo-xs--claude-code');
   });
 
   it('normalizes unknown event metadata to safe explicit values', () => {

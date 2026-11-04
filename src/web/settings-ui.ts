@@ -285,7 +285,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         </form>
       </section>
       <section class="card schedule-horizon-card" aria-labelledby="horizon-title"><div class="card-header"><div class="heading-copy"><p class="eyebrow">Next 24 hours</p><h2 id="horizon-title">Your schedule at a glance</h2><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p></div></div><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
-      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}${policyScope === 'argon' ? renderScheduleSafety(selectedProvider, policyScope) : ''}</section>
+      <section class="schedule-details" aria-labelledby="schedule-details-title"><p class="eyebrow">Safety check</p><h2 id="schedule-details-title">What happens next</h2>${scheduleExplanation}${policyScope === 'argon' || selectedProvider?.kind === 'claude_code' ? renderScheduleSafety(selectedProvider, policyScope) : ''}</section>
     </div>`,
   });
 }
@@ -736,6 +736,9 @@ function crossWindowSideEffectWarning(
   if (kind.includes('antigravity') || kind.includes('agy')) {
     return 'A start may use quota in both the 5-hour and weekly windows in this group. The selected group chooses the model family; it does not limit which of that family’s quotas the provider charges.';
   }
+  if (kind.includes('claude_code')) {
+    return 'Only the Claude Code 5-hour window can be started. Every start request also counts against the weekly allowance.';
+  }
   if (kind.includes('codex')) {
     return 'This choice controls which Codex window the schedule follows; a start request may still count against more than one Codex quota window.';
   }
@@ -1063,8 +1066,9 @@ function renderProviderCard(
       : 'Connect and verify this provider before automatic starts are available.';
   const displayName = providerDisplayName(provider.id, provider.kind);
   const logoUrl = providerLogoUrl(provider.id, provider.kind);
+  const claudeLogo = (provider.kind ?? provider.id) === 'claude_code';
   const logoHtml = logoUrl
-    ? `<img class="provider-logo" src="${logoUrl}" alt="" width="34" height="34">`
+    ? `<img class="provider-logo${claudeLogo ? ' provider-logo--claude-code' : ''}" src="${logoUrl}" alt="" width="${claudeLogo ? '40' : '34'}" height="${claudeLogo ? '40' : '34'}">`
     : '';
   const connected = connection.ready;
   const authPanel = authProvider
@@ -1336,6 +1340,8 @@ function renderScheduleSafety(
       return '<p class="notice"><span class="badge">Monitoring only</span> Argon is reported as a weekly-only target, but its trigger is disabled or unavailable for this exact window. Other Antigravity trigger families do not enable Argon starts.</p>';
     }
   }
+  if (provider.kind === 'claude_code' && provider.capabilities?.windowTrigger.supported !== true)
+    return '<p class="notice"><span class="badge">Monitoring only</span> Claude Code window starts are disabled (<code>AWM_CLAUDE_CODE_TRIGGER_ENABLED</code>). The schedule can be evaluated but nothing will be sent.</p>';
   if (provider.capabilities?.windowTrigger.supported !== true)
     return '<p class="notice"><span class="badge">Monitoring only</span> The schedule can be evaluated, but this provider cannot start a new window automatically.</p>';
   if (provider.mode !== 'automation' || !provider.enabled)

@@ -7,6 +7,7 @@ import type { PackagedProviderClients } from './runtime-store.js';
 export interface PackagedProviderExecutablePaths {
   readonly codex: string;
   readonly antigravity: string;
+  readonly claude_code: string;
 }
 
 /** Builds the runtime-store descriptors only from the validated canonical release manifest. */
@@ -25,6 +26,12 @@ export function packagedProviderClients(
       packagedExecutablePath: executablePaths.antigravity,
       packagedVersion: manifest.providers.antigravity.version,
       archiveExecutablePath: 'antigravity',
+    },
+    claude_code: {
+      packagedExecutablePath: executablePaths.claude_code,
+      packagedVersion: manifest.providers.claude_code.version,
+      archiveExecutablePath: 'claude',
+      artifactFormat: 'binary',
     },
   };
 }

@@ -1,10 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
+import path from 'node:path';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
+import type { ClaudeAuthState } from '../../src/providers/claude-code/protocol.js';
 import {
   createProviderAuthDrivers,
   type ProviderAuthDriverOptions,
 } from '../../src/auth/provider-drivers.js';
-import type { AuthManagedProcess } from '../../src/auth/session-manager.js';
+import { AuthSessionManager, type AuthManagedProcess } from '../../src/auth/session-manager.js';
+
+const CLAUDE_BOOTSTRAP_URL = `https://claude.com/cai/oauth/authorize?${new URLSearchParams({
+  code: 'synthetic-bootstrap-code-0123456789',
+  client_id: 'synthetic-client-id',
+  response_type: 'code',
+  redirect_uri: 'https://platform.claude.com/oauth/code/callback',
+  scope: 'user:profile user:inference',
+  code_challenge: 'A'.repeat(43),
+  code_challenge_method: 'S256',
+  state: 'synthetic-state',
+})}`;
 
 function provider(
   id: string,
@@ -35,11 +48,21 @@ function provider(
   } as unknown as ProviderAdapter & { inspectionCount: () => number };
 }
 
-function managedProcess(): AuthManagedProcess & { written: string[] } {
+function managedProcess(): AuthManagedProcess & {
+  written: string[];
+  output(stream: 'stdout' | 'stderr', chunk: string): void;
+} {
+  const outputListeners = new Set<(stream: 'stdout' | 'stderr', chunk: string | Buffer) => void>();
   return {
     written: [],
-    onOutput: () => () => {},
+    onOutput(listener) {
+      outputListeners.add(listener);
+      return () => outputListeners.delete(listener);
+    },
     onExit: () => () => {},
+    output(stream, chunk) {
+      for (const listener of outputListeners) listener(stream, chunk);
+    },
     writeInput(value: string) {
       this.written.push(value);
     },
@@ -58,7 +81,18 @@ function options(overrides: Partial<ProviderAuthDriverOptions> = {}): ProviderAu
     codexExecutable: '/opt/codex/bin/codex',
     antigravityHome: '/private/antigravity-state',
     antigravityExecutable: '/opt/antigravity/bin/agy',
+    claudeCodeHome: '/private/claude-code-state',
+    claudeCodeExecutable: '/opt/claude-code/bin/claude',
     ...overrides,
+  };
+}
+
+function claudeAdapter(state: ClaudeAuthState) {
+  return {
+    ...provider('claude_code', 'AUTH_REQUIRED'),
+    authStatus: vi.fn().mockResolvedValue(state),
+  } as unknown as ProviderAdapter & {
+    authStatus: (signal?: AbortSignal) => Promise<ClaudeAuthState>;
   };
 }
 
@@ -295,5 +329,255 @@ describe('provider auth drivers', () => {
     if (!driver) throw new Error('Codex driver missing');
     await expect(driver.verify(new AbortController().signal)).resolves.toBe(true);
     expect(codex.inspectionCount()).toBe(1);
+  });
+
+  it('checks Claude Code status without usage reads and never replaces an existing login', async () => {
+    const statusAdapter = {
+      authStatus: vi
+        .fn()
+        .mockResolvedValueOnce({ state: 'unauthenticated' })
+        .mockResolvedValueOnce({ state: 'unsupported_auth' })
+        .mockResolvedValueOnce({ state: 'unknown' })
+        .mockResolvedValueOnce({
+          state: 'authenticated',
+          accountFingerprint: 'synthetic-fingerprint',
+          subscriptionType: 'pro',
+        })
+        .mockResolvedValueOnce({
+          state: 'authenticated',
+          accountFingerprint: 'synthetic-fingerprint',
+          subscriptionType: 'pro',
+        })
+        .mockResolvedValueOnce({ state: 'unauthenticated' }),
+    };
+    const adapter = {
+      ...provider('claude_code', 'AUTH_REQUIRED'),
+      ...statusAdapter,
+    } as unknown as ProviderAdapter & typeof statusAdapter;
+    const driver = createProviderAuthDrivers(
+      options({ adapters: new Map([['claude_code', adapter]]) }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+
+    const signal = new AbortController().signal;
+    await expect(driver.isAlreadyAuthenticated(signal)).resolves.toBe(false);
+    await expect(driver.isAlreadyAuthenticated(signal)).resolves.toBe(true);
+    await expect(driver.isAlreadyAuthenticated(signal)).resolves.toBeUndefined();
+    await expect(driver.isAlreadyAuthenticated(signal)).resolves.toBe(true);
+    await expect(driver.verify(signal)).resolves.toBe(true);
+    await expect(driver.verify(signal)).resolves.toBe(false);
+    expect(statusAdapter.authStatus).toHaveBeenCalledTimes(6);
+    expect(statusAdapter.authStatus).toHaveBeenCalledWith(signal);
+  });
+
+  it('starts the official Claude Code browser flow in an isolated interactive PTY', () => {
+    const process = managedProcess();
+    const spawnProcess = vi.fn<NonNullable<ProviderAuthDriverOptions['spawnProcess']>>(
+      () => process,
+    );
+    const adapter = claudeAdapter({ state: 'unauthenticated' });
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', adapter]]),
+        claudeCodeHome: './private-claude-code-state',
+        spawnProcess,
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+
+    expect(driver.launch()).toBe(process);
+    const [executable, args, processOptions] = spawnProcess.mock.calls[0]!;
+    expect([executable, args, processOptions.cwd, processOptions.interactive]).toEqual([
+      '/opt/claude-code/bin/claude',
+      ['auth', 'login'],
+      '/tmp',
+      true,
+    ]);
+    expect(processOptions.env.HOME).toBe(path.resolve('./private-claude-code-state'));
+    expect(processOptions.env.CLAUDE_CONFIG_DIR).toBe(path.resolve('./private-claude-code-state'));
+    expect(processOptions.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(processOptions.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(path.isAbsolute(processOptions.env.CLAUDE_CONFIG_DIR ?? '')).toBe(true);
+
+    expect(
+      driver.parseOutput(
+        'stdout',
+        'Open this URL in your browser: https://claude.com/oauth/authorize?state=synthetic',
+      ),
+    ).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+      requiresCodeSubmission: false,
+    });
+    expect(driver.parseOutputFragment?.('stdout', 'Paste code here if prompted:')).toMatchObject({
+      awaitingUserAction: true,
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+      requiresCodeSubmission: true,
+    });
+    expect(driver.parseOutput('stderr', 'Invalid code')).toMatchObject({
+      awaitingUserAction: true,
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+      requiresCodeSubmission: true,
+      reasonCode: 'AUTH_CODE_REJECTED',
+    });
+
+    driver.submitCode(process, 'synthetic-one-time-code');
+    driver.onOutputLine?.(process, 'stdout', 'Login successful');
+    driver.onOutputLine?.(process, 'stdout', 'Login successful');
+    expect(process.written).toEqual(['synthetic-one-time-code\r', '\r']);
+  });
+
+  it('fails closed on unsafe Claude authorization URLs and requires the exact host', () => {
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', claudeAdapter({ state: 'unauthenticated' })]]),
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+    driver.launch();
+
+    for (const url of [
+      'https://claude.com.evil.test/oauth/start',
+      'https://user:pass@claude.com/oauth/start',
+      'https://claude.com/oauth/start?code=synthetic',
+      'https://claude.com:bad/oauth/start',
+      'http://claude.com/oauth/start',
+    ]) {
+      expect(driver.parseOutput('stdout', `Open ${url}`)).toBeUndefined();
+    }
+    expect(driver.parseOutputFragment?.('stdout', 'unrelated output')).toBeUndefined();
+  });
+
+  it('remembers a split Claude code prompt that arrives before its authorization URL', () => {
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', claudeAdapter({ state: 'unauthenticated' })]]),
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+    driver.launch();
+
+    expect(driver.parseOutputFragment?.('stdout', 'Paste code here if prompted:')).toBeUndefined();
+    expect(
+      driver.parseOutput(
+        'stdout',
+        'Open this URL: https://claude.com/oauth/authorize?state=synthetic',
+      ),
+    ).toMatchObject({ requiresCodeSubmission: true });
+  });
+
+  it('publishes a complete Claude authorization URL from an unterminated PTY fragment', () => {
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', claudeAdapter({ state: 'unauthenticated' })]]),
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code driver missing');
+    driver.launch();
+
+    expect(
+      driver.parseOutputFragment?.(
+        'stdout',
+        'Open this URL: https://claude.com/oauth/authorize?state=synthetic',
+      ),
+    ).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+      requiresCodeSubmission: false,
+    });
+  });
+
+  it('publishes Claude Code’s one-time bootstrap URL after its code prompt', () => {
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', claudeAdapter({ state: 'unauthenticated' })]]),
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+    driver.launch();
+
+    const url = CLAUDE_BOOTSTRAP_URL;
+    expect(driver.parseOutputFragment?.('stdout', `Visit ${url}`)).toBeUndefined();
+    expect(driver.parseOutputFragment?.('stdout', 'Paste code here if prompted >')).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: url,
+      requiresCodeSubmission: true,
+    });
+  });
+
+  it('reassembles Claude Code bootstrap URLs wrapped across PTY lines', () => {
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', claudeAdapter({ state: 'unauthenticated' })]]),
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+    driver.launch();
+
+    const url = CLAUDE_BOOTSTRAP_URL;
+    const splitAt = url.indexOf('code=') + 'code='.length + 12;
+    expect(
+      driver.parseOutput('stdout', `If the browser did not open, visit: ${url.slice(0, splitAt)}`),
+    ).toBeUndefined();
+    expect(driver.parseOutput('stdout', url.slice(splitAt))).toBeUndefined();
+    expect(driver.parseOutput('stdout', 'Paste code here if prompted >')).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: url,
+      requiresCodeSubmission: true,
+    });
+  });
+
+  it('moves the managed Claude sign-in session to the browser step for the observed OAuth URL', async () => {
+    const process = managedProcess();
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['claude_code', claudeAdapter({ state: 'unauthenticated' })]]),
+        spawnProcess: () => process,
+      }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+
+    const manager = new AuthSessionManager({
+      clock: {
+        now: () => new Date('2026-11-04T00:00:00.000Z'),
+        monotonicMs: () => 0,
+      },
+      drivers: new Map([['claude_code', driver]]),
+      startupTimeoutMs: 1_000,
+      sessionTimeoutMs: 10_000,
+      processStopGraceMs: 1,
+    });
+    manager.start('claude_code');
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    process.output(
+      'stdout',
+      `Opening browser to sign in…\r\nIf the browser didn't open, visit: ${CLAUDE_BOOTSTRAP_URL}\r\nPaste code here if prompted >`,
+    );
+
+    expect(manager.status('claude_code')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl: CLAUDE_BOOTSTRAP_URL,
+      requiresCodeSubmission: true,
+    });
+    await manager.shutdown();
+  });
+
+  it('does not start Claude sign-in when auth status is unavailable', async () => {
+    const adapter = claudeAdapter({ state: 'unknown' });
+    const spawnProcess = vi.fn<NonNullable<ProviderAuthDriverOptions['spawnProcess']>>(() =>
+      managedProcess(),
+    );
+    const driver = createProviderAuthDrivers(
+      options({ adapters: new Map([['claude_code', adapter]]), spawnProcess }),
+    ).get('claude_code');
+    if (!driver) throw new Error('Claude Code auth driver missing');
+
+    await expect(
+      driver.isAlreadyAuthenticated(new AbortController().signal),
+    ).resolves.toBeUndefined();
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 });

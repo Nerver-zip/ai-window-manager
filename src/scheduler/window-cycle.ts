@@ -18,11 +18,31 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
       ? window.durationSeconds.value * 1000
       : undefined;
   const zero = window.usageRatio?.value === 0;
+  const oldAnchor = previous?.anchoredResetAtMs ?? null;
+  let phase = window.phase;
+  // A previously confirmed future reset means the session has started. If a
+  // later read omits that reset and shows zero use, do not reinterpret it as
+  // the provider's never-started bootstrap state.
+  if (
+    phase.value === 'INACTIVE' &&
+    actionable(phase.confidence) &&
+    reset === null &&
+    zero &&
+    oldAnchor !== null &&
+    oldAnchor > at
+  ) {
+    phase = {
+      value: 'UNKNOWN',
+      source: 'inferred',
+      confidence: 'unknown',
+      observedAt: window.observedAt,
+    };
+  }
   const temporal =
     zero &&
-    window.phase.source === 'inferred' &&
-    window.phase.value !== 'EXHAUSTED' &&
-    (window.phase.value === 'UNKNOWN' || (reset !== null && duration !== undefined));
+    phase.source === 'inferred' &&
+    phase.value !== 'EXHAUSTED' &&
+    (phase.value === 'UNKNOWN' || (reset !== null && duration !== undefined));
   // Repeated/out-of-order reads cannot manufacture elapsed evidence or roll state back.
   if (
     previous &&
@@ -51,8 +71,6 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
     };
   }
 
-  let phase = window.phase;
-  const oldAnchor = previous?.anchoredResetAtMs ?? null;
   if (temporal) {
     let value: WindowSnapshot['phase']['value'] = 'UNKNOWN';
     if (!window.usageRatio || !actionable(window.usageRatio.confidence)) {
@@ -82,6 +100,25 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
     // elapsed time exists to distinguish a rolling projection from an anchor.
     if (value === 'UNKNOWN' && previous && at - previous.lastObservedAtMs < MIN_EVIDENCE_SPAN_MS)
       return { window: { ...window, phase }, cycle: previous };
+  }
+
+  // A meter that reports zero use and no reset is only weak (medium) evidence
+  // of inactivity. After this window's previously anchored reset has passed,
+  // the observed cycle certainly ended and no replacement window is reported,
+  // so the reading becomes actionable. No anchor means no upgrade.
+  if (
+    !temporal &&
+    phase.value === 'INACTIVE' &&
+    phase.source === 'inferred' &&
+    phase.confidence === 'medium' &&
+    reset === null &&
+    zero &&
+    window.usageRatio !== undefined &&
+    actionable(window.usageRatio.confidence) &&
+    oldAnchor !== null &&
+    oldAnchor <= at
+  ) {
+    phase = { ...phase, confidence: 'high' };
   }
 
   const known = actionable(phase.confidence);

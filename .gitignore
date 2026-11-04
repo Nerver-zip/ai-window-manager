@@ -14,3 +14,8 @@ data/
 *.log
 docs/plans/
 /dev/TODO.md
+.ai-jail
+ai-memory.toml
+scripts/ai-jail.sh
+scripts/agents.sh
+GOAL.md

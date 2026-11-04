@@ -115,6 +115,26 @@ const envSchema = z.object({
     .default('claude-sonnet-4-6'),
   AWM_ANTIGRAVITY_HOME: z.string().default('./data/antigravity'),
   AWM_ANTIGRAVITY_EXECUTABLE: z.string().default('agy'),
+  AWM_CLAUDE_CODE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  // Enabled by default like the other configured providers (owner decision,
+  // ADR-009); operators opt out with false or monitoring-only/manual settings.
+  AWM_CLAUDE_CODE_TRIGGER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  AWM_CLAUDE_CODE_TRIGGER_MODEL: z
+    .string()
+    .trim()
+    .regex(/^(?:haiku|sonnet|opus|claude-[a-z0-9][a-z0-9.-]{0,95})$/, {
+      message: 'AWM_CLAUDE_CODE_TRIGGER_MODEL must be haiku, sonnet, opus or a claude-* model ID',
+    })
+    .default('haiku'),
+  AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(60),
+  AWM_CLAUDE_CODE_HOME: z.string().default('./data/claude-code'),
+  AWM_CLAUDE_CODE_EXECUTABLE: z.string().default('claude'),
   AWM_RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
   AWM_EXECUTOR_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(5),
   AWM_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(60).max(604800).default(86400),

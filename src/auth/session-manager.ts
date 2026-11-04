@@ -1,4 +1,5 @@
 import type { Clock } from '../scheduler/clock.js';
+import { validateAuthorizationUrl } from './authorization-url.js';
 
 export const AUTH_SESSION_STATES = [
   'IDLE',
@@ -12,7 +13,7 @@ export const AUTH_SESSION_STATES = [
 ] as const;
 
 export type AuthSessionState = (typeof AUTH_SESSION_STATES)[number];
-export type AuthProviderId = 'codex' | 'antigravity';
+export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code';
 export type AuthReasonCode =
   | 'ALREADY_AUTHENTICATED'
   | 'AUTH_STATUS_UNAVAILABLE'
@@ -27,7 +28,7 @@ export type AuthReasonCode =
   | 'AUTH_CODE_REJECTED'
   | 'AUTH_PROVIDER_UNAVAILABLE';
 
-/** Safe browser-facing state. No process output, submitted code or credential is included. */
+/** Browser-facing state contains only validated URLs and never process output or submitted codes. */
 export interface AuthSessionSnapshot {
   providerId: AuthProviderId;
   state: AuthSessionState;
@@ -111,15 +112,10 @@ const TERMINAL_STATES = new Set<AuthSessionState>(['SUCCEEDED', 'FAILED', 'TIMED
 const DEFAULT_STARTUP_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_LINE_BYTES = 16 * 1024;
-const MAX_AUTH_CODE_LENGTH = 128;
+const MAX_AUTH_CODE_LENGTH = 2_048;
 const VERIFY_ATTEMPTS = 6;
 const VERIFY_INTERVAL_MS = 500;
 const PROCESS_STOP_GRACE_MS = 500;
-
-const ALLOWED_AUTH_HOSTS: Readonly<Record<AuthProviderId, ReadonlySet<string>>> = {
-  codex: new Set(['auth.openai.com']),
-  antigravity: new Set(['accounts.google.com']),
-};
 
 export class AuthSessionManager {
   private readonly sessions = new Map<AuthProviderId, Session>();
@@ -206,7 +202,9 @@ export class AuthSessionManager {
     if (
       code.length < 4 ||
       code.length > MAX_AUTH_CODE_LENGTH ||
-      !/^[A-Za-z0-9._~+/=-]+$/.test(code)
+      !(session.providerId === 'claude_code'
+        ? /^[A-Za-z0-9._~+/=-]+(?:#[A-Za-z0-9._~+/=-]+)?$/.test(code)
+        : /^[A-Za-z0-9._~+/=-]+$/.test(code))
     ) {
       throw new AuthSessionError('CODE_INVALID');
     }
@@ -546,29 +544,6 @@ function idleSnapshot(providerId: AuthProviderId): AuthSessionSnapshot {
   };
 }
 
-function validateAuthorizationUrl(
-  providerId: AuthProviderId,
-  value: string | null | undefined,
-): string | undefined {
-  if (!value || value.length > 2048) return undefined;
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol !== 'https:' ||
-      !ALLOWED_AUTH_HOSTS[providerId].has(url.hostname.toLowerCase()) ||
-      url.username ||
-      url.password
-    )
-      return undefined;
-    const sensitiveParameter = /^(access_token|refresh_token|id_token|token|authorization|code)$/i;
-    if ([...url.searchParams.keys()].some((name) => sensitiveParameter.test(name)))
-      return undefined;
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
 function validateDisplayCode(value: string | null | undefined): string | undefined {
   if (!value || value.length > 64 || !/^[A-Za-z0-9-]{4,64}$/.test(value)) return undefined;
   return value;
@@ -576,6 +551,10 @@ function validateDisplayCode(value: string | null | undefined): string | undefin
 
 const ESCAPE = String.fromCharCode(0x1b);
 const BELL = String.fromCharCode(0x07);
+const OSC8_HYPERLINK_SEQUENCE = new RegExp(
+  `${ESCAPE}\\]8;[^;]*;([^${BELL}${ESCAPE}]*)(${BELL}|${ESCAPE}\\\\)`,
+  'g',
+);
 const OSC_SEQUENCE = new RegExp(`${ESCAPE}\\][^${BELL}]*(?:${BELL}|${ESCAPE}\\\\)`, 'g');
 const CSI_SEQUENCE = new RegExp(`${ESCAPE}\\[[0-?]*[ -/]*[@-~]`, 'g');
 const REMOVED_CONTROL_CODES = [
@@ -592,6 +571,9 @@ const REMOVED_CONTROLS = new RegExp(
 
 function stripTerminalControls(value: string): string {
   return value
+    .replaceAll(OSC8_HYPERLINK_SEQUENCE, (_sequence: string, target: string) =>
+      target ? `${target} ` : '',
+    )
     .replaceAll(OSC_SEQUENCE, '')
     .replaceAll(CSI_SEQUENCE, '')
     .replaceAll(REMOVED_CONTROLS, '');

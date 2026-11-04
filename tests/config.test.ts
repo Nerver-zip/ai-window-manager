@@ -28,6 +28,12 @@ describe('loadConfig', () => {
     expect(config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL).toBe('claude-sonnet-4-6');
     expect(config.AWM_ANTIGRAVITY_HOME).toBe('./data/antigravity');
     expect(config.AWM_ANTIGRAVITY_EXECUTABLE).toBe('agy');
+    expect(config.AWM_CLAUDE_CODE_ENABLED).toBe(false);
+    expect(config.AWM_CLAUDE_CODE_TRIGGER_ENABLED).toBe(true);
+    expect(config.AWM_CLAUDE_CODE_TRIGGER_MODEL).toBe('haiku');
+    expect(config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS).toBe(60);
+    expect(config.AWM_CLAUDE_CODE_HOME).toBe('./data/claude-code');
+    expect(config.AWM_CLAUDE_CODE_EXECUTABLE).toBe('claude');
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
     expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);
     expect(config.AWM_RETENTION_INTERVAL_SECONDS).toBe(86400);
@@ -43,6 +49,25 @@ describe('loadConfig', () => {
       AWM_CODEX_TRIGGER_ENABLED: false,
       AWM_ANTIGRAVITY_TRIGGER_ENABLED: false,
     });
+  });
+
+  it('allows the Claude Code quota action to be disabled and validates its approved model', () => {
+    const config = loadTestConfig({
+      AWM_CLAUDE_CODE_ENABLED: 'true',
+      AWM_CLAUDE_CODE_TRIGGER_ENABLED: 'false',
+      AWM_CLAUDE_CODE_TRIGGER_MODEL: 'claude-haiku-5-5',
+      AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: '90',
+    });
+    expect(config).toMatchObject({
+      AWM_CLAUDE_CODE_ENABLED: true,
+      AWM_CLAUDE_CODE_TRIGGER_ENABLED: false,
+      AWM_CLAUDE_CODE_TRIGGER_MODEL: 'claude-haiku-5-5',
+      AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: 90,
+    });
+    expect(() => loadTestConfig({ AWM_CLAUDE_CODE_TRIGGER_MODEL: 'gpt-5; rm -rf /' })).toThrow(
+      /AWM_CLAUDE_CODE_TRIGGER_MODEL/,
+    );
+    expect(() => loadTestConfig({ AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: '121' })).toThrow();
   });
 
   it('rejects an invalid timezone before startup', () => {

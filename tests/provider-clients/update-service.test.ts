@@ -73,6 +73,7 @@ function makeHarness(
   const states: Record<ProviderClientId, ProviderClientRuntimeState> = {
     codex: state('codex'),
     antigravity: state('antigravity'),
+    claude_code: state('claude_code'),
   };
   const getStateImpl: ProviderClientUpdateServiceOptions['runtimeStore']['getState'] =
     options.getState ?? ((providerId) => Promise.resolve({ ...states[providerId] }));

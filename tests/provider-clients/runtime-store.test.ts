@@ -97,7 +97,8 @@ function runtimeArchive(
   version: string,
   pathOverride?: string,
 ): Buffer {
-  const executablePath = providerId === 'codex' ? 'bin/codex' : 'antigravity';
+  const executablePath =
+    providerId === 'codex' ? 'bin/codex' : providerId === 'claude_code' ? 'claude' : 'antigravity';
   const payload = binaryPayload(providerId, version);
   if (!pathOverride) return archive([{ name: executablePath, data: payload, mode: 0o755 }]);
   return archive([
@@ -122,10 +123,13 @@ function makeHarness(
   const runtimeRoot = path.join(directory, 'runtime');
   const packagedCodex = path.join(packageRoot, 'codex', 'bin', 'codex');
   const packagedAgy = path.join(packageRoot, 'antigravity', 'bin', 'agy');
+  const packagedClaude = path.join(packageRoot, 'claude-code', 'bin', 'claude');
   fs.mkdirSync(path.dirname(packagedCodex), { recursive: true });
   fs.mkdirSync(path.dirname(packagedAgy), { recursive: true });
+  fs.mkdirSync(path.dirname(packagedClaude), { recursive: true });
   fs.writeFileSync(packagedCodex, binaryPayload('codex', '1.0.0'), { mode: 0o555 });
   fs.writeFileSync(packagedAgy, binaryPayload('antigravity', '1.0.0'), { mode: 0o555 });
+  fs.writeFileSync(packagedClaude, binaryPayload('claude_code', '1.0.0'), { mode: 0o555 });
 
   const archives = new Map<string, Buffer>();
   const downloaded: Array<{ providerId: ProviderClientId; version: string; sha256: string }> = [];
@@ -153,7 +157,12 @@ function makeHarness(
       const version = contents.slice(separator + 1);
       return Promise.resolve({
         exitCode: 0,
-        stdout: providerId === 'codex' ? `codex-cli ${version}\n` : `${version}\n`,
+        stdout:
+          providerId === 'codex'
+            ? `codex-cli ${version}\n`
+            : providerId === 'claude_code'
+              ? `${version} (Claude Code)\n`
+              : `${version}\n`,
         stderr: '',
       });
     });
@@ -169,6 +178,12 @@ function makeHarness(
         packagedExecutablePath: packagedAgy,
         packagedVersion: '1.0.0',
         archiveExecutablePath: 'antigravity',
+      },
+      claude_code: {
+        packagedExecutablePath: packagedClaude,
+        packagedVersion: '1.0.0',
+        archiveExecutablePath: 'claude',
+        artifactFormat: 'binary',
       },
     },
     downloadArchive:
@@ -209,6 +224,7 @@ function makeHarness(
     runtimeRoot,
     packagedCodex,
     packagedAgy,
+    packagedClaude,
     store,
     archives,
     downloaded,
@@ -227,7 +243,12 @@ function runtimeVersions(runtimeRoot: string, providerId: ProviderClientId): str
 }
 
 function shellVersion(providerId: ProviderClientId, version: string, extra = ''): Buffer {
-  const output = providerId === 'codex' ? `codex-cli ${version}` : version;
+  const output =
+    providerId === 'codex'
+      ? `codex-cli ${version}`
+      : providerId === 'claude_code'
+        ? `${version} (Claude Code)`
+        : version;
   return Buffer.from(`#!/bin/sh\nprintf '%s\\n' '${output}'\n${extra}`, 'utf8');
 }
 
@@ -297,6 +318,46 @@ describe('ProviderClientRuntimeStore', () => {
         .readdirSync(path.join(harness.runtimeRoot, 'codex'))
         .some((name) => name.startsWith('.staging-')),
     ).toBe(false);
+  });
+
+  it('installs a digest-verified single official executable without archive extraction', async () => {
+    const harness = makeHarness();
+    await harness.store.initialize();
+    const candidate = harness.putArchive(
+      'claude_code',
+      '1.1.0',
+      binaryPayload('claude_code', '1.1.0'),
+    );
+
+    const result = await harness.store.install('claude_code', candidate);
+
+    expect(result.state).toMatchObject({
+      activeVersion: '1.1.0',
+      activeSource: 'runtime',
+      previousVersion: '1.0.0',
+    });
+    expect(fs.readlinkSync(result.state.executablePath)).toBe(
+      path.join('versions', '1.1.0', 'claude'),
+    );
+    expect(fs.readFileSync(result.state.executablePath, 'utf8')).toBe('claude_code@1.1.0');
+    expect(harness.probes).toContainEqual({
+      providerId: 'claude_code',
+      version: '1.1.0',
+      quotaConsumptionAllowed: false,
+    });
+    await expectStoreError(
+      harness.store.install(
+        'claude_code',
+        harness.putArchive('claude_code', '1.2.0', binaryPayload('claude_code', '1.1.9')),
+      ),
+      'CANDIDATE_VERSION_MISMATCH',
+    );
+    await expectStoreError(
+      harness.store.install('claude_code', { version: '1.3.0', sha256: '0'.repeat(64) }),
+      'ARCHIVE_DOWNLOAD_FAILED',
+    );
+    const rolledBack = await harness.store.rollback('claude_code');
+    expect(rolledBack).toMatchObject({ activeVersion: '1.0.0', activeSource: 'packaged' });
   });
 
   it('does not activate an archive whose digest differs from trusted release metadata', async () => {
@@ -528,6 +589,12 @@ describe('ProviderClientRuntimeStore', () => {
               packagedVersion: '1.0.0',
               archiveExecutablePath: 'antigravity',
             },
+            claude_code: {
+              packagedExecutablePath: harness.packagedClaude,
+              packagedVersion: '1.0.0',
+              archiveExecutablePath: 'claude',
+              artifactFormat: 'binary',
+            },
           },
           downloadArchive: () => Promise.resolve(),
           compatibilityProbe: () => Promise.resolve(),
@@ -553,6 +620,12 @@ describe('ProviderClientRuntimeStore', () => {
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
         },
+        claude_code: {
+          packagedExecutablePath: harness.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
+        },
       },
       downloadArchive: failingDownloader,
       runProcess: (executablePath, args) => {
@@ -561,7 +634,12 @@ describe('ProviderClientRuntimeStore', () => {
         const version = contents.slice(contents.indexOf('@') + 1);
         return Promise.resolve({
           exitCode: 0,
-          stdout: executablePath === harness.packagedCodex ? `codex-cli ${version}` : version,
+          stdout:
+            executablePath === harness.packagedCodex
+              ? `codex-cli ${version}`
+              : executablePath === harness.packagedClaude
+                ? `${version} (Claude Code)`
+                : version,
           stderr: '',
         });
       },
@@ -600,6 +678,12 @@ describe('ProviderClientRuntimeStore', () => {
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
         },
+        claude_code: {
+          packagedExecutablePath: harness.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
+        },
       },
       downloadArchive: (request, destinationPath) => {
         const bytes = runtimeArchive(request.providerId, request.version);
@@ -612,7 +696,12 @@ describe('ProviderClientRuntimeStore', () => {
         const version = content.slice(content.indexOf('@') + 1);
         return Promise.resolve({
           exitCode: 0,
-          stdout: executablePath === harness.packagedCodex ? `codex-cli ${version}` : version,
+          stdout:
+            executablePath === harness.packagedCodex
+              ? `codex-cli ${version}`
+              : executablePath === harness.packagedClaude
+                ? `${version} (Claude Code)`
+                : version,
           stderr: '',
         });
       },
@@ -696,6 +785,12 @@ describe('ProviderClientRuntimeStore', () => {
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
         },
+        claude_code: {
+          packagedExecutablePath: limited.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
+        },
       },
       downloadArchive: (_request, destinationPath) => {
         fs.writeFileSync(destinationPath, tooMany, { flag: 'wx' });
@@ -707,7 +802,12 @@ describe('ProviderClientRuntimeStore', () => {
         const version = content.slice(content.indexOf('@') + 1);
         return Promise.resolve({
           exitCode: 0,
-          stdout: executablePath === limited.packagedCodex ? `codex-cli ${version}` : version,
+          stdout:
+            executablePath === limited.packagedCodex
+              ? `codex-cli ${version}`
+              : executablePath === limited.packagedClaude
+                ? `${version} (Claude Code)`
+                : version,
           stderr: '',
         });
       },
@@ -725,8 +825,10 @@ describe('ProviderClientRuntimeStore', () => {
     const harness = makeHarness({ useDefaultProcessRunner: true });
     fs.chmodSync(harness.packagedCodex, 0o755);
     fs.chmodSync(harness.packagedAgy, 0o755);
+    fs.chmodSync(harness.packagedClaude, 0o755);
     fs.writeFileSync(harness.packagedCodex, shellVersion('codex', '1.0.0'));
     fs.writeFileSync(harness.packagedAgy, shellVersion('antigravity', '1.0.0'));
+    fs.writeFileSync(harness.packagedClaude, shellVersion('claude_code', '1.0.0'));
     await harness.store.initialize();
 
     const candidate = harness.putArchive(
@@ -764,8 +866,10 @@ describe('ProviderClientRuntimeStore', () => {
       prepare: (harness: ReturnType<typeof makeHarness>) => {
         fs.chmodSync(harness.packagedCodex, 0o755);
         fs.chmodSync(harness.packagedAgy, 0o755);
+        fs.chmodSync(harness.packagedClaude, 0o755);
         fs.writeFileSync(harness.packagedCodex, shellVersion('codex', '1.0.0'));
         fs.writeFileSync(harness.packagedAgy, shellVersion('antigravity', '1.0.0'));
+        fs.writeFileSync(harness.packagedClaude, shellVersion('claude_code', '1.0.0'));
       },
       limits: { processOutputBytes: 4 },
     },
@@ -1050,6 +1154,12 @@ describe('ProviderClientRuntimeStore', () => {
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
         },
+        claude_code: {
+          packagedExecutablePath: streamFailure.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
+        },
       },
       downloadArchive: (request, destinationPath) => {
         fs.writeFileSync(destinationPath, runtimeArchive(request.providerId, request.version));
@@ -1060,7 +1170,12 @@ describe('ProviderClientRuntimeStore', () => {
         const version = contents.slice(contents.indexOf('@') + 1);
         return Promise.resolve({
           exitCode: 0,
-          stdout: executablePath === streamFailure.packagedCodex ? `codex-cli ${version}` : version,
+          stdout:
+            executablePath === streamFailure.packagedCodex
+              ? `codex-cli ${version}`
+              : executablePath === streamFailure.packagedClaude
+                ? `${version} (Claude Code)`
+                : version,
           stderr: '',
         });
       },
@@ -1103,6 +1218,12 @@ describe('ProviderClientRuntimeStore', () => {
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
         },
+        claude_code: {
+          packagedExecutablePath: streamedOverLimit.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
+        },
       },
       downloadArchive: (request, destinationPath) => {
         fs.writeFileSync(destinationPath, runtimeArchive(request.providerId, request.version));
@@ -1114,7 +1235,11 @@ describe('ProviderClientRuntimeStore', () => {
         return Promise.resolve({
           exitCode: 0,
           stdout:
-            executablePath === streamedOverLimit.packagedCodex ? `codex-cli ${version}` : version,
+            executablePath === streamedOverLimit.packagedCodex
+              ? `codex-cli ${version}`
+              : executablePath === streamedOverLimit.packagedClaude
+                ? `${version} (Claude Code)`
+                : version,
           stderr: '',
         });
       },
@@ -1319,7 +1444,11 @@ describe('ProviderClientRuntimeStore', () => {
         if (executablePath.includes('.staging-')) beforeProbeController.abort();
         return Promise.resolve({
           exitCode: 0,
-          stdout: executablePath.includes('antigravity') ? version : `codex-cli ${version}`,
+          stdout: executablePath.includes('antigravity')
+            ? version
+            : executablePath.includes('claude')
+              ? `${version} (Claude Code)`
+              : `codex-cli ${version}`,
           stderr: '',
         });
       },
@@ -1353,6 +1482,12 @@ describe('ProviderClientRuntimeStore', () => {
         packagedExecutablePath: harness.packagedAgy,
         packagedVersion: '1.0.0',
         archiveExecutablePath: 'antigravity',
+      },
+      claude_code: {
+        packagedExecutablePath: harness.packagedClaude,
+        packagedVersion: '1.0.0',
+        archiveExecutablePath: 'claude',
+        artifactFormat: 'binary' as const,
       },
     };
     const construct = (overrides: Record<string, unknown>) =>
@@ -1456,12 +1591,23 @@ describe('ProviderClientRuntimeStore', () => {
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
         },
+        claude_code: {
+          packagedExecutablePath: harness.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
+        },
       },
       downloadArchive: () => Promise.resolve(),
       runProcess: (executablePath) =>
         Promise.resolve({
           exitCode: 0,
-          stdout: executablePath === harness.packagedCodex ? 'codex-cli 1.0.0' : '1.0.0',
+          stdout:
+            executablePath === harness.packagedCodex
+              ? 'codex-cli 1.0.0'
+              : executablePath === harness.packagedClaude
+                ? '1.0.0 (Claude Code)'
+                : '1.0.0',
           stderr: '',
         }),
       compatibilityProbe: () => Promise.resolve(),
@@ -1490,6 +1636,12 @@ describe('ProviderClientRuntimeStore', () => {
           packagedExecutablePath: genericFailure.packagedAgy,
           packagedVersion: '1.0.0',
           archiveExecutablePath: 'antigravity',
+        },
+        claude_code: {
+          packagedExecutablePath: genericFailure.packagedClaude,
+          packagedVersion: '1.0.0',
+          archiveExecutablePath: 'claude',
+          artifactFormat: 'binary',
         },
       },
       downloadArchive: () => Promise.resolve(),

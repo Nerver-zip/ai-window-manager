@@ -25,6 +25,15 @@ const manifest = {
         arm64: { name: 'agy_cli_linux_arm64.tar.gz', sha256: 'd'.repeat(64) },
       },
     },
+    claude_code: {
+      repository: 'downloads.claude.ai/claude-code-releases',
+      version: '2.1.311',
+      tag: '2.1.311',
+      assets: {
+        amd64: { name: 'linux-x64/claude', sha256: 'e'.repeat(64) },
+        arm64: { name: 'linux-arm64/claude', sha256: 'f'.repeat(64) },
+      },
+    },
   },
 };
 
@@ -34,6 +43,7 @@ describe('packaged provider clients', () => {
       packagedProviderClients(manifest, {
         codex: '/opt/codex/bin/codex',
         antigravity: '/opt/antigravity/bin/agy',
+        claude_code: '/opt/claude-code/bin/claude',
       }),
     ).toEqual({
       codex: {
@@ -45,6 +55,12 @@ describe('packaged provider clients', () => {
         packagedExecutablePath: '/opt/antigravity/bin/agy',
         packagedVersion: '1.2.11',
         archiveExecutablePath: 'antigravity',
+      },
+      claude_code: {
+        packagedExecutablePath: '/opt/claude-code/bin/claude',
+        packagedVersion: '2.1.311',
+        archiveExecutablePath: 'claude',
+        artifactFormat: 'binary',
       },
     });
   });
@@ -59,7 +75,11 @@ describe('packaged provider clients', () => {
             codex: { ...manifest.providers.codex, repository: 'attacker/repository' },
           },
         },
-        { codex: '/opt/codex/bin/codex', antigravity: '/opt/antigravity/bin/agy' },
+        {
+          codex: '/opt/codex/bin/codex',
+          antigravity: '/opt/antigravity/bin/agy',
+          claude_code: '/opt/claude-code/bin/claude',
+        },
       ),
     ).toThrow(/official repository/);
   });

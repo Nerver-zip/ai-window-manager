@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import {
+  CLAUDE_CODE_RELEASE_KEY_FINGERPRINT,
+  createGpgvManifestVerifier,
   checkProviderClientPins,
   createOfficialReleaseSource,
   parseProviderClientManifest,
@@ -16,7 +18,18 @@ async function main(): Promise<void> {
   rejectArguments();
   const manifestPath = fileURLToPath(new URL('../provider-clients.lock.json', import.meta.url));
   const manifest = parseProviderClientManifest(JSON.parse(await readFile(manifestPath, 'utf8')));
-  const statuses = await checkProviderClientPins(manifest, createOfficialReleaseSource());
+  const statuses = await checkProviderClientPins(
+    manifest,
+    createOfficialReleaseSource(fetch, {
+      verifyClaudeCodeManifest: createGpgvManifestVerifier({
+        armoredPublicKey: await readFile(
+          fileURLToPath(new URL('../provider-keys/claude-code-release.asc', import.meta.url)),
+          'utf8',
+        ),
+        expectedFingerprint: CLAUDE_CODE_RELEASE_KEY_FINGERPRINT,
+      }),
+    }),
+  );
 
   console.log('Provider client source pins');
   for (const status of statuses) {

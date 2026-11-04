@@ -100,6 +100,19 @@ ambiguous dispatched request is not retried automatically. A pre-dispatch
 model/target mismatch fails without sending a prompt; a result that becomes
 ambiguous after possible dispatch stays uncertain.
 
+### Claude Code
+
+| Variable                                 | Default                                                   | Notes                                                                         |
+| ---------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `AWM_CLAUDE_CODE_ENABLED`                | `false`                                                   | Enables monitoring through the official `/usage` command.                     |
+| `AWM_CLAUDE_CODE_TRIGGER_ENABLED`        | `true`                                                    | Quota-consuming start (five-hour window only); `false` opts out. See ADR-009. |
+| `AWM_CLAUDE_CODE_TRIGGER_MODEL`          | `haiku`                                                   | `haiku`, `sonnet`, `opus` or a `claude-*` model ID.                           |
+| `AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS` | `60`                                                      | 5–120. A timeout after spawn stays `uncertain`.                               |
+| `AWM_CLAUDE_CODE_HOME`                   | `./data/claude-code` (image: `/claude-state`)             | Dedicated `CLAUDE_CONFIG_DIR`; CLI-owned credentials.                         |
+| `AWM_CLAUDE_CODE_EXECUTABLE`             | `claude` (image: `/provider-clients/claude_code/current`) | Pinned official binary.                                                       |
+
+Claude Code is seeded with a 120-second minimum poll interval.
+
 ## Runtime configuration: SQLite
 
 The UI/API changes non-secret product behavior in DB:

@@ -11,7 +11,7 @@ export const AUTH_SESSION_STATES = [
   'CANCELED',
 ] as const;
 
-export type AuthProviderId = 'codex' | 'antigravity';
+export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code';
 export type AuthSessionState = (typeof AUTH_SESSION_STATES)[number];
 
 export interface AuthOnboardingStatus {
@@ -35,11 +35,12 @@ export interface AuthOnboardingInput {
 const PROVIDER_LABELS: Readonly<Record<AuthProviderId, string>> = {
   codex: 'Codex',
   antigravity: 'Antigravity',
+  claude_code: 'Claude Code',
 };
 
 const STATE_DETAILS: Readonly<Record<AuthSessionState, string>> = {
   IDLE: '',
-  STARTING: 'Opening sign-in…',
+  STARTING: 'Preparing sign-in…',
   AWAITING_USER_ACTION: '',
   VERIFYING: 'Checking your account…',
   SUCCEEDED: 'Connected. Usage checks are ready.',
@@ -66,6 +67,7 @@ const REASON_DETAILS: Readonly<Record<string, string>> = {
 const PROVIDER_SIGN_IN_COPY: Readonly<Record<AuthProviderId, string>> = {
   codex: 'Sign in with OpenAI to start tracking your usage windows.',
   antigravity: 'Sign in with Google to start tracking your usage windows.',
+  claude_code: 'Sign in with your Anthropic account to start tracking Claude Code usage.',
 };
 
 const ACTIVE_STATES = new Set<AuthSessionState>(['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING']);
@@ -161,7 +163,7 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
               ? 'Sign-in timed out. Try again.'
               : 'Sign-in canceled. Try again.')
         : undefined,
-    expiresAt: active ? status.expiresAt : null,
+    expiresAt: awaiting ? status.expiresAt : null,
   });
 }
 
@@ -202,6 +204,14 @@ function renderPanel(input: RenderPanelInput): string {
   const providerCopy = input.input.reconnect
     ? `Reconnect your ${providerLabel} account to resume usage tracking.`
     : PROVIDER_SIGN_IN_COPY[input.input.providerId];
+  const nextStepCopy =
+    input.input.providerId === 'claude_code'
+      ? 'Open the sign-in page. If Anthropic gives you a code, enter it below.'
+      : 'Open the sign-in page and finish the request there.';
+  const codeHint =
+    input.input.providerId === 'claude_code'
+      ? 'AWM forwards this one-time code to the active official CLI process and clears it after submission.'
+      : 'Enter the code shown by the provider.';
   const actionLabel = input.input.reconnect
     ? `Reconnect ${providerLabel}`
     : `Connect ${providerLabel}`;
@@ -218,7 +228,7 @@ function renderPanel(input: RenderPanelInput): string {
     <div class="auth-onboarding__awaiting" data-auth-awaiting${input.awaitingHidden ? ' hidden' : ''}>
       <div class="auth-onboarding__next-step">
         <span class="field-label">Next step</span>
-        <p>Open the sign-in page and finish the request there.</p>
+        <p>${escapeHtml(nextStepCopy)}</p>
         <div class="auth-onboarding__link-actions"><a class="button button-secondary" data-auth-authorization${link ? '' : ' hidden'}${link ? ` href="${escapeHtml(link)}"` : ''} target="_blank" rel="noopener noreferrer">Open sign-in</a><button class="auth-copy-button" type="button" data-auth-copy-url${link ? '' : ' hidden'} aria-label="Copy sign-in link"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="11" rx="2"/><path d="M13 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span>Copy link</span></button></div>
         <output class="auth-onboarding__copy-fallback" data-auth-copy-fallback aria-label="Sign-in link" hidden></output>
       </div>
@@ -229,9 +239,9 @@ function renderPanel(input: RenderPanelInput): string {
       </div>
       <div class="auth-onboarding__code" data-auth-code-section${input.requiresCodeSubmission ? '' : ' hidden'}>
         <label class="field-label" for="${panelId}-code">Sign-in code</label>
-        <p class="auth-onboarding__code-hint">Enter the code shown by the provider.</p>
+        <p class="auth-onboarding__code-hint">${escapeHtml(codeHint)}</p>
         <div class="auth-onboarding__code-row">
-        <input id="${panelId}-code" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" maxlength="128" data-auth-code-input aria-describedby="${panelId}-code-hint">
+        <input id="${panelId}-code" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" maxlength="2048" data-auth-code-input aria-describedby="${panelId}-code-hint">
           <button class="button button-primary" type="button" data-auth-submit>Continue</button>
         </div>
         <p id="${panelId}-code-hint" class="field-help">The code is cleared after submission.</p>

@@ -195,6 +195,20 @@ MVP computes a deterministic recommendation; it does **not** solve a generalized
 
 No ML/LLM is involved.
 
+### Claude Code phase evidence
+
+Claude Code's `/usage` meters can report zero use with no reset. The adapter
+emits that as `INACTIVE` at medium confidence, which is not actionable. The
+shared cycle tracker raises it to high only when the same window had a
+previously anchored reset that has now passed. In that case the observed cycle
+has certainly ended, and no replacement window is reported. The cycle then
+advances to the old anchor, so a manual or automatic start is bound to, and
+confirmed against, the new cycle. Zero use with a future reset stays `UNKNOWN`
+for the existing rolling-projection inference. No other adapter emits
+medium-confidence `INACTIVE`. Only `claude_code_five_hour` is a trigger target.
+The weekly window is never started, because one request always counts against
+both allowances.
+
 ## Reconcile loop
 
 Default every 30s:
@@ -227,6 +241,14 @@ evidence identifies the next availability/active window, or a trustworthy
 active-to-inactive transition when reset timestamps are unavailable. A moving
 `now + duration` reset never changes that identity. Fixed/custom/active-hours
 policies keep their explicit schedule anchors.
+
+Claude Code's unscoped canonical `session` meter is a bootstrap exception: an
+official exact-zero reading with no reset is treated as `INACTIVE` at high
+confidence because the owner confirmed this is how an unstarted session is
+reported. This lets an enabled auto policy create the first start intent. The
+exception does not apply to nonzero use without a reset, zero use with a future
+reset, or other provider meters. If a previously anchored reset is still in the
+future, a later missing-reset reading is `UNKNOWN` until that anchor passes.
 
 A Codex zero-used snapshot alone has unknown phase. For inferred zero-used
 windows, two observations spanning at least 15 seconds distinguish a reset

@@ -74,6 +74,31 @@ function releaseFromPin(providerId: ProviderClientId): ReleaseFixture {
   };
 }
 
+function claudeRelease(
+  version: string,
+  amd64 = cloneManifest().providers.claude_code.assets.amd64.sha256,
+  arm64 = cloneManifest().providers.claude_code.assets.arm64.sha256,
+): unknown {
+  return {
+    source: 'anthropic-signed-manifest',
+    channel: 'stable',
+    version,
+    signerFingerprint: '31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE',
+    manifest: {
+      version,
+      buildDate: '2026-10-26T19:03:46Z',
+      platforms: {
+        'linux-x64': { binary: 'claude', checksum: amd64, size: 293_776_752 },
+        'linux-arm64': { binary: 'claude', checksum: arm64, size: 293_658_808 },
+      },
+    },
+  };
+}
+
+function currentClaudeRelease(): unknown {
+  return claudeRelease(cloneManifest().providers.claude_code.version);
+}
+
 describe('provider client source pins', () => {
   it('validates fixed official repositories and supported Linux assets', () => {
     const manifest = cloneManifest();
@@ -138,6 +163,7 @@ describe('provider client source pins', () => {
     const releases = {
       codex: nextFixtureRelease('codex', codexFixture),
       antigravity: nextFixtureRelease('antigravity', antigravityFixture),
+      claude_code: currentClaudeRelease(),
     };
     const result = await checkProviderClientPins(manifest, releaseSource(releases));
 
@@ -156,6 +182,13 @@ describe('provider client source pins', () => {
         latestVersion: nextPatchVersion(manifest.providers.antigravity.version),
         status: 'update-available',
       },
+      {
+        providerId: 'claude_code',
+        displayName: 'Claude Code',
+        pinnedVersion: manifest.providers.claude_code.version,
+        latestVersion: manifest.providers.claude_code.version,
+        status: 'current',
+      },
     ]);
   });
 
@@ -165,7 +198,11 @@ describe('provider client source pins', () => {
     const antigravityRelease = nextFixtureRelease('antigravity', antigravityFixture);
     const result = await bumpProviderClientPins(
       before,
-      releaseSource({ codex: codexRelease, antigravity: antigravityRelease }),
+      releaseSource({
+        codex: codexRelease,
+        antigravity: antigravityRelease,
+        claude_code: currentClaudeRelease(),
+      }),
     );
 
     expect(result.updated).toEqual(['codex', 'antigravity']);
@@ -197,9 +234,13 @@ describe('provider client source pins', () => {
 
     const candidateStatus = await checkProviderClientPins(
       result.manifest,
-      releaseSource({ codex: codexRelease, antigravity: antigravityRelease }),
+      releaseSource({
+        codex: codexRelease,
+        antigravity: antigravityRelease,
+        claude_code: currentClaudeRelease(),
+      }),
     );
-    expect(candidateStatus.map(({ status }) => status)).toEqual(['current', 'current']);
+    expect(candidateStatus.map(({ status }) => status)).toEqual(['current', 'current', 'current']);
   });
 
   it('does not downgrade a pin and reports when a pin is ahead of the latest release', async () => {
@@ -239,11 +280,13 @@ describe('provider client source pins', () => {
           },
         ],
       },
+      claude_code: claudeRelease(lowerVersion(manifest.providers.claude_code.version)),
     };
     const status = await checkProviderClientPins(manifest, releaseSource(releases));
     const result = await bumpProviderClientPins(manifest, releaseSource(releases));
 
     expect(status.map(({ status: pinStatus }) => pinStatus)).toEqual([
+      'pinned-ahead',
       'pinned-ahead',
       'pinned-ahead',
     ]);

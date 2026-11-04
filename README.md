@@ -4,7 +4,7 @@
 
 <h1 align="center">AI Window Manager</h1>
 
-<p align="center">Self-hosted monitoring and scheduling for Codex and Antigravity usage windows.</p>
+<p align="center">Self-hosted monitoring and scheduling for Codex, Antigravity and Claude Code usage windows.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&amp;logoColor=white" alt="TypeScript">
@@ -38,7 +38,7 @@ starts with your schedule instead of checking providers manually.
 
 ## Features
 
-- Monitor reported five-hour and weekly usage windows for Codex and Antigravity.
+- Monitor reported five-hour and weekly usage windows for Codex, Antigravity and Claude Code.
   Argon is currently supported as a separate weekly window only.
 - Schedule starts by local times, a repeating cycle, active hours, or whenever
   a window is eligible; alternatively, keep automatic starts off and start a
@@ -83,10 +83,11 @@ use persisted state; opening a dashboard does not itself inspect a provider.
 
 ## Providers
 
-| Provider           | Monitoring                                | Window start                                  | Authentication                                         |
-| ------------------ | ----------------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
-| OpenAI Codex       | Official Codex app-server rate-limit data | Minimal app-server turn                       | Official OpenAI sign-in, guided in AWM                 |
-| Google Antigravity | Official `agy` CLI usage output           | Normal prompt using the selected family model | Official Google sign-in through the CLI, guided in AWM |
+| Provider              | Monitoring                                                       | Window start                                                                                             | Authentication                                                        |
+| --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| OpenAI Codex          | Official Codex app-server rate-limit data                        | Minimal app-server turn                                                                                  | Official OpenAI sign-in, guided in AWM                                |
+| Google Antigravity    | Official `agy` CLI usage output                                  | Normal prompt using the selected family model                                                            | Official Google sign-in through the CLI, guided in AWM                |
+| Anthropic Claude Code | Official `claude -p /usage` structured report (no model request) | One ordinary `Hi!` request (five-hour window only); opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false` | Official CLI login guided in AWM Settings; optional terminal fallback |
 
 Codex policies target one exact reported window at a time. Antigravity has
 independent policies for **Gemini Models**, **Claude and GPT Models**, and
@@ -100,6 +101,21 @@ operator-confirmed evidence. Argon is separate: its trigger gate defaults off,
 its model must be one of the supported Argon slugs, and there is no live AWM
 Argon trigger acceptance. Any normal prompt can consume quota. AWM persists an
 intent before dispatch and does not blindly retry uncertain outcomes.
+
+Claude Code is monitored with the official CLI's `/usage` command, which does
+not send a model request. Connect it from Settings; AWM runs the unmodified CLI
+in the dedicated Claude state volume and independently verifies sign-in with
+`claude auth status --json`. If the CLI requests a browser-returned code, it can
+be entered in the active AWM session and is forwarded to the CLI without being
+persisted. Operators who prefer the code never to enter AWM can use the
+[terminal fallback](docs/deployment.md#claude-code-setup). Like the other providers,
+its quota gate is enabled by default; set `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false` to opt out. Anthropic's
+terms do not explicitly address scheduled window starts; the project owner has
+accepted that risk for their own subscription, which is not Anthropic approval.
+A start counts against both the five-hour and the weekly allowance, and only the
+five-hour window can be targeted. See
+[ADR-009](docs/adr/009-claude-code-provider.md) and
+[SPIKE-007](docs/research/spikes/SPIKE-007-claude-code.md).
 
 ## Scheduling
 
@@ -166,17 +182,20 @@ from the Codex and Google provider sign-ins.
 
 The checked-in `.env.example` is the full local `awm` profile:
 
-| Setting                                                         | Example default        | Purpose                                                                                |
-| --------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
-| `AWM_HOST_BIND`                                                 | `0.0.0.0`              | Host interfaces that publish the web service. Use `127.0.0.1` for local-only access.   |
-| `AWM_HOST_PORT`                                                 | `8878`                 | Host port; the container listens on `8787`.                                            |
-| `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`    | Initial timezone used for schedules and date displays.                                 |
-| `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                 | Enable the corresponding provider client.                                              |
-| `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                 | Allow that provider's trigger capability. Set `false` to opt out.                      |
-| `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED`                         | `false`                | Additional Argon-only action gate; the global Antigravity gate must also be enabled.   |
-| `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL`                           | `gemini-4-argon-low`   | Argon model (`low`, `medium`, `high` slug), or blank to disable Argon model selection. |
-| `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low` | Model used for Gemini-family starts.                                                   |
-| `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`    | Model used for Claude/GPT-family starts.                                               |
+| Setting                                                         | Example default        | Purpose                                                                                   |
+| --------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
+| `AWM_HOST_BIND`                                                 | `0.0.0.0`              | Host interfaces that publish the web service. Use `127.0.0.1` for local-only access.      |
+| `AWM_HOST_PORT`                                                 | `8878`                 | Host port; the container listens on `8787`.                                               |
+| `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`    | Initial timezone used for schedules and date displays.                                    |
+| `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                 | Enable the corresponding provider client.                                                 |
+| `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                 | Allow that provider's trigger capability. Set `false` to opt out.                         |
+| `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED`                         | `false`                | Additional Argon-only action gate; the global Antigravity gate must also be enabled.      |
+| `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL`                           | `gemini-4-argon-low`   | Argon model (`low`, `medium`, `high` slug), or blank to disable Argon model selection.    |
+| `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low` | Model used for Gemini-family starts.                                                      |
+| `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`    | Model used for Claude/GPT-family starts.                                                  |
+| `AWM_CLAUDE_CODE_ENABLED`                                       | `false`                | Enable Claude Code monitoring.                                                            |
+| `AWM_CLAUDE_CODE_TRIGGER_ENABLED`                               | `true`                 | Allow quota-consuming Claude Code starts (five-hour window only). Set `false` to opt out. |
+| `AWM_CLAUDE_CODE_TRIGGER_MODEL`                                 | `haiku`                | Model for that start request (`haiku`, `sonnet`, `opus` or a `claude-*` ID).              |
 
 An enabled trigger gate does not itself send a request. Provider connection,
 automation mode, an enabled schedule, and an exact target are still required.
@@ -208,6 +227,10 @@ Open [http://127.0.0.1:8878](http://127.0.0.1:8878) on the host, or
 ### 5. Connect providers and choose a target
 
 Use **Connect** on Overview or Settings and follow the in-app sign-in flow.
+For Claude Code, use **Connect Claude Code** in Settings and complete the
+official browser flow. The terminal fallback remains available in
+[Claude Code setup](docs/deployment.md#claude-code-setup).
+
 Credentials remain in the official provider clients' dedicated persistent
 volumes; do not copy workstation credentials into the container. Verify that
 the provider becomes connected and observations appear before configuring
@@ -278,6 +301,7 @@ Named volumes preserve state across container rebuilds and ordinary `down`:
 | `awm-codex-state`         | Codex client state and authentication.                      |
 | `awm-antigravity-state`   | Antigravity CLI state and authentication.                   |
 | `awm-antigravity-keyring` | Dedicated Antigravity keyring data.                         |
+| `awm-claude-code-state`   | Claude Code CLI state and authentication.                   |
 | `awm-provider-clients`    | Validated active provider-client versions.                  |
 
 Do not use `docker compose down -v` unless you intend to delete these volumes,
