@@ -166,6 +166,9 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
 COPY --from=build /app/assets ./assets
+# Static assets are read by the non-root server; normalize restrictive local
+# file modes in the build context before packaging them into the runtime image.
+RUN chmod -R a+rX /app/assets
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=antigravity /opt/antigravity /opt/antigravity
 COPY --from=claude-code /opt/claude-code /opt/claude-code

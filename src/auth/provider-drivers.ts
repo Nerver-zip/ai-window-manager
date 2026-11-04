@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { validateAuthorizationUrl } from './authorization-url.js';
 import type { ProviderAdapter } from '../providers/provider.js';
 import type { ProviderInspectionCoordinator } from '../providers/inspection-coordinator.js';
 import type { ClaudeAuthState } from '../providers/claude-code/protocol.js';
@@ -75,7 +76,7 @@ class CodexAuthDriver implements ProviderAuthDriver {
   }
 
   parseOutput(_stream: AuthOutputStream, line: string): AuthOutputUpdate | undefined {
-    const url = extractUrl(line, 'auth.openai.com');
+    const url = extractUrl(line, 'codex');
     if (url) this.authorizationUrl = url;
     if (!this.authorizationUrl) return undefined;
 
@@ -231,7 +232,7 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
     const candidate = this.pendingAuthorizationUrl;
     this.pendingAuthorizationUrl = undefined;
     if (!candidate) return undefined;
-    const url = extractUrl(candidate, 'accounts.google.com');
+    const url = extractUrl(candidate, 'antigravity');
     if (!url) return undefined;
 
     this.authorizationUrl = url;
@@ -257,6 +258,7 @@ class AntigravityAuthDriver implements ProviderAuthDriver {
 class ClaudeCodeAuthDriver implements ProviderAuthDriver {
   readonly providerId = 'claude_code' as const;
   private authorizationUrl: string | undefined;
+  private pendingBootstrapUrl: string | undefined;
   private codeEntryPromptObserved = false;
   private loginSuccessAcknowledged = false;
 
@@ -274,6 +276,7 @@ class ClaudeCodeAuthDriver implements ProviderAuthDriver {
 
   launch(): AuthManagedProcess {
     this.authorizationUrl = undefined;
+    this.pendingBootstrapUrl = undefined;
     this.codeEntryPromptObserved = false;
     this.loginSuccessAcknowledged = false;
     return (this.options.spawnProcess ?? spawnAuthProcess)(
@@ -311,11 +314,37 @@ class ClaudeCodeAuthDriver implements ProviderAuthDriver {
       };
     }
 
-    if (CLAUDE_CODE_ENTRY_PROMPT.test(line)) this.codeEntryPromptObserved = true;
-    const url = extractUrl(line, 'claude.com');
+    const codePrompt = CLAUDE_CODE_ENTRY_PROMPT.exec(line);
+    if (codePrompt) this.codeEntryPromptObserved = true;
+
+    const candidate = extractUrlCandidate(line);
+    if (candidate && isClaudeCodeBootstrapUrlCandidate(candidate)) {
+      this.pendingBootstrapUrl = candidate;
+      if (codePrompt || this.codeEntryPromptObserved) return this.publishPendingBootstrapUrl();
+      return undefined;
+    }
+
+    if (this.pendingBootstrapUrl) {
+      if (codePrompt) {
+        const beforePrompt = line.slice(0, codePrompt.index).trim();
+        if (beforePrompt && isAuthorizationUrlContinuation(beforePrompt)) {
+          this.appendPendingBootstrapUrl(beforePrompt);
+        }
+        return this.publishPendingBootstrapUrl();
+      }
+
+      const continuation = line.trim();
+      if (continuation && isAuthorizationUrlContinuation(continuation)) {
+        this.appendPendingBootstrapUrl(continuation);
+        return undefined;
+      }
+      this.pendingBootstrapUrl = undefined;
+    }
+
+    const url = extractUrl(line, 'claude_code');
     if (url) this.authorizationUrl = url;
 
-    if (this.authorizationUrl && (url || CLAUDE_CODE_ENTRY_PROMPT.test(line))) {
+    if (this.authorizationUrl && (url || codePrompt)) {
       return {
         awaitingUserAction: true,
         authorizationUrl: this.authorizationUrl,
@@ -325,9 +354,30 @@ class ClaudeCodeAuthDriver implements ProviderAuthDriver {
     return undefined;
   }
 
+  private appendPendingBootstrapUrl(continuation: string): void {
+    if (!this.pendingBootstrapUrl) return;
+    const combined = `${this.pendingBootstrapUrl}${continuation}`;
+    this.pendingBootstrapUrl = Buffer.byteLength(combined) <= 2048 ? combined : undefined;
+  }
+
+  private publishPendingBootstrapUrl(): AuthOutputUpdate | undefined {
+    const candidate = this.pendingBootstrapUrl;
+    this.pendingBootstrapUrl = undefined;
+    const url = validateAuthorizationUrl('claude_code', candidate);
+    if (!url) return undefined;
+    this.authorizationUrl = url;
+    return {
+      awaitingUserAction: true,
+      authorizationUrl: url,
+      requiresCodeSubmission: this.codeEntryPromptObserved,
+    };
+  }
+
   parseOutputFragment(stream: AuthOutputStream, fragment: string): AuthOutputUpdate | undefined {
+    const completeUrl = /https:\/\/[^\s<>"']+(?:\s|$)/i.test(fragment);
     if (
       CLAUDE_CODE_ENTRY_PROMPT.test(fragment) ||
+      completeUrl ||
       (this.authorizationUrl &&
         /(?:invalid|expired|incorrect).{0,40}(?:code|authori[sz])/i.test(fragment))
     ) {
@@ -371,19 +421,21 @@ function hasClaudeCodeAuthStatus(adapter: ProviderAdapter): adapter is ClaudeCod
   return typeof (adapter as ClaudeCodeAuthAdapter).authStatus === 'function';
 }
 
-function extractUrl(line: string, expectedHost: string): string | undefined {
+function extractUrl(line: string, providerId: AuthProviderId): string | undefined {
+  const candidate = extractUrlCandidate(line);
+  return candidate ? validateAuthorizationUrl(providerId, candidate) : undefined;
+}
+
+function extractUrlCandidate(line: string): string | undefined {
   const match = /https:\/\/[^\s<>"']+/i.exec(line)?.[0];
-  if (!match) return undefined;
-  const trimmed = match.replace(/[),.;]+$/, '');
+  return match?.replace(/[),.;]+$/, '');
+}
+
+function isClaudeCodeBootstrapUrlCandidate(value: string): boolean {
   try {
-    const url = new URL(trimmed);
-    if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== expectedHost) return undefined;
-    if (url.username || url.password) return undefined;
-    const sensitiveParameter = /^(access_token|refresh_token|id_token|token|authorization|code)$/i;
-    if ([...url.searchParams.keys()].some((name) => sensitiveParameter.test(name)))
-      return undefined;
-    return url.toString();
+    const url = new URL(value);
+    return url.hostname.toLowerCase() === 'claude.com' && url.pathname === '/cai/oauth/authorize';
   } catch {
-    return undefined;
+    return false;
   }
 }

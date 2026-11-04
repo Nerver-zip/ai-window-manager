@@ -4,7 +4,7 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
   const STATES = new Set(['IDLE', 'STARTING', 'AWAITING_USER_ACTION', 'VERIFYING', 'SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELED']);
   const STATE_DETAILS = {
     IDLE: '',
-    STARTING: 'Opening sign-in…',
+    STARTING: 'Preparing sign-in…',
     AWAITING_USER_ACTION: '',
     VERIFYING: 'Checking your account…',
     SUCCEEDED: 'Connected. Usage checks are ready.',
@@ -26,6 +26,10 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     AUTH_OUTPUT_LIMIT: 'We couldn’t complete sign-in. Try again.',
     AUTH_CODE_REJECTED: 'Sign-in code was not accepted. Please check the code and try again.',
     AUTH_PROVIDER_UNAVAILABLE: 'Sign-in is temporarily unavailable. Try again later.',
+  };
+  const requestFailureDetails = {
+    AUTH_CODE_INVALID: 'That sign-in code could not be submitted. Check that you pasted the complete code and try again.',
+    AUTH_SESSION_NOT_WAITING: 'This sign-in session is no longer waiting for a code. Start sign-in again.',
   };
 
   function readCookie(name) {
@@ -126,8 +130,8 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     setHidden(deviceCode, !(awaiting && status?.userCode));
     setHidden(copyCode, !(awaiting && status?.userCode));
     setHidden(codeSection, !(awaiting && status?.requiresCodeSubmission === true));
-    setHidden(expiry, !active || !status?.expiresAt);
-    if (expiry && active && status?.expiresAt) {
+    setHidden(expiry, !awaiting || !status?.expiresAt);
+    if (expiry && awaiting && status?.expiresAt) {
       expiry.textContent = 'This sign-in expires at ' + status.expiresAt + '.';
     }
     const link = awaiting ? safeUrl(status?.authorizationUrl, panel.dataset.authProviderId) : null;
@@ -145,11 +149,18 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     setHidden(userCode, !(awaiting && status?.userCode));
     if (userCode) userCode.textContent = nextCode;
     if (error) {
-      const message = state === 'FAILED' || state === 'TIMED_OUT' || state === 'CANCELED'
-        ? reasonDetails[status?.reasonCode] || (state === 'FAILED' ? 'We couldn’t complete sign-in. Try again.' : state === 'TIMED_OUT' ? 'Sign-in timed out. Try again.' : 'Sign-in canceled. Try again.')
-        : '';
-      error.textContent = message;
-      error.hidden = !message;
+      const message = awaiting && status?.reasonCode === 'AUTH_CODE_REJECTED'
+        ? reasonDetails.AUTH_CODE_REJECTED
+        : state === 'FAILED' || state === 'TIMED_OUT' || state === 'CANCELED'
+          ? reasonDetails[status?.reasonCode] || (state === 'FAILED' ? 'We couldn’t complete sign-in. Try again.' : state === 'TIMED_OUT' ? 'Sign-in timed out. Try again.' : 'Sign-in canceled. Try again.')
+          : '';
+      if (message) {
+        error.textContent = message;
+        error.hidden = false;
+      } else if (state !== 'AWAITING_USER_ACTION') {
+        error.textContent = '';
+        error.hidden = true;
+      }
     }
     if (codeInput && !awaiting) codeInput.value = '';
 
@@ -205,7 +216,18 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       options.body = JSON.stringify(body);
     }
     const response = await fetch(url, options);
-    if (!response.ok) throw new Error('request_failed');
+    if (!response.ok) {
+      let code = '';
+      try {
+        const failure = await response.json();
+        code = typeof failure?.error?.code === 'string' ? failure.error.code : '';
+      } catch {
+        // Do not expose an unstructured response body in the UI.
+      }
+      const error = new Error('request_failed');
+      error.code = code;
+      throw error;
+    }
     const payload = await response.json();
     return readStatus(payload, panel.dataset.authProviderId);
   }
@@ -226,14 +248,19 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     const poll = async () => {
       stopPolling();
       if (panel.isConnected === false || !ACTIVE_STATES.has(panel.dataset.authState || '')) return;
+      if (busy) {
+        pollTimer = window.setTimeout(poll, 2000);
+        return;
+      }
       try {
         const status = await request(panel, panel.dataset.authStatusUrl, 'GET');
         if (panel.isConnected === false) return;
+        if (busy) return;
         if (!status) throw new Error('invalid_status');
         render(panel, status);
         if (ACTIVE_STATES.has(status.state)) pollTimer = window.setTimeout(poll, 2000);
       } catch {
-        if (panel.isConnected === false) return;
+        if (panel.isConnected === false || busy) return;
         const error = element(panel, '[data-auth-error]');
         if (error) {
           error.textContent = 'The provider connection status could not be refreshed.';
@@ -243,22 +270,32 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
       }
     };
 
-    const mutate = async (url, body) => {
+    const mutate = async (url, body, onAccepted) => {
       if (busy) return;
       busy = true;
+      stopPolling();
+      const previousError = element(panel, '[data-auth-error]');
+      if (previousError) {
+        previousError.textContent = '';
+        previousError.hidden = true;
+      }
       try {
         const status = await request(panel, url, 'POST', body);
         if (panel.isConnected === false) return;
         if (!status) throw new Error('invalid_status');
+        if (typeof onAccepted === 'function') onAccepted();
         render(panel, status);
         if (ACTIVE_STATES.has(status.state)) pollTimer = window.setTimeout(poll, 2000);
-      } catch {
+      } catch (failure) {
         if (panel.isConnected === false) return;
         const error = element(panel, '[data-auth-error]');
         if (error) {
-          error.textContent = 'The provider sign-in request could not be completed. Try again.';
+          error.textContent = Object.hasOwn(requestFailureDetails, failure?.code)
+            ? requestFailureDetails[failure.code]
+            : 'The provider sign-in request could not be completed. Try again.';
           error.hidden = false;
         }
+        if (ACTIVE_STATES.has(panel.dataset.authState || '')) pollTimer = window.setTimeout(poll, 2000);
       } finally {
         busy = false;
       }
@@ -345,7 +382,7 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
     element(panel, '[data-auth-submit]')?.addEventListener('click', () => {
       const input = element(panel, '[data-auth-code-input]');
       const code = input?.value.trim() || '';
-      if (!code || code.length > 128) {
+      if (!code || code.length > 2048) {
         const error = element(panel, '[data-auth-error]');
         if (error) {
           error.textContent = 'Enter the one-time code before continuing.';
@@ -354,8 +391,9 @@ export const AUTH_ONBOARDING_JS = String.raw`(() => {
         input?.focus();
         return;
       }
-      if (input) input.value = '';
-      mutate(panel.dataset.authSubmitUrl, { code });
+      return mutate(panel.dataset.authSubmitUrl, { code }, () => {
+        if (input) input.value = '';
+      });
     });
     element(panel, '[data-auth-copy-code]')?.addEventListener('click', async () => {
       const code = element(panel, '[data-auth-user-code]');

@@ -367,7 +367,7 @@ describe('provider auth routes', () => {
     await flushMicrotasks();
     driver.process.output('stdout', 'auth-prompt\n');
     const awaiting = await app.inject('/api/v1/providers/claude_code/auth/status');
-    const code = 'synthetic/claude-one-time-code';
+    const code = `${'synthetic-claude-code-'.repeat(8)}#synthetic-state`;
     const submitted = await app.inject({
       method: 'POST',
       url: '/api/v1/providers/claude_code/auth/submit',

@@ -38,23 +38,41 @@ Claude.ai credentials".
    repeat of the Codex incident:
    - zero use with a future reset is `UNKNOWN`, and the temporal tracker
      decides;
-   - zero use without a reset is `INACTIVE` at medium confidence;
+   - the unscoped canonical `session` meter at exact zero use with no reset is
+     `INACTIVE` at high confidence. The owner confirmed from the official CLI
+     usage screen that this is the not-yet-started five-hour session state;
+   - other zero-use meters without a reset remain `INACTIVE` at medium
+     confidence;
    - an expired reset is `RESET_DUE`.
 
-   One generic tracker rule raises a medium `INACTIVE` with zero use and no
-   reset to high confidence, and only after that window's previously anchored
-   reset has passed. No existing adapter emits medium `INACTIVE`, so Codex and
-   Antigravity are unaffected.
+   A generic tracker rule may raise medium `INACTIVE` with zero use and no
+   reset to high confidence only after that window's previously anchored reset
+   has passed. The `session` bootstrap rule is specific to Claude Code's
+   official meter; it does not change Codex or Antigravity inference. A start
+   still requires the enabled exact-target policy, fresh observations, a
+   persisted intent and the provider's normal preflight. A previously anchored
+   future reset takes precedence over a later missing-reset reading, which
+   remains `UNKNOWN` until that anchor passes.
 
 4. **Authentication.** The original implementation used only the official CLI
    in a terminal; the follow-up uses AWM's shared `AuthSessionManager` to run
    the unmodified `claude auth login` in a bounded PTY and guide the browser
    flow in Settings. Only HTTPS URLs from the exact observed host `claude.com`
-   are exposed. When the CLI requests a one-time code, the authenticated UI
+   are exposed. The CLI-emitted bootstrap URL is allowed only at
+   `/cai/oauth/authorize` with exactly one of each observed parameter:
+   `code`, `client_id`, `response_type`, `redirect_uri`, `scope`,
+   `code_challenge`, `code_challenge_method` and `state`. Values are bounded;
+   the code is nonempty and printable within the 2,048-character URL limit,
+   `response_type` must be `code`, the
+   PKCE method must be `S256`, and the callback must be
+   `https://platform.claude.com/oauth/code/callback`. Unknown
+   or duplicate parameters and other callbacks are rejected. The complete URL
+   is sent only to the authenticated browser session and remains in memory.
+   When the CLI requests a browser-returned one-time code, the authenticated UI
    forwards it to the active CLI process in memory; AWM does not persist or log
-   it. The official `claude auth status --json` command independently verifies
-   sign-in, without a model request. The CLI-owned `/claude-state` volume remains
-   dedicated and unchanged. Manual recovery remains available through
+   either value. The official `claude auth status --json` command independently
+   verifies sign-in, without a model request. The CLI-owned `/claude-state`
+   volume remains dedicated and unchanged. Manual recovery remains available through
    `docker compose exec ai-window-manager claude-code-cli auth
 {login|status|logout}`. `setup-token`, `--bare` and API keys are not used.
 

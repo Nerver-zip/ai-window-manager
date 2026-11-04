@@ -111,19 +111,30 @@ not used.
 
 The primary sign-in starts the unmodified CLI through the shared
 `AuthSessionManager` in a bounded PTY. The adapter exposes only HTTPS URLs from
-the exact observed host `claude.com`. If the CLI asks for a browser-returned
-one-time code, the authenticated Settings page forwards it directly to that
-process; the session manager clears it after submission, and it is not stored in
-SQLite, events, logs or responses. Successful sign-in is checked separately
-with the official `claude auth status --json`; no model request is used. The
-operator can use `docker compose exec ai-window-manager claude-code-cli auth
-login` as a fallback that keeps the code out of AWM. The wrapper accepts only
-`auth login|status|logout` and `--version`.
+the exact observed host `claude.com`. The CLI's one-time bootstrap URL is
+accepted only at `/cai/oauth/authorize` with exactly one of each observed
+parameter: `code`, `client_id`, `response_type`, `redirect_uri`, `scope`,
+`code_challenge`, `code_challenge_method` and `state`. Values are bounded; the
+code is nonempty and printable within the 2,048-character URL limit,
+`response_type` must be `code`, the PKCE
+method must be `S256`, and the callback must be
+`https://platform.claude.com/oauth/code/callback`; unknown or duplicate
+parameters and other callbacks are rejected. The complete URL is available to
+the authenticated Settings session only in memory and is not stored in SQLite,
+events or logs. If the CLI asks for a browser-returned one-time code, the
+authenticated Settings page forwards it directly to that process; the session
+manager clears it after submission, and it is not stored in SQLite, events,
+logs or responses. Successful sign-in is checked separately with the official
+`claude auth status --json`; no model request is used. The operator can use
+`docker compose exec ai-window-manager claude-code-cli auth
+login` as a fallback that keeps both one-time values out of AWM. The wrapper
+accepts only `auth login|status|logout` and `--version`.
 
-The one-time code is authentication material while it is in flight. AWM
-protects the route with operator authentication, Origin, CSRF and rate-limit
-checks, but plain HTTP does not encrypt it on the network; use HTTPS or VPN on
-untrusted networks. Anthropic's current guidance both permits an end user to
+The bootstrap URL and returned one-time code are authentication material while
+in flight. AWM protects the URL response and code-submission route with operator
+authentication, Origin, CSRF and rate-limit checks, but plain HTTP does not
+encrypt them on the network; use HTTPS or VPN on untrusted networks.
+Anthropic's current guidance both permits an end user to
 sign in to the unmodified CLI on a hosted platform and bars developers from
 intermediating credentials. It does not clearly settle whether this
 self-hosted, single-operator handoff is covered. The code is not persisted, but

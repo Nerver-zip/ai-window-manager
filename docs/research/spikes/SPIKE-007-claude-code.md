@@ -95,6 +95,20 @@ subscription (ADR-009). The gate therefore follows the repository default
   URL on the exact host `claude.com`, and displayed a code-entry prompt. The
   probe was stopped before opening the URL or submitting any code. The URL path
   and query were discarded; no account or quota was involved.
+- **OBSERVED (operator homelab, CLI 2.1.311, 2026-11-04):** the URL uses host
+  `claude.com` and path `/cai/oauth/authorize`, with exactly these query
+  parameter names: `code`, `client_id`, `response_type`, `redirect_uri`,
+  `scope`, `code_challenge`, `code_challenge_method` and `state`. The observed
+  flow uses `response_type=code`, PKCE method `S256`, and callback
+  `https://platform.claude.com/oauth/code/callback`. No one-time code, client
+  identifier, scope, challenge or state value is retained here. AWM now accepts
+  only that host/path, parameter set, and callback, with bounded values and a
+  nonempty printable `code` within the 2,048-character URL limit. A sanitized
+  validation probe showed that the CLI's code is shorter than the initial
+  16-character minimum; the value itself was never printed or retained. Other
+  or duplicate parameters remain rejected. The
+  auth PTY is 100 columns wide, so its adapter also reassembles this long URL
+  when the CLI wraps it across output lines before the code prompt.
 - The probe confirmed that the CLI can be managed as a PTY subprocess and that
   its URL and code-prompt signals are available. It did not determine whether a
   PTY is strictly required, whether browser callback can finish without a code,
@@ -189,9 +203,12 @@ The phase is computed at the completion time of the official read:
   `EXHAUSTED`;
 - future reset and `percent = 0`: `UNKNOWN`. It may be a rolling projection, and
   the existing temporal-evidence tracker decides;
-- no reset and `percent = 0`: `INACTIVE` at **medium** confidence. This is never
-  actionable by itself. The cycle tracker raises it to high only after the
-  window's previously anchored reset has passed;
+- no reset and `percent = 0`: the unscoped canonical `session` meter is
+  `INACTIVE` at **high** confidence; the other canonical meters remain medium.
+  On 2026-11-04, the owner provided the official CLI usage screen and confirmed
+  that a zero-use current session without a reset means the five-hour window
+  has not started. The generic cycle tracker still raises other medium
+  no-reset readings only after a previously anchored reset passes;
 - reset at or before the read: `RESET_DUE`, with no usage facts;
 - duplicate identities, out-of-range values, a reset beyond duration plus slack,
   or envelope drift: the read is rejected and last-known-good is kept.

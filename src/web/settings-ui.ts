@@ -1098,7 +1098,6 @@ function renderProviderCard(
     <header class="provider-header"><div class="provider-identity">${logoHtml}<div><p class="eyebrow">Provider</p><h3 id="provider-${id}-title">${escapeHtml(displayName)}</h3></div></div><span class="badge provider-connection-badge" data-provider-connection-status data-connection-state="${connection.state}" aria-label="${escapeHtml(displayName)} account status"><span class="online-indicator" aria-hidden="true"></span><span data-provider-connection-label>${escapeHtml(connection.label)}</span></span></header>
     ${announcementMarkup}
     ${authArea}
-    ${provider.kind === 'claude_code' ? renderClaudeCodeConnection(provider) : ''}
     <p class="provider-monitoring-note" data-provider-monitoring-note${controlsLocked ? '' : ' hidden'}>Connect your account to customize monitoring settings.</p>
     <form method="post" action="/settings/providers/${escapeAttribute(encodeURIComponent(provider.id))}" data-provider-settings-form data-awm-enhance="mutation" data-awm-target="settings-provider:${id}"${controlsLocked ? ' hidden' : ''}>
       ${csrfInput(csrfToken)}
@@ -1116,29 +1115,6 @@ function renderProviderCard(
     )}
     <details class="capability-details"><summary>What this provider can do</summary>${renderCapabilitySummary(provider.capabilities)}</details>
   </article>`;
-}
-
-function renderClaudeCodeConnection(provider: SettingsProviderView): string {
-  const triggerSupported = provider.capabilities?.windowTrigger.supported === true;
-  const command = (args: string) =>
-    `<code>docker compose exec ai-window-manager claude-code-cli ${escapeHtml(args)}</code>`;
-  return `<section class="claude-code-connection" aria-label="Claude Code usage and recovery">
-    <details class="claude-code-manual-signin">
-      <summary>Use the official CLI instead</summary>
-      <p>If browser-assisted sign-in is unavailable, run these commands in a terminal on the server:</p>
-      <ol class="claude-code-steps">
-        <li>Sign in: ${command('auth login')}</li>
-        <li>Check status: ${command('auth status --text')}</li>
-        <li>Sign out before replacing an existing account: ${command('auth logout')}</li>
-      </ol>
-    </details>
-    <p class="field-help">Usage is read with the official <code>/usage</code> command (no model request) at the monitoring interval. Readings are only as fresh as the last successful check.</p>
-    ${
-      triggerSupported
-        ? '<p class="notice"><span class="badge badge-warning">Uses your allowance</span> A Claude Code window start sends one ordinary “Hi!” request with the configured model. It counts against both the five-hour and the weekly allowance and cannot be undone.</p>'
-        : '<p class="notice"><span class="badge">Monitoring only</span> Claude Code window starts are turned off for this deployment (<code>AWM_CLAUDE_CODE_TRIGGER_ENABLED=false</code>). Remove the opt-out to allow manual or scheduled starts.</p>'
-    }
-  </section>`;
 }
 
 function renderProviderClientUpdates(

@@ -153,8 +153,11 @@ export function claudeWindowKindForMeter(meter: ClaudeUsageMeter): string {
  * - a future reset with consumption is an anchored ACTIVE (or EXHAUSTED) window;
  * - a future reset with zero consumption is UNKNOWN: it may be a rolling
  *   projection, so the application's temporal-evidence tracker decides;
- * - zero consumption without any reset is only INACTIVE at medium confidence,
- *   never actionable by itself;
+ * - the canonical session meter with exact zero use and no reset is INACTIVE
+ *   at high confidence: the official CLI omits its session reset until the
+ *   first message starts that window;
+ * - zero consumption without any reset for other canonical meters is only
+ *   INACTIVE at medium confidence, never actionable by itself;
  * - a reset at or before the read is RESET_DUE, never evidence of a new allowance.
  */
 export function claudeWindowSnapshot(
@@ -220,7 +223,16 @@ export function claudeWindowSnapshot(
       snapshot.phase = fact<WindowPhase>('UNKNOWN', 'inferred', 'unknown', observedAt);
     }
   } else if (meter.percent === 0) {
-    snapshot.phase = fact<WindowPhase>('INACTIVE', 'inferred', 'medium', observedAt);
+    const neverStartedSession =
+      windowKind === CLAUDE_CODE_FIVE_HOUR_WINDOW &&
+      meter.scopeLabel === null &&
+      meter.resetsAt === null;
+    snapshot.phase = fact<WindowPhase>(
+      'INACTIVE',
+      'inferred',
+      neverStartedSession ? 'high' : 'medium',
+      observedAt,
+    );
   } else {
     snapshot.phase = fact<WindowPhase>('UNKNOWN', 'inferred', 'unknown', observedAt);
   }

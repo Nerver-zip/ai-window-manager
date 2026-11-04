@@ -12,6 +12,16 @@ import {
 } from '../../src/auth/session-manager.js';
 
 const NOW = '2026-09-23T12:00:00.000Z';
+const CLAUDE_BOOTSTRAP_URL = `https://claude.com/cai/oauth/authorize?${new URLSearchParams({
+  code: 'synthetic-bootstrap-code-0123456789',
+  client_id: 'synthetic-client-id',
+  response_type: 'code',
+  redirect_uri: 'https://platform.claude.com/oauth/code/callback',
+  scope: 'user:profile user:inference',
+  code_challenge: 'A'.repeat(43),
+  code_challenge_method: 'S256',
+  state: 'synthetic-state',
+})}`;
 
 class FakeProcess implements AuthManagedProcess {
   readonly signals: string[] = [];
@@ -285,6 +295,28 @@ describe('AuthSessionManager', () => {
     expect(JSON.stringify(events)).not.toContain('ABCD-EFGH');
   });
 
+  it('preserves an HTTPS authorization URL carried by a terminal hyperlink', async () => {
+    const driver = new FakeDriver('claude_code');
+    driver.parseOutput = (_stream, line) => {
+      const url = /https:\/\/claude\.com\/[^\s<>"']+/.exec(line)?.[0];
+      return url ? { awaitingUserAction: true, authorizationUrl: url } : undefined;
+    };
+    const { manager } = createManager({ driver });
+    manager.start('claude_code');
+    await flushMicrotasks();
+
+    driver.process.output(
+      'stdout',
+      '\u001b]8;;https://claude.com/oauth/authorize?state=synthetic\u001b\\Sign in\u001b]8;;\u001b\\\r',
+    );
+
+    expect(manager.status('claude_code')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl: 'https://claude.com/oauth/authorize?state=synthetic',
+    });
+    await manager.shutdown();
+  });
+
   it('routes sanitized PTY lines to the provider prompt handler', async () => {
     const driver = new FakeDriver('antigravity');
     const { manager } = createManager({ driver });
@@ -441,7 +473,23 @@ describe('AuthSessionManager', () => {
     expect(requestReconcile.count).toBe(1);
   });
 
-  it.each([undefined, null, 12345, 'ABC', 'bad code', 'x'.repeat(129)])(
+  it('forwards a bounded Claude callback code and state together without retaining it', async () => {
+    const driver = new FakeDriver('claude_code');
+    const { manager, events } = createManager({ driver });
+    manager.start('claude_code');
+    await flushMicrotasks();
+    driver.process.output('stdout', 'auth-prompt\n');
+
+    const code = `${'a'.repeat(180)}#${'b'.repeat(180)}`;
+    expect(manager.submitCode('claude_code', code).state).toBe('VERIFYING');
+    await flushMicrotasks();
+
+    expect(driver.codeSubmissions).toEqual([code]);
+    expect(JSON.stringify(manager.status('claude_code'))).not.toContain(code);
+    expect(JSON.stringify(events)).not.toContain(code);
+  });
+
+  it.each([undefined, null, 12345, 'ABC', 'ABC#STATE', 'bad code', 'x'.repeat(2_049)])(
     'rejects malformed submitted code %s',
     async (code) => {
       const driver = new FakeDriver('antigravity');
@@ -509,6 +557,29 @@ describe('AuthSessionManager', () => {
       expect(JSON.stringify(manager.status('codex'))).not.toContain('SENSITIVE-1234');
     },
   );
+
+  it('exposes Claude Code’s validated bootstrap URL only during its active auth session', async () => {
+    const driver = new FakeDriver('claude_code');
+    driver.parseOutput = () => ({
+      awaitingUserAction: true,
+      authorizationUrl: CLAUDE_BOOTSTRAP_URL,
+    });
+    const { manager } = createManager({ driver });
+    manager.start('claude_code');
+    await flushMicrotasks();
+
+    driver.process.output('stdout', 'login output\n');
+
+    expect(manager.status('claude_code')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl: CLAUDE_BOOTSTRAP_URL,
+    });
+    manager.cancel('claude_code');
+    expect(manager.status('claude_code')).toMatchObject({
+      state: 'CANCELED',
+      authorizationUrl: null,
+    });
+  });
 
   it('retries only read verification and marks success without retaining the browser code', async () => {
     const driver = new FakeDriver();

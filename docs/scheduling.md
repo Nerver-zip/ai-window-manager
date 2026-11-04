@@ -242,6 +242,14 @@ active-to-inactive transition when reset timestamps are unavailable. A moving
 `now + duration` reset never changes that identity. Fixed/custom/active-hours
 policies keep their explicit schedule anchors.
 
+Claude Code's unscoped canonical `session` meter is a bootstrap exception: an
+official exact-zero reading with no reset is treated as `INACTIVE` at high
+confidence because the owner confirmed this is how an unstarted session is
+reported. This lets an enabled auto policy create the first start intent. The
+exception does not apply to nonzero use without a reset, zero use with a future
+reset, or other provider meters. If a previously anchored reset is still in the
+future, a later missing-reset reading is `UNKNOWN` until that anchor passes.
+
 A Codex zero-used snapshot alone has unknown phase. For inferred zero-used
 windows, two observations spanning at least 15 seconds distinguish a reset
 moving with elapsed time from a stable, counting-down reset, allowing up to

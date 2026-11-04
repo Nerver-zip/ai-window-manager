@@ -48,6 +48,8 @@ interface AuthUiHarnessOptions {
   legacyCopyWorks?: boolean;
   authorizationUrl?: string;
   selectionAvailable?: boolean;
+  submitErrorCode?: string;
+  refreshedReasonCode?: string | null;
 }
 
 function createAuthUiHarness(options: AuthUiHarnessOptions) {
@@ -73,6 +75,7 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     '[data-auth-copy-code]',
     '[data-auth-copy-url]',
     '[data-auth-code-input]',
+    '[data-auth-submit]',
   ];
   const nodes = new Map(selectors.map((selector) => [selector, new AuthUiNode()]));
   const code = nodes.get('[data-auth-user-code]');
@@ -114,6 +117,7 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     state: 'AWAITING_USER_ACTION',
     authorizationUrl,
     userCode: options.refreshedCode,
+    reasonCode: options.refreshedReasonCode ?? null,
   });
 
   const document = {
@@ -179,6 +183,12 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     URL,
     fetch: (url: string, request: { method: string; body?: string }) => {
       fetchRequests.push({ url, method: request.method, body: request.body });
+      if (request.method === 'POST' && options.submitErrorCode) {
+        return Promise.resolve({
+          ok: false,
+          json: () => Promise.resolve({ error: { code: options.submitErrorCode } }),
+        });
+      }
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(refreshedStatus),
@@ -246,7 +256,7 @@ describe('auth onboarding UI', () => {
 
   it.each([
     ['IDLE', 'Connect Codex', 'Sign in with OpenAI to start tracking your usage windows.'],
-    ['STARTING', 'Opening sign-in…', 'Opening sign-in…'],
+    ['STARTING', 'Preparing sign-in…', 'Preparing sign-in…'],
     ['VERIFYING', 'Checking your account…', 'Checking your account…'],
     ['SUCCEEDED', 'Connected. Usage checks are ready.', 'Connected. Usage checks are ready.'],
     [
@@ -325,6 +335,66 @@ describe('auth onboarding UI', () => {
     expect(html).toContain(
       'AWM forwards this one-time code to the active official CLI process and clears it after submission.',
     );
+    expect(html).toContain('maxlength="2048"');
+  });
+
+  it('forwards a full Claude callback code with state and clears it after acceptance', async () => {
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: '',
+      refreshedCode: '',
+    });
+    const code = `${'a'.repeat(180)}#${'b'.repeat(180)}`;
+    const input = harness.nodes.get('[data-auth-code-input]');
+    const submit = harness.nodes.get('[data-auth-submit]');
+    if (!input || !submit) throw new Error('Expected the code form controls.');
+    input.value = code;
+
+    await submit.click();
+
+    const request = harness.fetchRequests.find((entry) => entry.method === 'POST');
+    expect(request).toMatchObject({
+      url: '/api/v1/providers/claude_code/auth/submit',
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    expect(input.value).toBe('');
+  });
+
+  it('keeps the code and explains a rejected submission instead of failing silently', async () => {
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: '',
+      refreshedCode: '',
+      submitErrorCode: 'AUTH_CODE_INVALID',
+    });
+    const code = 'synthetic#state';
+    const input = harness.nodes.get('[data-auth-code-input]');
+    const submit = harness.nodes.get('[data-auth-submit]');
+    const error = harness.nodes.get('[data-auth-error]');
+    if (!input || !submit || !error) throw new Error('Expected the code form controls.');
+    input.value = code;
+
+    await submit.click();
+
+    expect(input.value).toBe(code);
+    expect(error.hidden).toBe(false);
+    expect(error.textContent).toContain('pasted the complete code');
+  });
+
+  it('shows the official CLI rejection after returning to the awaiting state', async () => {
+    const harness = createAuthUiHarness({
+      providerId: 'claude_code',
+      initialCode: '',
+      refreshedCode: '',
+      refreshedReasonCode: 'AUTH_CODE_REJECTED',
+    });
+    const error = harness.nodes.get('[data-auth-error]');
+
+    await waitForAuthRefresh();
+
+    expect(error?.hidden).toBe(false);
+    expect(error?.textContent).toContain('Sign-in code was not accepted');
   });
 
   it('does not render unsafe or out-of-state authorization material', () => {

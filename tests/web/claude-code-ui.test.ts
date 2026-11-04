@@ -72,7 +72,7 @@ describe('Claude Code presentation', () => {
 });
 
 describe('Claude Code settings', () => {
-  it('uses shared onboarding as the primary sign-in and keeps manual CLI recovery secondary', () => {
+  it('uses the shared provider settings and onboarding presentation', () => {
     const status: AuthOnboardingStatus = {
       providerId: 'claude_code',
       state: 'FAILED',
@@ -93,19 +93,20 @@ describe('Claude Code settings', () => {
     expect(html).toContain('/api/v1/providers/claude_code/auth/start');
     expect(html).toContain('provider-logo--claude-code');
     expect(html).toContain('width="40" height="40"');
-    expect(html).toContain('<summary>Use the official CLI instead</summary>');
-    expect(html).toContain('docker compose exec ai-window-manager claude-code-cli auth login');
-    expect(html).toContain('claude-code-cli auth status --text');
-    expect(html).toContain('claude-code-cli auth logout');
-    expect(html).toContain('AWM_CLAUDE_CODE_TRIGGER_ENABLED=false');
+    expect(html).toContain('What this provider can do');
+    expect(html).toContain('Connect your account to customize monitoring settings.');
+    expect(html).not.toContain('Use the official CLI instead');
+    expect(html).not.toContain('Usage is read with the official');
     expect(html).not.toContain('Uses your allowance');
+    expect(html).not.toContain('claude-code-cli auth');
     expect(html).not.toMatch(/name="code"|authorization code<\/label>/i);
   });
 
-  it('warns that an enabled start uses both the five-hour and weekly allowance', () => {
+  it('uses the shared quota capability copy for an enabled start', () => {
     const html = renderSettingsPage({ csrfToken: 'csrf', providers: [claudeProvider(true)] });
-    expect(html).toContain('Uses your allowance');
-    expect(html).toContain('both the five-hour and the weekly allowance');
+    expect(html).toContain('May use provider quota when a window starts.');
+    expect(html).not.toContain('Uses your allowance');
+    expect(html).not.toContain('both the five-hour and the weekly allowance');
   });
 
   it('explains disabled starts on the schedule page', () => {

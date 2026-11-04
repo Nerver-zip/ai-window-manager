@@ -265,8 +265,24 @@ describe('ClaudeCodeProvider usage reads', () => {
       usage: 0,
     },
     {
-      label: 'zero use without a reset is inactive at medium confidence only',
+      label: 'zero-use session without a reset is actionable as never started',
       meter: meter({ percent: 0, resets_at: null }),
+      phase: { value: 'INACTIVE', source: 'inferred', confidence: 'high' },
+      usage: 0,
+    },
+    {
+      label: 'zero-use weekly meter without a reset remains medium confidence',
+      meter: meter({ kind: 'weekly_all', group: 'weekly', percent: 0, resets_at: null }),
+      phase: { value: 'INACTIVE', source: 'inferred', confidence: 'medium' },
+      usage: 0,
+    },
+    {
+      label: 'zero-use scoped session without a reset remains medium confidence',
+      meter: meter({
+        percent: 0,
+        resets_at: null,
+        scope: { model: { display_name: 'Sonnet' } },
+      }),
       phase: { value: 'INACTIVE', source: 'inferred', confidence: 'medium' },
       usage: 0,
     },

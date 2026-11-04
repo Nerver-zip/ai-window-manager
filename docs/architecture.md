@@ -107,8 +107,10 @@ For Claude Code, monitoring runs the official CLI's `/usage` local command
 session persistence disabled. It creates no persisted conversation and so
 registers no cleanup job. Claude Code sign-in uses the shared
 `AuthSessionManager` to run the unmodified official CLI in a PTY, show its
-validated Anthropic sign-in URL, and forward an optional one-time code only to
-that active process. The code is memory-only and the CLI's read-only
+validated Anthropic sign-in URL, including the exact CLI-emitted bootstrap URL
+shape, and forward an optional one-time code only to that active process. Both
+one-time values are restricted to the authenticated in-memory session; the
+code is not stored. The CLI's read-only
 `auth status --json` independently confirms success. The CLI's dedicated state
 volume remains separate. See ADR-009 for the security boundary and manual
 terminal fallback.

@@ -40,7 +40,7 @@ const PROVIDER_LABELS: Readonly<Record<AuthProviderId, string>> = {
 
 const STATE_DETAILS: Readonly<Record<AuthSessionState, string>> = {
   IDLE: '',
-  STARTING: 'Opening sign-in…',
+  STARTING: 'Preparing sign-in…',
   AWAITING_USER_ACTION: '',
   VERIFYING: 'Checking your account…',
   SUCCEEDED: 'Connected. Usage checks are ready.',
@@ -163,7 +163,7 @@ export function renderAuthOnboarding(input: AuthOnboardingInput): string {
               ? 'Sign-in timed out. Try again.'
               : 'Sign-in canceled. Try again.')
         : undefined,
-    expiresAt: active ? status.expiresAt : null,
+    expiresAt: awaiting ? status.expiresAt : null,
   });
 }
 
@@ -241,7 +241,7 @@ function renderPanel(input: RenderPanelInput): string {
         <label class="field-label" for="${panelId}-code">Sign-in code</label>
         <p class="auth-onboarding__code-hint">${escapeHtml(codeHint)}</p>
         <div class="auth-onboarding__code-row">
-        <input id="${panelId}-code" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" maxlength="128" data-auth-code-input aria-describedby="${panelId}-code-hint">
+        <input id="${panelId}-code" type="text" inputmode="text" autocomplete="one-time-code" spellcheck="false" maxlength="2048" data-auth-code-input aria-describedby="${panelId}-code-hint">
           <button class="button button-primary" type="button" data-auth-submit>Continue</button>
         </div>
         <p id="${panelId}-code-hint" class="field-help">The code is cleared after submission.</p>

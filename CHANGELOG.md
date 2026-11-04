@@ -24,6 +24,17 @@
 
 ### Fixed
 
+- Make packaged static assets readable by the non-root runtime, including when
+  the local build context has restrictive file permissions.
+
+- Preserve authorization URLs carried as PTY terminal links, recognize complete
+  URLs that arrive in a final output fragment, reassemble Claude bootstrap URLs
+  wrapped by the PTY, and describe authentication as
+  preparing until a sign-in link is ready. Permit Claude Code's exact one-time
+  bootstrap URL shape in the authenticated sign-in session while continuing to
+  reject code-bearing URLs elsewhere. Remove Claude-only Settings copy so
+  provider panels use the shared capability explanations.
+
 - Apply the open Dependabot updates for Node typings, ESLint, typescript-eslint
   and CodeQL; update Vitest and Vite to patched releases and override the
   vulnerable minimatch 10.2.6 resolution to 11.0.4 so dependency audit passes.

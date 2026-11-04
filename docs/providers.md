@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Provider research last refreshed: **2026-11-03** (Claude Code); **2026-10-20** (Codex, Antigravity).
+Provider research last refreshed: **2026-11-04** (Claude Code); **2026-10-20** (Codex, Antigravity).
 
 ## Normalized adapter contract
 
@@ -301,10 +301,23 @@ Decision: [ADR-009](adr/009-claude-code-provider.md). Pinned client: `2.1.311`
   browser-plus-pasted-code `claude auth login`.
 - AWM Settings can guide the official `claude auth login` flow through the
   shared authentication session. It accepts HTTPS URLs only from the exact
-  observed host `claude.com`; a code is forwarded directly to the active CLI
-  process and is not retained. The dedicated Claude state volume remains
-  isolated. See [ADR-009](adr/009-claude-code-provider.md) for the contractual
-  interpretation risk and terminal fallback.
+  observed host `claude.com`; the CLI's one-time bootstrap URL is allowed only
+  at `/cai/oauth/authorize` with the observed OAuth parameter names, each once:
+  `code`, `client_id`, `response_type`, `redirect_uri`, `scope`,
+  `code_challenge`, `code_challenge_method` and `state`. Values are bounded;
+  the code is nonempty and printable within the 2,048-character URL limit,
+  `response_type` must be `code`, the
+  PKCE method must be `S256`, and the callback must be
+  `https://platform.claude.com/oauth/code/callback`. Unknown
+  or duplicate parameters and other callbacks are rejected. That URL is exposed
+  only through the authenticated, in-memory sign-in session, is never
+  persisted or logged, and the operator opens it explicitly; AWM does not open
+  browser tabs on its own. PTY parsing accepts visible URLs and OSC 8
+  terminal-link targets, and reassembles the bootstrap URL if terminal width
+  wraps it across lines. A browser-returned code is forwarded directly to the
+  active CLI process and is not retained. The dedicated Claude state volume
+  remains isolated. See [ADR-009](adr/009-claude-code-provider.md) for the
+  contractual interpretation risk and terminal fallback.
 - An experimental `usage_report` (SDK `SDKUsageReport`) on the message that
   delivers a `/usage` result.
 - Signed release manifests: an OpenPGP detached signature over per-platform
@@ -327,6 +340,13 @@ Decision: [ADR-009](adr/009-claude-code-provider.md). Pinned client: `2.1.311`
 - `session` is the five-hour window and `weekly_all` is the weekly window.
 - `/usage` consumes no model allowance; it is still a server read and is
   polled at most every 120 s by default.
+- Operator-provided official CLI evidence (2026-11-04) showed that an
+  unstarted current session reports 0% used without a reset. AWM therefore
+  treats only the unscoped canonical `session` meter with exact zero use and no
+  reset as `INACTIVE`/high, allowing an explicitly enabled auto policy to
+  bootstrap its first five-hour window. Nonzero use without a reset and
+  zero-use future resets remain non-actionable. This interpretation should be
+  rechecked if the CLI changes its `/usage` output.
 - One ordinary `Hi!` anchors the five-hour window and also counts against the
   weekly allowance.
 
