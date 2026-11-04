@@ -3,7 +3,7 @@ export const PROVIDER_PICKER_CSS = `
 .provider-picker { min-width: 0; max-width: 100%; border: 0; margin: 0; padding: 0; }
 .provider-picker > legend { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .provider-picker-navigation > .field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.provider-picker-options { display: flex; align-items: center; gap: 2px; width: fit-content; max-width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 3px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.provider-picker-options { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; width: fit-content; max-width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 3px; }
 .provider-picker-option { position: relative; display: block; flex: 0 0 auto; min-width: 0; cursor: pointer; }
 .provider-picker-option-link { color: inherit; text-decoration: none; }
 .provider-picker-option-link:hover { color: inherit; text-decoration: none; }
@@ -30,10 +30,7 @@ export const PROVIDER_PICKER_CSS = `
 .provider-picker-option .provider-picker-dot[data-tone="muted"] { border-color: var(--text-faint); background: transparent; }
 .provider-picker-status { color: var(--text-muted); font-size: 12px; line-height: 1.3; }
 .provider-picker-empty { margin: 0; color: var(--text-muted); font-size: 13px; }
-.usage-filter-form > .provider-picker, .history-toolbar-fields > .provider-picker, .schedule-primary-fields > .provider-picker, .schedule-page .provider-picker { grid-column: 1 / -1; }
 @media (max-width: 760px) {
-  .provider-picker-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .provider-picker-card { min-height: 40px; }
-  .provider-picker-options { flex-wrap: wrap; width: auto; overflow-x: visible; }
 }
 `;

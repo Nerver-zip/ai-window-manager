@@ -488,9 +488,11 @@ export function renderTimeline(
       ? `<img class="provider-logo-xs${claude ? ' provider-logo-xs--claude-code' : ''}" src="${logoUrl}" alt="" width="${claude ? '16' : '14'}" height="${claude ? '16' : '14'}">`
       : '';
     return `<li class="timeline-item event event-${severity}">
-        <time class="timeline-time" datetime="${escapeAttribute(event.occurredAt)}">${escapeHtml(
-          formatClock(event.occurredAt, timeZone),
-        )}</time>
+        <time class="timeline-time" datetime="${escapeAttribute(event.occurredAt)}" title="${escapeAttribute(
+          formatFullTimestamp(event.occurredAt, timeZone),
+        )}">${escapeHtml(formatClock(event.occurredAt, timeZone))}<span class="visually-hidden">${escapeHtml(
+          formatZone(event.occurredAt, timeZone),
+        )}</span></time>
         <span class="timeline-marker" aria-hidden="true"></span>
         <div class="timeline-content">
           <p class="timeline-event"><span class="visually-hidden">${escapeHtml(severityLabel(severity))}: </span>${escapeHtml(event.displayType)}</p>
@@ -877,6 +879,27 @@ function formatInZone(
 
 function formatClock(value: string, timeZone: string): string {
   return formatInZone(value, timeZone, { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function formatZone(value: string, timeZone: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '';
+  try {
+    const part = new Intl.DateTimeFormat('en-GB', { timeZone, timeZoneName: 'short' })
+      .formatToParts(new Date(timestamp))
+      .find((entry) => entry.type === 'timeZoneName');
+    return part ? ` ${part.value}` : '';
+  } catch {
+    return ' UTC';
+  }
+}
+
+function formatFullTimestamp(value: string, timeZone: string): string {
+  return formatInZone(value, timeZone, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    hour12: false,
+  });
 }
 
 function formatDayKey(value: string, timeZone: string): string {

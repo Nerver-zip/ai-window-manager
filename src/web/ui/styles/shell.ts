@@ -20,6 +20,7 @@ export const SHELL_CSS = `
 .developer-links > div { display: grid; gap: 2px; margin-top: 0; padding: 0 0 var(--space-2); }
 .developer-links > div a { display: flex; align-items: center; min-height: 36px; padding: 0 12px 0 26px; color: var(--text-muted); font-size: 13px; }
 .developer-links > div a:hover { color: var(--text); }
+.page-footer-links { display: none; }
 .shell-sign-out { display: flex; align-items: center; gap: 12px; min-height: 40px; border-radius: var(--radius-sm); padding: 0 12px; color: var(--text-muted); font-size: 14px; font-weight: 500; transition: background-color .12s ease, color .12s ease; }
 .shell-sign-out:hover { background: var(--surface); color: var(--text); text-decoration: none; }
 
@@ -37,6 +38,8 @@ main { width: 100%; max-width: var(--content-width); min-width: 0; margin: 0 aut
   .brand { grid-area: brand; padding: 4px 0; }
   .sidebar-footer { display: contents; }
   .sidebar-footer .developer-links { display: none; }
+  .page-footer-links { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-7); border-top: 1px solid var(--line); padding-top: var(--space-4); font-size: 13px; }
+  .page-footer-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text-muted); }
   .shell-sign-out { grid-area: signout; min-height: 44px; padding: 0 8px; }
   .shell-sign-out svg { display: none; }
   .sidebar nav { grid-area: nav; display: flex; gap: 4px; margin: 0 calc(var(--space-4) * -1); padding: 0 var(--space-4); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }

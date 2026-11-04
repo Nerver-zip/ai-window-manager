@@ -522,7 +522,7 @@ describe('history UI helpers', () => {
     expect(grouped.match(/timeline-day-title/g)).toHaveLength(2);
     const fallback = renderTimeline(events, undefined, 'Not/AZone');
     expect(fallback.match(/timeline-day-title/g)).toHaveLength(1);
-    expect(fallback).toContain('>04:30</time>');
+    expect(fallback).toContain('>04:30<span class="visually-hidden"> UTC</span></time>');
     expect(fallback).toContain('<span class="visually-hidden">');
   });
 
@@ -560,7 +560,7 @@ describe('history UI helpers', () => {
     });
 
     expect(html).toContain('Times shown in São Paulo.');
-    expect(html).toContain('>08:00</time>');
+    expect(html).toContain('>08:00<span class="visually-hidden"> GMT-3</span></time>');
     expect(html).toContain('<h3 class="timeline-day-title">Saturday, 19 Sept 2026</h3>');
     expect(html).not.toContain('2026-09-19 11:00:00.000Z');
     expect(html).not.toContain('aria-label="Log pages"');
