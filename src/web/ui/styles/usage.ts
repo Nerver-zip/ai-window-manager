@@ -30,7 +30,6 @@ export const USAGE_CSS = `
 .usage-level-3 { background: rgba(92, 200, 228, .70); }
 .usage-level-4 { background: var(--accent-strong); }
 .usage-no_data { border-color: var(--line-strong); background: transparent; }
-.usage-partial { background-image: radial-gradient(circle at calc(100% - 3px) 3px, var(--warn) 0 2px, transparent 2.5px); }
 .usage-weekdays { display: grid; grid-template-rows: repeat(7, 17px); margin-top: 27px; color: var(--text-muted); font-size: 12px; line-height: 17px; }
 .usage-legend { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-top: var(--space-3); color: var(--text-muted); font-size: 12px; }
 .usage-legend-item, .usage-legend-scale { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }

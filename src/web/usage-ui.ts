@@ -312,7 +312,6 @@ function renderCalendar(
     </div>
     <div class="usage-legend" aria-label="Usage intensity legend">
       <span class="usage-legend-item"><span class="usage-swatch usage-no_data" aria-hidden="true"></span>No data</span>
-      <span class="usage-legend-item"><span class="usage-swatch usage-level-2 usage-partial" aria-hidden="true"></span>Partial data</span>
       <span class="usage-legend-scale"><span aria-hidden="true">Less</span>${LEGEND_LEVELS.map(([level, label]) => `<span class="usage-swatch usage-level-${level}" title="${label}"><span class="visually-hidden">${label}</span></span>`).join('')}<span aria-hidden="true">More</span></span>
     </div>
   </section>`;

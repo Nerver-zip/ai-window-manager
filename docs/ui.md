@@ -183,8 +183,9 @@ unproven resets are visibly marked partial/unknown.
 Short observed intervals are apportioned across local midnight in the saved
 IANA timezone. Longer intervals are not given false daily precision. The
 heatmap uses percentage points of one weekly allowance, with explicit `No data`,
-zero-observed, intensity bands, partial markers and an in-progress label for
-today. This is an estimate from saved provider snapshots, not a message/token
+zero-observed, intensity bands and an in-progress label for today. Partial
+days keep their intensity and say so in the cell name and the selected-day
+summary rather than through a separate legend marker. This is an estimate from saved provider snapshots, not a message/token
 counter. Only weekly windows qualify; a five-hour window is never silently used
 as a substitute. FakeProvider follows the same visibility setting as the other
 UI/API surfaces.
