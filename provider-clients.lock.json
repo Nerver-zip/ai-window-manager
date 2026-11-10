@@ -3,31 +3,46 @@
   "providers": {
     "codex": {
       "repository": "openai/codex",
-      "version": "0.162.1",
-      "tag": "rust-v0.162.1",
+      "version": "0.167.0",
+      "tag": "rust-v0.167.0",
       "assets": {
         "amd64": {
           "name": "codex-package-x86_64-unknown-linux-musl.tar.gz",
-          "sha256": "a676f5722aae0d86cbe3764332f08eab1fdd89dc0a300b3ad4ffbf48611fa3e3"
+          "sha256": "3bbf75e83de6b58aed28f2cf6e33ad423ec31fd4700a1457b94be557ea5a7c6e"
         },
         "arm64": {
           "name": "codex-package-aarch64-unknown-linux-musl.tar.gz",
-          "sha256": "53a9ce0b94beb27a63fdeb2f7704d95199e17b3898aa33b60461a1a93ac0d88b"
+          "sha256": "0de261ecf1e7f3028a7952f03fca2093f749277d38590b78bb32f8567756bbb7"
         }
       }
     },
     "antigravity": {
       "repository": "google-antigravity/antigravity-cli",
-      "version": "1.4.3",
-      "tag": "1.4.3",
+      "version": "1.5.3",
+      "tag": "1.5.3",
       "assets": {
         "amd64": {
           "name": "agy_cli_linux_x64.tar.gz",
-          "sha256": "319b2cb3240d244930bd077033b466941fd7ba6f0881d783eee801dbd2fb9371"
+          "sha256": "1b4850599cce73a17f94ffb422df3bf9531531b77dbddc40c1a435e0c2c16807"
         },
         "arm64": {
           "name": "agy_cli_linux_arm64.tar.gz",
-          "sha256": "045aa7112f574ef97f8320a65d30a555c4ce9bdd5e3d56d40fce7e262ca98cda"
+          "sha256": "2d50060c7b1327995e5c81ec58829c91c2564ebb9fec165d3f9f1325ec188675"
+        }
+      }
+    },
+    "claude_code": {
+      "repository": "downloads.claude.ai/claude-code-releases",
+      "version": "2.1.311",
+      "tag": "2.1.311",
+      "assets": {
+        "amd64": {
+          "name": "linux-x64/claude",
+          "sha256": "86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada"
+        },
+        "arm64": {
+          "name": "linux-arm64/claude",
+          "sha256": "2e2496c9a8065df93acb0fca2d341f59a6b8777649b2e025ab8c9bcd5eef61f3"
         }
       }
     },
