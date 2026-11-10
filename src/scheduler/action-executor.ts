@@ -4,6 +4,7 @@ import { parseProviderObservation } from '../domain/schemas.js';
 import type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
 import { activationPolicyId, policyScopeForWindowKind } from './policy-scope.js';
+import { findExhaustedAllowance } from './allowance.js';
 import type {
   ProviderActionResult,
   ProviderActionStatus,
@@ -38,6 +39,7 @@ export const ActionReasonCode = {
   Confirmed: 'ACTION_CONFIRMED',
   RecoveryRequired: 'ACTION_RECOVERY_REQUIRED',
   AlreadySatisfied: 'ACTION_ALREADY_SATISFIED',
+  AllowanceExhausted: 'ACTION_ALLOWANCE_EXHAUSTED',
   PolicyChanged: 'ACTION_POLICY_CHANGED',
   TargetWindowMissing: 'ACTION_TARGET_WINDOW_MISSING',
   CycleChanged: 'ACTION_WINDOW_CYCLE_CHANGED',
@@ -229,6 +231,19 @@ export class ActionExecutor {
     const dispatchObservation = preflight.observation;
     if (!policyStillCurrent(this.input.repositories, intent, preflight.observation)) {
       this.markSkipped(intent, nowMs, ActionReasonCode.PolicyChanged, report);
+      return;
+    }
+    // A start the provider cannot honor (target or shared allowance exhausted) is
+    // skipped before claim, so no prompt is sent and no outcome is left uncertain.
+    if (
+      findExhaustedAllowance({
+        now: new Date(nowMs),
+        providerId: intent.providerId,
+        windowKind: targetWindowKind,
+        windows: preflight.observation.windows,
+      })
+    ) {
+      this.markSkipped(intent, nowMs, ActionReasonCode.AllowanceExhausted, report);
       return;
     }
     if (!this.cycleStillCurrent(intent)) {

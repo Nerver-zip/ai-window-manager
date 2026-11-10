@@ -137,6 +137,7 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
                 automationEnabled: provider.mode === 'automation',
                 pendingIntents: input.repositories.actionIntents.listOpen(provider.id),
                 ...(window ? { window } : {}),
+                windows: observation.windows,
                 ...(cycle ? { observedCycleAt: new Date(cycle.cycleAtMs).toISOString() } : {}),
               })
             : null;

@@ -43,6 +43,7 @@ import {
   windowKindBelongsToPolicyScope,
 } from '../scheduler/policy-scope.js';
 import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
+import { findExhaustedAllowance } from '../scheduler/allowance.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
 import type { SqliteDatabase } from '../storage/database.js';
 import type {
@@ -2322,8 +2323,15 @@ function renderWindow(
   const model = triggerModelForWindow(provider, window);
   const targetLabel = windowGroupDisplayName(window.windowKind);
   const actionLabel = targetLabel ? `${targetLabel}, ${label}` : label;
-  const startAction =
-    canManuallyTrigger(provider, window) && (provider.kind !== 'antigravity' || model !== null)
+  const allowanceUsedUp = findExhaustedAllowance({
+    now,
+    providerId: provider.id,
+    windowKind: window.windowKind,
+    windows: provider.windows,
+  });
+  const startAction = allowanceUsedUp
+    ? '<p class="window-note muted">The allowance is used up, so no start is requested until it resets.</p>'
+    : canManuallyTrigger(provider, window) && (provider.kind !== 'antigravity' || model !== null)
       ? `<form class="manual-start-form" method="post" action="/providers/${encodeURIComponent(provider.id)}/trigger" data-awm-enhance="mutation" data-awm-target="overview-provider:${escapeHtml(provider.id)}" data-awm-uncertain-message="The start request may have been accepted. Refresh provider status; do not repeat the request until its result is clear."><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}"><input type="hidden" name="windowKind" value="${escapeHtml(window.windowKind)}">${model ? `<p class="manual-start-model">Start model: <strong>${escapeHtml(triggerModelDisplayName(model))}</strong></p>` : ''}<button class="button button-secondary" type="submit" data-awm-pending-label="Queueing start…" aria-label="Start ${escapeHtml(actionLabel)} now">Start this window now</button></form>`
       : '';
   return `<li class="window-row"><div class="window-title"><${headingTag}>${escapeHtml(label)}</${headingTag}>${phase ? `<span class="status status-${windowPhaseTone(window)}">${escapeHtml(phase)}</span>` : ''}</div>${usageMarkup}${reset}${startAction ? `<div class="window-action">${startAction}</div>` : ''}</li>`;

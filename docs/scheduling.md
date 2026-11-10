@@ -63,7 +63,8 @@ Stable reasons currently include `TARGET_RESET_WINDOW_MATCH`,
 `MANUAL_POLICY`, `MONITORING_UNAVAILABLE`, `CURRENT_WINDOW_ACTIVE`,
 `SCHEDULED_ANCHOR`, `ANCHOR_NOT_DUE`, `ANCHOR_EXPIRED`,
 `ACTION_ALREADY_PENDING`, `ACTIVE_HOURS_COVERAGE`, `ACTIVE_HOURS_TOO_SHORT` and
-`WINDOW_NOT_REPORTED`, `WINDOW_CYCLE_MISSING` and `ACTION_ALREADY_RECORDED`.
+`WINDOW_NOT_REPORTED`, `WINDOW_CYCLE_MISSING`, `ACTION_ALREADY_RECORDED` and
+`ALLOWANCE_EXHAUSTED`.
 Phase confidence is also retained in the explanation,
 so a low-confidence observed phase is not presented as an ordinary monitoring
 failure.
@@ -145,11 +146,42 @@ checked requests are not automatically retried. Future actions still pass all
 normal gates, including provider-wide serialization and protected cleanup.
 See [ADR-008](adr/008-unknown-action-resolution.md).
 
+### Allowance exhaustion
+
+A start is not requested when its allowance is already used up. An allowance is
+exhausted when a window is `EXHAUSTED` (or reports usage of at least 100%) with
+exact or high confidence, and its reset, if reported, is still in the future.
+A reset that has already passed never blocks a start by itself; the fresh
+preflight read decides.
+
+A start is also blocked by exhaustion of any other window it consumes:
+
+- **Codex**: every reported window of the provider (the consumption model is not
+  documented, so this fails closed).
+- **Claude Code**: the five-hour and weekly canonical windows, which the official
+  CLI documents as both consumed by a start. Model-scoped meters do not block a
+  default-model start.
+- **Antigravity**: only windows of the same model family. Argon has only its
+  weekly window, so it is blocked only by its own exhaustion.
+
+Enforcement happens in four places, from cheapest to authoritative:
+
+1. The Overview hides `Start this window now` and shows that the allowance is
+   used up.
+2. The command API returns `409 ALLOWANCE_EXHAUSTED` when the persisted
+   observation is fresh. Stale data is not used to refuse a request.
+3. The planner waits for an automatic start (`ALLOWANCE_EXHAUSTED`) and skips an
+   anchored start; it never replays a missed anchor later.
+4. The executor's fresh preflight marks the intent `skipped` with
+   `ACTION_ALLOWANCE_EXHAUSTED` before it is claimed. No prompt is sent, so this
+   check never leaves an outcome `uncertain`.
+
 ### Manual
 
 The Overview's per-window `Start this window now` form creates an action intent
 only when the provider is enabled, its persisted mode is `automation`, its
-trigger capability is enabled for that exact `windowKind`, and a fresh preflight
+trigger capability is enabled for that exact `windowKind`, the allowance is not
+used up (see [Allowance exhaustion](#allowance-exhaustion)), and a fresh preflight
 inspection says the action is eligible. The HTTP handler only validates and
 queues the intent; the executor performs provider I/O. Codex additionally
 requires `AWM_CODEX_TRIGGER_ENABLED=true` (the default; set it to `false` to

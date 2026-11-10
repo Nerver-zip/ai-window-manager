@@ -133,7 +133,7 @@ must be selected before AWM can plan an automatic start.
 
 Times use the configured IANA timezone. A scheduled time is an opportunity,
 not an unconditional timer: AWM checks freshness, window state, capability,
-and pending actions. Missed opportunities are skipped rather than replayed
+pending actions, and whether the allowance is already used up. Missed opportunities are skipped rather than replayed
 blindly after downtime. For the detailed rules, see
 [Scheduling](docs/scheduling.md).
 

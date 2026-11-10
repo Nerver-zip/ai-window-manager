@@ -169,6 +169,7 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   ANCHOR_EXPIRED: 'The scheduled activation time has passed.',
   NEXT_ANCHOR: 'Waiting for the next scheduled activation time.',
   ACTION_ALREADY_PENDING: 'An activation is already waiting for this schedule.',
+  ALLOWANCE_EXHAUSTED: 'The usage allowance is used up, so no start is requested until it resets.',
   ACTION_ALREADY_RECORDED: 'A start has already been recorded for this usage cycle.',
   WINDOW_CYCLE_MISSING: 'Waiting for a fresh update to identify this usage cycle.',
   ACTIVE_HOURS_COVERAGE: 'The active-hours period has enough time remaining.',

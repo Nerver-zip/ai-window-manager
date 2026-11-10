@@ -1745,4 +1745,53 @@ describe('web server persisted overview', () => {
     expect(inspected.count).toBe(0);
     expect(reconcileRequested).toBe(3);
   });
+
+  it('hides the start control for a window whose shared allowance is used up', async () => {
+    const triggerAdapter: ProviderAdapter = {
+      id: 'fake',
+      capabilities: () => ({
+        ...capabilities,
+        windowTrigger: { supported: true, contract: 'official_supported', consumesQuota: false },
+      }),
+      health: () => Promise.resolve('UP'),
+      inspect: () => Promise.reject(new Error('handler must not inspect')),
+      triggerWindow: () => Promise.reject(new Error('handler must not trigger')),
+    };
+    const { app } = createApp((repositories) => {
+      seedObservedProvider(repositories);
+      const provider = repositories.providers.get('fake');
+      if (!provider) throw new Error('provider missing');
+      repositories.providers.upsert({ ...provider, mode: 'automation' });
+      const state = repositories.providerState.get('fake');
+      const current = state?.observation;
+      const fiveHour = current?.windows[0];
+      if (!state || !current || !fiveHour) throw new Error('observation missing');
+      repositories.providerState.upsert({
+        ...state,
+        observation: {
+          ...current,
+          windows: [
+            fiveHour,
+            {
+              ...fiveHour,
+              windowKind: 'weekly',
+              phase: {
+                value: 'EXHAUSTED',
+                source: 'inferred',
+                confidence: 'high',
+                observedAt: NOW,
+              },
+              usageRatio: { value: 1, source: 'observed', confidence: 'exact', observedAt: NOW },
+            },
+          ],
+        },
+      });
+    }, triggerAdapter);
+
+    const page = await app.inject({ method: 'GET', url: '/', headers: { host: 'localhost:8787' } });
+
+    expect(page.body).toContain('The allowance is used up');
+    expect(page.body).not.toContain('action="/providers/fake/trigger"');
+    expect(page.body).not.toContain('Start this window now');
+  });
 });

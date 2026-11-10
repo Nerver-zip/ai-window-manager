@@ -1180,6 +1180,73 @@ describe('ActionExecutor', () => {
     expect(dispatches).toBe(1);
   });
 
+  it('skips a manual start without dispatch when a shared allowance is used up', async () => {
+    const context = setup();
+    context.clock.advanceMs(31_000);
+    const nowMs = context.clock.now().getTime();
+    context.repositories.actionIntents.createIfAbsent({
+      ...context.intent,
+      id: 'manual-intent',
+      dedupeKey: 'fake:trigger_window:manual:exhausted-weekly',
+      reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+      scheduledForMs: nowMs,
+      expiresAtMs: nowMs + 300_000,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+      explanation: {
+        decision: 'manual_trigger',
+        reasonCode: 'MANUAL_TRIGGER_REQUESTED',
+        windowKind: 'five_hour',
+      },
+    });
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: async () => {
+        const observation = await context.fake.inspect({});
+        const base = observation.windows[0];
+        if (!base) throw new Error('fake observation has no window');
+        const observedAt = observation.observedAt;
+        return {
+          ...observation,
+          windows: [
+            {
+              ...base,
+              windowKind: 'five_hour',
+              phase: { value: 'UNKNOWN', source: 'unknown', confidence: 'unknown', observedAt },
+              usageRatio: {
+                value: 0,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+            },
+            {
+              ...base,
+              windowKind: 'weekly',
+              phase: { value: 'EXHAUSTED', source: 'inferred', confidence: 'high', observedAt },
+              usageRatio: {
+                value: 1,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+            },
+          ],
+        };
+      },
+    };
+
+    const report = await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
+
+    expect(report.processedIntentIds).not.toContain('manual-intent');
+    expect(report.skippedIntentIds).toContain('manual-intent');
+    expect(context.repositories.actionIntents.get('manual-intent')).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_ALLOWANCE_EXHAUSTED',
+    });
+    expect(context.triggerCount).toBe(0);
+  });
+
   it('does not duplicate side effects across repeated ticks or concurrent claims', async () => {
     const context = setup();
     const first = context.executor();
