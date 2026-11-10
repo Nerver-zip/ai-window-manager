@@ -435,3 +435,70 @@ describe('upcomingSchedule', () => {
     expect(upcomingSchedule(policy(), now, undefined)).toEqual([]);
   });
 });
+
+describe('shared allowance exhaustion', () => {
+  const exhaustedWeekly = window({
+    windowKind: 'weekly',
+    phase: { value: 'EXHAUSTED', source: 'inferred', confidence: 'high', observedAt },
+    usageRatio: { value: 1, source: 'official_supported', confidence: 'exact', observedAt },
+    resetAt: {
+      value: '2026-09-20T08:00:00.000Z',
+      source: 'official_supported',
+      confidence: 'exact',
+      observedAt,
+    },
+  });
+
+  it('waits for an automatic start while the shared weekly allowance is used up', () => {
+    const decision = planWindowAction(
+      input({
+        policy: policy({ kind: 'auto' }),
+        currentWindow: inactive,
+        windows: [window(), exhaustedWeekly],
+      }),
+    );
+
+    expect(decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: PlannerReasonCode.AllowanceExhausted,
+      explanation: {
+        exhaustedWindowKind: 'weekly',
+        exhaustedResetAt: '2026-09-20T08:00:00.000Z',
+      },
+    });
+    expect(decision.dedupeKey).toBeUndefined();
+  });
+
+  it('skips an anchored start instead of replaying it when the allowance is used up', () => {
+    const decision = planWindowAction(input({ windows: [window(), exhaustedWeekly] }));
+
+    expect(decision).toMatchObject({
+      kind: 'SKIP',
+      reasonCode: PlannerReasonCode.AllowanceExhausted,
+      explanation: { exhaustedWindowKind: 'weekly', validUntil: '2026-09-19T08:00:30.000Z' },
+    });
+    expect(decision.dedupeKey).toBeUndefined();
+  });
+
+  it('keeps the same anchor startable when no shared window is exhausted', () => {
+    expect(
+      planWindowAction(input({ windows: [window(), window({ windowKind: 'weekly' })] })),
+    ).toMatchObject({ kind: 'START', reasonCode: PlannerReasonCode.ScheduledAnchor });
+    expect(planWindowAction(input({ policy: policy({ kind: 'auto' }) }))).toMatchObject({
+      kind: 'START',
+      reasonCode: PlannerReasonCode.AutoWindowAvailable,
+    });
+  });
+
+  it('checks the target window alone when the provider windows are not supplied', () => {
+    const exhaustedTarget = window({
+      phase: { value: 'EXHAUSTED', source: 'inferred', confidence: 'high', observedAt },
+    });
+
+    expect(planWindowAction(input({ window: exhaustedTarget }))).toMatchObject({
+      kind: 'SKIP',
+      reasonCode: PlannerReasonCode.AllowanceExhausted,
+      explanation: { exhaustedWindowKind: 'five_hour' },
+    });
+  });
+});

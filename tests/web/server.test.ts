@@ -1745,4 +1745,107 @@ describe('web server persisted overview', () => {
     expect(inspected.count).toBe(0);
     expect(reconcileRequested).toBe(3);
   });
+
+  describe('shared allowance rows', () => {
+    function appWithTwoWindows(
+      fiveHourUsed: boolean,
+      weeklyUsed: boolean,
+    ): ReturnType<typeof createApp>['app'] {
+      const triggerAdapter: ProviderAdapter = {
+        id: 'fake',
+        capabilities: () => ({
+          ...capabilities,
+          windowTrigger: { supported: true, contract: 'official_supported', consumesQuota: false },
+        }),
+        health: () => Promise.resolve('UP'),
+        inspect: () => Promise.reject(new Error('handler must not inspect')),
+        triggerWindow: () => Promise.reject(new Error('handler must not trigger')),
+      };
+      const exhaustedUsage = (used: boolean, windowKind: string): WindowSnapshot => {
+        const base = observation().windows[0];
+        if (!base) throw new Error('observation missing');
+        const durationSeconds = {
+          value: windowKind === 'weekly' ? 604_800 : 18_000,
+          source: 'official_client_internal' as const,
+          confidence: 'high' as const,
+          observedAt: NOW,
+        };
+        return used
+          ? {
+              ...base,
+              windowKind,
+              durationSeconds,
+              phase: {
+                value: 'EXHAUSTED',
+                source: 'inferred',
+                confidence: 'high',
+                observedAt: NOW,
+              },
+              usageRatio: { value: 1, source: 'observed', confidence: 'exact', observedAt: NOW },
+            }
+          : {
+              ...base,
+              windowKind,
+              durationSeconds,
+              phase: { value: 'ACTIVE', source: 'inferred', confidence: 'high', observedAt: NOW },
+              usageRatio: { value: 0.4, source: 'observed', confidence: 'exact', observedAt: NOW },
+            };
+      };
+      const { app } = createApp((repositories) => {
+        seedObservedProvider(repositories);
+        const provider = repositories.providers.get('fake');
+        if (!provider) throw new Error('provider missing');
+        repositories.providers.upsert({ ...provider, mode: 'automation' });
+        const state = repositories.providerState.get('fake');
+        const current = state?.observation;
+        if (!state || !current) throw new Error('observation missing');
+        repositories.providerState.upsert({
+          ...state,
+          observation: {
+            ...current,
+            windows: [
+              exhaustedUsage(fiveHourUsed, 'five_hour'),
+              exhaustedUsage(weeklyUsed, 'weekly'),
+            ],
+          },
+        });
+      }, triggerAdapter);
+      return app;
+    }
+
+    it('explains a weekly block on the five-hour row without claiming that row is used up', async () => {
+      const app = appWithTwoWindows(false, true);
+
+      const page = await app.inject({
+        method: 'GET',
+        url: '/',
+        headers: { host: 'localhost:8787' },
+      });
+
+      expect(page.body).not.toContain('action="/providers/fake/trigger"');
+      expect(page.body).toContain(
+        'Starts are blocked because the Weekly window allowance is used up.',
+      );
+      expect(page.body).toContain('This window’s allowance is used up.');
+    });
+
+    it('names the five-hour block on the weekly row, which still has allowance', async () => {
+      const app = appWithTwoWindows(true, false);
+
+      const page = await app.inject({
+        method: 'GET',
+        url: '/',
+        headers: { host: 'localhost:8787' },
+      });
+      const weeklyRow = page.body
+        .split('<li class="window-row">')
+        .find((row) => row.includes('Weekly window'));
+
+      expect(page.body).not.toContain('action="/providers/fake/trigger"');
+      expect(weeklyRow).toContain(
+        'Starts are blocked because the 5-hour window allowance is used up.',
+      );
+      expect(weeklyRow).not.toContain('This window’s allowance is used up');
+    });
+  });
 });

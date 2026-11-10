@@ -270,6 +270,7 @@ export class Reconciler {
             currentWindowKind,
           ),
           ...(window ? { window } : {}),
+          windows: state.observation.windows,
           observation: {
             observedAt: state.observation.observedAt,
             staleAfterSeconds: state.observation.staleAfterSeconds,

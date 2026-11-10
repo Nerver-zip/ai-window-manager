@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { resolveWindowTarget } from '../domain/window-target.js';
+import type { ProviderObservation } from '../domain/types.js';
 import type { ProviderAdapter } from '../providers/provider.js';
+import { findExhaustedAllowance } from '../scheduler/allowance.js';
 import type { Clock } from '../scheduler/clock.js';
 import type { StorageRepositories } from '../storage/repositories.js';
 import type { ActionIntentRecord, EventRecord } from '../storage/repositories.js';
@@ -166,6 +168,18 @@ function triggerProvider(
   }
 
   const nowMs = input.clock.now().getTime();
+  if (
+    observation &&
+    isFreshObservation(observation, nowMs) &&
+    findExhaustedAllowance({
+      now: new Date(nowMs),
+      providerId,
+      windowKind: exactWindowKind,
+      windows: observation.windows,
+    })
+  ) {
+    return allowanceExhausted(input, providerId, exactWindowKind);
+  }
   const manualKey = command.idempotencyKey ?? String(Math.floor(nowMs / (5 * 60 * 1000)));
   const dedupeKey = `${providerId}:trigger_window:manual:${exactWindowKind}:${manualKey}`;
   if (
@@ -273,6 +287,37 @@ function unsupported(
     body: {
       accepted: false,
       error: { code: reasonCode, message: 'provider trigger is unavailable' },
+    },
+  };
+}
+
+function isFreshObservation(observation: ProviderObservation, nowMs: number): boolean {
+  const observedAtMs = Date.parse(observation.observedAt);
+  if (!Number.isFinite(observedAtMs)) return false;
+  return nowMs - observedAtMs <= observation.staleAfterSeconds * 1000;
+}
+
+function allowanceExhausted(
+  input: CommandApiInput,
+  providerId: string,
+  windowKind: string,
+): CommandResult {
+  appendEvent(input, {
+    occurredAtMs: input.clock.now().getTime(),
+    providerId,
+    type: 'manual_trigger_rejected',
+    severity: 'warn',
+    reasonCode: 'ACTION_ALLOWANCE_EXHAUSTED',
+    data: { providerId, windowKind },
+  });
+  return {
+    statusCode: 409,
+    body: {
+      accepted: false,
+      error: {
+        code: 'ALLOWANCE_EXHAUSTED',
+        message: 'the reported allowance is used up; no start was requested',
+      },
     },
   };
 }

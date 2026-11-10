@@ -319,3 +319,91 @@ describe('command API', () => {
     expect(context.api.trigger('fake', { idempotencyKey: '' })).toMatchObject({ statusCode: 400 });
   });
 });
+
+describe('command API shared allowance', () => {
+  function persistExhaustedWeekly(
+    context: ReturnType<typeof setup>,
+    observedAtMs: number,
+    staleAfterSeconds = 300,
+  ): void {
+    const observedAt = new Date(observedAtMs).toISOString();
+    const phase = (value: 'UNKNOWN' | 'EXHAUSTED') => ({
+      value,
+      source: 'inferred' as const,
+      confidence: value === 'EXHAUSTED' ? ('high' as const) : ('unknown' as const),
+      observedAt,
+    });
+    const usage = (value: number) => ({
+      value,
+      source: 'official_supported' as const,
+      confidence: 'exact' as const,
+      observedAt,
+    });
+    context.repositories.providerState.upsert({
+      providerId: 'fake',
+      health: 'UP',
+      observedAtMs: observedAtMs,
+      staleAfterMs: staleAfterSeconds * 1_000,
+      observation: {
+        providerId: 'fake',
+        health: 'UP',
+        observedAt,
+        staleAfterSeconds,
+        windows: [
+          {
+            providerId: 'fake',
+            windowKind: 'five_hour',
+            observedAt,
+            phase: phase('UNKNOWN'),
+            usageRatio: usage(0),
+          },
+          {
+            providerId: 'fake',
+            windowKind: 'weekly',
+            observedAt,
+            phase: phase('EXHAUSTED'),
+            usageRatio: usage(1),
+            resetAt: {
+              value: new Date(observedAtMs + 86_400_000).toISOString(),
+              source: 'official_supported',
+              confidence: 'exact',
+              observedAt,
+            },
+          },
+        ],
+      },
+      lastSuccessAtMs: observedAtMs,
+      lastErrorCode: null,
+      updatedAtMs: observedAtMs,
+    });
+  }
+
+  it('rejects a manual start with 409 when a fresh shared allowance is used up', () => {
+    const context = setup();
+    persistExhaustedWeekly(context, context.clock.now().getTime());
+
+    const result = context.api.trigger('fake', { windowKind: 'five_hour' });
+
+    expect(result).toMatchObject({
+      statusCode: 409,
+      body: { accepted: false, error: { code: 'ALLOWANCE_EXHAUSTED' } },
+    });
+    expect(context.repositories.actionIntents.listOpen('fake')).toEqual([]);
+    expect(
+      context.repositories.events
+        .list('fake')
+        .filter((event) => event.type === 'manual_trigger_rejected'),
+    ).toHaveLength(1);
+  });
+
+  it('defers to the executor preflight when the persisted observation is stale', () => {
+    const context = setup();
+    const staleMs = context.clock.now().getTime() - 10 * 60_000;
+    persistExhaustedWeekly(context, staleMs);
+
+    const result = context.api.trigger('fake', { windowKind: 'five_hour' });
+
+    expect(result).toMatchObject({ statusCode: 202, body: { accepted: true } });
+    expect(context.repositories.actionIntents.listOpen('fake')).toHaveLength(1);
+  });
+});

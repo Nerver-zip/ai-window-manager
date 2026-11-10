@@ -11,8 +11,10 @@ import {
   type LocalOccurrenceResolution,
 } from './time.js';
 import { MIN_ACTIVE_HOURS_COVERAGE_SECONDS, localTimeMinutes } from './policy.js';
+import { findExhaustedAllowance } from './allowance.js';
 
 export const PlannerReasonCode = {
+  AllowanceExhausted: 'ALLOWANCE_EXHAUSTED',
   PolicyDisabled: 'POLICY_DISABLED',
   ManualPolicy: 'MANUAL_POLICY',
   AutomationDisabled: 'AUTOMATION_DISABLED',
@@ -55,6 +57,8 @@ export interface PlannerInput {
   policy: ActivationPolicy;
   currentWindow: CurrentWindowState;
   window?: WindowSnapshot;
+  /** Every reported window of the provider, used to check shared allowance exhaustion. */
+  windows?: readonly WindowSnapshot[];
   observation?: { observedAt: string; staleAfterSeconds: number };
   capabilities: Pick<ProviderCapabilities, 'windowTrigger'>;
   automationEnabled: boolean;
@@ -86,6 +90,8 @@ export interface PlannerExplanation {
   toleranceSeconds?: number;
   coverageSeconds?: number;
   observedCycleAt?: string;
+  exhaustedWindowKind?: string;
+  exhaustedResetAt?: string;
 }
 
 export interface PlannerDecision {
@@ -388,6 +394,27 @@ function start(
       },
       PlannerReasonCode.ActionAlreadyPending,
     );
+  }
+  const exhausted = findExhaustedAllowance({
+    now: input.now,
+    providerId: input.providerId,
+    windowKind: input.window?.windowKind ?? input.currentWindow.windowKind,
+    windows: input.windows ?? (input.window ? [input.window] : []),
+  });
+  if (exhausted) {
+    const blocked = {
+      ...base,
+      anchorAt: anchor.toISOString(),
+      validFrom: anchor.toISOString(),
+      validUntil: expiresAt.toISOString(),
+      exhaustedWindowKind: exhausted.windowKind,
+      ...(exhausted.resetAt ? { exhaustedResetAt: exhausted.resetAt } : {}),
+    };
+    // Automatic starts keep observing until the allowance returns. An anchored
+    // opportunity without allowance is skipped and never replayed later.
+    return input.policy.kind === 'auto'
+      ? wait(blocked, PlannerReasonCode.AllowanceExhausted)
+      : skip(blocked, PlannerReasonCode.AllowanceExhausted);
   }
   const explanation = {
     ...base,
