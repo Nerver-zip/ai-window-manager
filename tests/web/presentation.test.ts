@@ -182,6 +182,7 @@ describe('human-facing presentation labels', () => {
     ['provider_auth_canceled', 'Provider sign-in canceled'],
     ['action_failed_retryable', 'Automatic action will retry'],
     ['action_recovery_started', 'Checking a previous automatic action'],
+    ['action_resolved_unknown', 'Old start released after verified cycle evidence'],
     ['schedule_policy_updated', 'Schedule updated'],
     ['action_intent_planned', 'Automatic action planned'],
     ['schedule_missed', 'Scheduled time missed'],
@@ -201,6 +202,11 @@ describe('human-facing presentation labels', () => {
       'action_uncertain',
       'TARGET_MISSED',
       'The planned time has passed, so nothing was started unexpectedly.',
+    ],
+    [
+      'action_resolved_unknown',
+      'ACTION_UNKNOWN_OUTCOME_CLOSED_VERIFIED',
+      'Verified cycle evidence released the old provider block. The start result remains unknown; cleanup obligations remain independent.',
     ],
     ['unknown_event', 'UNKNOWN_REASON_CODE', 'More details are not available for this update.'],
   ])('explains event %s without showing internal codes', (type, reason, expected) => {

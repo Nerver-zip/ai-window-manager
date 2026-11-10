@@ -82,6 +82,13 @@ tested on empty DBs and previous schemas, preserving legacy unresolved intents,
 dedupe, cleanup and explicit preferences. FakeClock controls timing/jitter;
 no real provider or quota is used.
 
+Uncertain-start recovery uses FakeClock, temporary SQLite and sanitized
+provider observations. Coverage includes 600 read-only checks without another
+dispatch, exact target-cycle closure, weekly-reset-only non-closure, the
+rolling-inactive proof, persisted manual-review races, preflight-skipped legacy
+dedupe recovery, and one new dispatch only after a verified independent
+opportunity. These tests do not contact a provider or spend quota.
+
 `tests/web/runtime-metrics-smoke.test.ts` starts the actual offline daemon with
 FakeProvider and temporary DB/auth, verifies graceful restart, technical metrics
 revocation and bounded credential-free captured logs. The disposable Docker

@@ -185,11 +185,14 @@ Read hints are bounded/coalesced by provider and wake a supervised reconcile
 worker asynchronously, bypassing only polling due time, never auth/runtime or
 backoff gates. Hints received during work remain pending for a subsequent pass.
 
-An operator may request audited `resolved_unknown` closure through the executor
-only after fresh read-only evidence proves that the exact original observed
-cycle ended. Missing legacy identity remains blocked. This is neither success
-nor retry, and independent cleanup obligations still block client updates.
-See [ADR-008](adr/008-unknown-action-resolution.md).
+The executor can close `uncertain` as audited `resolved_unknown` during its
+existing backoff-controlled read-only confirmation when fresh evidence proves
+the exact original cycle ended or the strict rolling-inactive proof passes.
+Automatic closure never retries the original prompt. Missing legacy identity
+remains blocked; the manual review route stays available. This is neither
+success nor failure, and independent cleanup obligations still block client
+updates. See [ADR-008](adr/008-unknown-action-resolution.md) and
+[ADR-010](adr/010-verified-uncertain-recovery.md).
 
 Loop supervision tracks reconcile, executor, cleanup, aggregation and retention
 progress using monotonic durations and configured limits. Public `/healthz`

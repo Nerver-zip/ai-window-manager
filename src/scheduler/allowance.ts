@@ -37,15 +37,71 @@ export interface FindExhaustedAllowanceInput {
   windows: readonly WindowSnapshot[];
 }
 
+export interface AllowanceCycleIdentity {
+  cycleAtMs: number;
+  lastObservedAtMs: number;
+}
+
+/** Window identities whose allowance is consumed by a start for this target. */
+export function consumedAllowanceWindowKinds(
+  providerId: string,
+  targetWindowKind: string | undefined,
+  windows: readonly WindowSnapshot[],
+): string[] {
+  if (!targetWindowKind) return [];
+  return windows
+    .filter((window) => consumesSameAllowance(providerId, targetWindowKind, window))
+    .map((window) => window.windowKind)
+    .filter((windowKind, index, values) => values.indexOf(windowKind) === index)
+    .sort((left, right) => {
+      if (left === targetWindowKind) return right === targetWindowKind ? 0 : -1;
+      if (right === targetWindowKind) return 1;
+      return left.localeCompare(right);
+    });
+}
+
+/**
+ * Stable auto-opportunity identity from the target and every allowance a start
+ * consumes. A lifecycle row cannot be newer than its normalized window sample;
+ * the tracker may intentionally retain an older baseline across short ticks.
+ */
+export function buildAvailabilityGeneration(input: {
+  providerId: string;
+  windowKind: string | undefined;
+  windows: readonly WindowSnapshot[];
+  cycles: ReadonlyMap<string, AllowanceCycleIdentity>;
+}): string | undefined {
+  const kinds = consumedAllowanceWindowKinds(input.providerId, input.windowKind, input.windows);
+  if (kinds.length === 0) return undefined;
+  const identities: Array<{ windowKind: string; cycleAtMs: number }> = [];
+  for (const windowKind of kinds) {
+    const window = input.windows.find((candidate) => candidate.windowKind === windowKind);
+    const cycle = input.cycles.get(windowKind);
+    const observedAtMs = window ? Date.parse(window.observedAt) : NaN;
+    if (
+      !window ||
+      window.providerId !== input.providerId ||
+      !Number.isSafeInteger(observedAtMs) ||
+      !cycle ||
+      !Number.isSafeInteger(cycle.cycleAtMs) ||
+      !Number.isSafeInteger(cycle.lastObservedAtMs) ||
+      cycle.lastObservedAtMs > observedAtMs
+    )
+      return undefined;
+    identities.push({ windowKind, cycleAtMs: cycle.cycleAtMs });
+  }
+  return JSON.stringify(identities);
+}
+
 export function findExhaustedAllowance(
   input: FindExhaustedAllowanceInput,
 ): ExhaustedAllowance | undefined {
   const targetWindowKind = input.windowKind;
   if (!targetWindowKind) return undefined;
   const nowMs = input.now.getTime();
-  const sharing = input.windows
-    .filter((window) => consumesSameAllowance(input.providerId, targetWindowKind, window))
-    .sort((left, right) => rank(left, targetWindowKind) - rank(right, targetWindowKind));
+  const sharing = consumedAllowanceWindowKinds(input.providerId, targetWindowKind, input.windows)
+    .map((windowKind) => input.windows.find((window) => window.windowKind === windowKind))
+    .filter((window): window is WindowSnapshot => window !== undefined);
 
   for (const window of sharing) {
     if (!isExhausted(window, nowMs)) continue;
@@ -74,10 +130,6 @@ function consumesSameAllowance(
     );
   }
   return true;
-}
-
-function rank(window: WindowSnapshot, targetWindowKind: string): number {
-  return window.windowKind === targetWindowKind ? 0 : 1;
 }
 
 function isExhausted(window: WindowSnapshot, nowMs: number): boolean {

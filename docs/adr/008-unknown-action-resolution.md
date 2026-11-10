@@ -48,6 +48,13 @@ and a native form with PRG. HTTP handlers only enqueue requests; they never call
 provider actions. Closing uncertainty does not waive remaining cleanup jobs or
 the normal gates for future actions. There is no automatic expiry-based closure.
 
+[ADR-010](010-verified-uncertain-recovery.md) supersedes the manual-only portion
+of this decision narrowly: the existing exact-cycle and rolling-inactive proof
+may now be evaluated automatically during the same backoff-controlled,
+read-only confirmation work. The operator review path remains available and is
+still required when proof is unavailable. No time-only expiry or weekly-reset
+shortcut is permitted.
+
 Requests are persisted once per intent, coalesced while pending, and consumed
 by the action executor under its provider-wide serialization. A failed review
 is checked, not retried automatically as a mutation; the operator may request

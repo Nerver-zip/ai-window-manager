@@ -8,6 +8,10 @@ import { decideTargetReset, type SchedulerDecision } from './decision.js';
 import { deriveCurrentWindow, deriveCurrentWindowForTarget } from './current-window.js';
 import { planWindowAction, PlannerReasonCode, type PlannerDecision } from './planner.js';
 import { trackWindowCycles } from './window-cycle.js';
+import {
+  currentAvailabilityGeneration,
+  legacyAutoOpportunityBlocks,
+} from './availability-generation.js';
 import { activationPolicyFromRecord } from './policy.js';
 import {
   activationPolicyId,
@@ -259,7 +263,16 @@ export class Reconciler {
         const cycle = window
           ? this.input.repositories.windowCycles.get(provider.id, window.windowKind)
           : undefined;
-        const decision = planWindowAction({
+        const eligibilityGeneration =
+          resolvedPolicy.kind === 'auto'
+            ? currentAvailabilityGeneration(
+                this.input.repositories,
+                provider.id,
+                window?.windowKind,
+                state.observation.windows,
+              )
+            : undefined;
+        let decision = planWindowAction({
           now,
           providerId: provider.id,
           policy: resolvedPolicy,
@@ -279,7 +292,36 @@ export class Reconciler {
           automationEnabled: provider.mode === 'automation',
           pendingIntents: this.input.repositories.actionIntents.listOpen(provider.id),
           ...(cycle ? { observedCycleAt: new Date(cycle.cycleAtMs).toISOString() } : {}),
+          ...(resolvedPolicy.kind === 'auto'
+            ? { eligibilityGeneration: eligibilityGeneration ?? null }
+            : {}),
         });
+        if (
+          decision.kind === 'START' &&
+          decision.explanation.eligibilityGeneration &&
+          resolvedPolicy.kind === 'auto' &&
+          window &&
+          cycle &&
+          legacyAutoOpportunityBlocks({
+            repositories: this.input.repositories,
+            providerId: provider.id,
+            policyId: policy.id,
+            windowKind: window.windowKind,
+            cycleAtMs: cycle.cycleAtMs,
+            windows: state.observation.windows,
+          })
+        ) {
+          decision = {
+            ...decision,
+            kind: 'WAIT',
+            reasonCode: PlannerReasonCode.OpportunityGenerationUnchanged,
+            explanation: {
+              ...decision.explanation,
+              decision: 'WAIT',
+              reasonCode: PlannerReasonCode.OpportunityGenerationUnchanged,
+            },
+          };
+        }
         const result: ReconcileDecisionResult = {
           providerId: provider.id,
           policyId: policy.id,

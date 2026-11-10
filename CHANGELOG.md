@@ -15,7 +15,10 @@
   session-only; request logs omit query strings and redact credential headers.
 - Private loop diagnostics, coalesced inspect hints, persisted shared provider
   read backoff, and audited unknown-outcome closure after fresh observed-cycle
-  evidence, without redispatching quota-consuming actions.
+  evidence, without redispatching quota-consuming actions. Automatic recovery
+  uses the existing read cadence and strict exact-cycle or rolling-inactive
+  proof; verified allowance-cycle generations let a genuinely new opportunity
+  proceed after the old intent is no longer actionable.
 - Pin the official Antigravity CLI to `1.4.3` with verified per-architecture
   digests; retain the existing Codex CLI `0.162.1` pin.
 - Add Gemini 4 Argon as a separate weekly Antigravity usage target using the

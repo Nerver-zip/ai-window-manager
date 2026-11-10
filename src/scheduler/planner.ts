@@ -38,7 +38,9 @@ export const PlannerReasonCode = {
   ActiveHoursTooShort: 'ACTIVE_HOURS_TOO_SHORT',
   AutoWindowAvailable: 'AUTO_WINDOW_AVAILABLE',
   WindowCycleMissing: 'WINDOW_CYCLE_MISSING',
+  AvailabilityCycleUnverified: 'AVAILABILITY_CYCLE_UNVERIFIED',
   ActionAlreadyRecorded: 'ACTION_ALREADY_RECORDED',
+  OpportunityGenerationUnchanged: 'AUTO_OPPORTUNITY_GENERATION_UNCHANGED',
 } as const;
 
 export type PlannerReasonCode = (typeof PlannerReasonCode)[keyof typeof PlannerReasonCode];
@@ -65,6 +67,8 @@ export interface PlannerInput {
   pendingIntents?: readonly PlannerIntentLike[];
   /** Durable identity of the observed availability cycle; never a wall-clock bucket. */
   observedCycleAt?: string;
+  /** Stable identities for the target and every allowance consumed by its start. */
+  eligibilityGeneration?: string | null;
 }
 
 export interface PlannerExplanation {
@@ -90,6 +94,7 @@ export interface PlannerExplanation {
   toleranceSeconds?: number;
   coverageSeconds?: number;
   observedCycleAt?: string;
+  eligibilityGeneration?: string;
   exhaustedWindowKind?: string;
   exhaustedResetAt?: string;
 }
@@ -182,6 +187,15 @@ export function planWindowAction(input: PlannerInput): PlannerDecision {
   return planActiveHours(input, base, input.policy);
 }
 
+export function legacyAutoDedupeKey(
+  providerId: string,
+  policyId: string,
+  windowKind: string,
+  cycleAt: string,
+): string {
+  return [providerId, 'start_window', policyId, windowKind, cycleAt].join(':');
+}
+
 export function upcomingSchedule(
   policy: ActivationPolicy,
   now: Date,
@@ -225,9 +239,17 @@ function planAuto(
     return wait(base, PlannerReasonCode.MonitoringUnavailable);
   if (!input.observedCycleAt || !Number.isFinite(Date.parse(input.observedCycleAt)))
     return wait(base, PlannerReasonCode.WindowCycleMissing);
+  if (input.eligibilityGeneration === null)
+    return wait(base, PlannerReasonCode.AvailabilityCycleUnverified);
   return start(
     input,
-    { ...base, observedCycleAt: input.observedCycleAt },
+    {
+      ...base,
+      observedCycleAt: input.observedCycleAt,
+      ...(input.eligibilityGeneration
+        ? { eligibilityGeneration: input.eligibilityGeneration }
+        : {}),
+    },
     new Date(input.observedCycleAt),
     new Date(input.now.getTime() + 5 * 60_000),
     PlannerReasonCode.AutoWindowAvailable,
@@ -375,15 +397,14 @@ function start(
   expiresAt: Date,
   reasonCode: PlannerReasonCode,
 ): PlannerDecision {
-  const dedupeKey = [
-    input.providerId,
-    'start_window',
-    input.policy.id,
-    ...(input.policy.kind === 'auto'
-      ? [input.window?.windowKind ?? input.currentWindow.windowKind]
-      : []),
-    anchor.toISOString(),
-  ].join(':');
+  const windowKind = input.window?.windowKind ?? input.currentWindow.windowKind;
+  const dedupeKey =
+    input.policy.kind === 'auto' && windowKind
+      ? [
+          legacyAutoDedupeKey(input.providerId, input.policy.id, windowKind, anchor.toISOString()),
+          ...(input.eligibilityGeneration ? [`availability:${input.eligibilityGeneration}`] : []),
+        ].join(':')
+      : [input.providerId, 'start_window', input.policy.id, anchor.toISOString()].join(':');
   if (hasPendingProviderAction(input.pendingIntents)) {
     return wait(
       {
