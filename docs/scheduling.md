@@ -166,8 +166,9 @@ A start is also blocked by exhaustion of any other window it consumes:
 
 Enforcement happens in four places, from cheapest to authoritative:
 
-1. The Overview hides `Start this window now` and shows that the allowance is
-   used up.
+1. The Overview hides `Start this window now` and names the window whose
+   allowance is used up, with its reset time when reported. A row blocked by
+   another window says so; it does not claim its own allowance is used up.
 2. The command API returns `409 ALLOWANCE_EXHAUSTED` when the persisted
    observation is fresh. Stale data is not used to refuse a request.
 3. The planner waits for an automatic start (`ALLOWANCE_EXHAUSTED`) and skips an
