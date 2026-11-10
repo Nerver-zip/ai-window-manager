@@ -44,7 +44,7 @@ jobs:
           echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "Release tag $REQUESTED_TAG resolves to $release_sha"
 
-      - uses: pnpm/action-setup@v6.1.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.15.0
           run_install: false
