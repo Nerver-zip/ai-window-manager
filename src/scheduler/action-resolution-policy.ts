@@ -26,6 +26,8 @@ export type ResolutionReason =
   | 'ACTION_RESOLUTION_EVIDENCE_MISSING'
   | 'ACTION_RESOLUTION_OBSERVATION_UNAVAILABLE'
   | 'ACTION_RESOLUTION_CYCLE_NOT_CLOSED'
+  | 'ACTION_RESOLUTION_WAITING_FOR_TARGET_BOUNDARY'
+  | 'ACTION_RESOLUTION_ROLLING_EVIDENCE_INSUFFICIENT'
   | 'ACTION_RESOLUTION_ELIGIBLE';
 
 /** Pure gate: neither local expiry nor a single projected reset proves closure. */
@@ -106,6 +108,18 @@ export function assessActionResolution(input: ActionResolutionInput): {
   }
   if (!previousCycle || !currentCycle || !Number.isSafeInteger(outcomeRecordedAtMs))
     return reject('ACTION_RESOLUTION_EVIDENCE_MISSING');
+  if (
+    previousCycle.providerId === intent.providerId &&
+    currentCycle.providerId === intent.providerId &&
+    previousCycle.windowKind === target &&
+    currentCycle.windowKind === target &&
+    previousCycle.cycleAtMs === cycleAt &&
+    currentCycle.cycleAtMs === cycleAt &&
+    currentCycle.anchoredResetAtMs !== null &&
+    currentCycle.anchoredResetAtMs > currentCycle.cycleAtMs &&
+    currentCycle.anchoredResetAtMs > nowMs
+  )
+    return reject('ACTION_RESOLUTION_WAITING_FOR_TARGET_BOUNDARY');
   const firstAt = previousCycle.lastObservedAtMs;
   const firstReset = previousCycle.lastResetAtMs;
   const lastAt = Date.parse(window.observedAt);
@@ -142,7 +156,7 @@ export function assessActionResolution(input: ActionResolutionInput): {
     !Number.isSafeInteger(firstReset) ||
     !Number.isSafeInteger(lastReset) ||
     outcomeRecordedAtMs! < (intent.startedAtMs ?? intent.createdAtMs) ||
-    firstAt < outcomeRecordedAtMs! ||
+    firstAt <= outcomeRecordedAtMs! ||
     Date.parse(observation.observedAt) < lastAt ||
     lastAt - firstAt < 15_000 ||
     lastAt < outcomeRecordedAtMs! + durationMs ||
@@ -152,7 +166,7 @@ export function assessActionResolution(input: ActionResolutionInput): {
     currentCycle.lastObservedAtMs !== lastAt ||
     currentCycle.lastResetAtMs !== lastReset
   )
-    return reject('ACTION_RESOLUTION_EVIDENCE_MISSING');
+    return reject('ACTION_RESOLUTION_ROLLING_EVIDENCE_INSUFFICIENT');
   return {
     allowed: true,
     reasonCode: 'ACTION_RESOLUTION_ELIGIBLE',

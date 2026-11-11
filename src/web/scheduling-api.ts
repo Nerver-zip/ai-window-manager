@@ -8,6 +8,11 @@ import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
 import {
+  availabilityGenerationBlocks,
+  currentAvailabilityGeneration,
+  legacyAutoOpportunityBlocks,
+} from '../scheduler/availability-generation.js';
+import {
   planWindowAction,
   PlannerReasonCode,
   upcomingSchedule,
@@ -57,6 +62,7 @@ export interface SchedulingRead {
 export function readScheduling(input: SchedulingApiInput): SchedulingRead {
   const timezone = readTimezoneSetting(input);
   const now = input.clock.now();
+  const nowMs = now.getTime();
   return {
     timezone: timezone ?? null,
     providers: filterVisibleProviders(
@@ -122,6 +128,15 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
         const cycle = window
           ? input.repositories.windowCycles.get(provider.id, window.windowKind)
           : undefined;
+        const eligibilityGeneration =
+          resolvedPolicy?.kind === 'auto' && observation
+            ? currentAvailabilityGeneration(
+                input.repositories,
+                provider.id,
+                window?.windowKind,
+                observation.windows,
+              )
+            : undefined;
         let decision =
           !requiresReview && resolvedPolicy && adapter && observation && state?.health === 'UP'
             ? safeDecision({
@@ -139,8 +154,47 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
                 ...(window ? { window } : {}),
                 windows: observation.windows,
                 ...(cycle ? { observedCycleAt: new Date(cycle.cycleAtMs).toISOString() } : {}),
+                ...(resolvedPolicy.kind === 'auto'
+                  ? { eligibilityGeneration: eligibilityGeneration ?? null }
+                  : {}),
               })
             : null;
+        if (
+          decision?.kind === 'START' &&
+          decision.explanation.eligibilityGeneration &&
+          resolvedPolicy?.kind === 'auto' &&
+          window &&
+          cycle &&
+          (legacyAutoOpportunityBlocks({
+            repositories: input.repositories,
+            providerId: provider.id,
+            policyId: resolvedPolicy.id,
+            windowKind: window.windowKind,
+            cycleAtMs: cycle.cycleAtMs,
+            windows: observation?.windows ?? [],
+          }) ||
+            availabilityGenerationBlocks({
+              repositories: input.repositories,
+              providerId: provider.id,
+              policyId: resolvedPolicy.id,
+              windowKind: window.windowKind,
+              cycleAtMs: cycle.cycleAtMs,
+              generation: decision.explanation.eligibilityGeneration,
+              windows: observation?.windows ?? [],
+              nowMs,
+            }))
+        ) {
+          decision = {
+            ...decision,
+            kind: 'WAIT',
+            reasonCode: PlannerReasonCode.OpportunityGenerationUnchanged,
+            explanation: {
+              ...decision.explanation,
+              decision: 'WAIT',
+              reasonCode: PlannerReasonCode.OpportunityGenerationUnchanged,
+            },
+          };
+        }
         if (
           decision?.kind === 'START' &&
           decision.dedupeKey &&

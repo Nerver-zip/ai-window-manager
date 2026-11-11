@@ -134,17 +134,26 @@ different meanings.
 
 ### Reviewing an unknown outcome
 
-Overview exposes a native review form for `uncertain` starts. It queues a
-persisted request; only the executor reads the provider. A fresh canonical
-observation plus exact-cycle closure evidence, or repeated rolling-inactive
-reset evidence after a full post-outcome window duration, is required to end
-the old action as `resolved_unknown`. This does not assert success/failure or
-repeat the prompt. Same-cycle active evidence can confirm normally. Missing
-cycle identity, stale data, unavailable provider, or insufficient timing evidence leaves
-the block intact with an explanation. Requests survive restart and coalesce;
+The executor checks `uncertain` starts during the existing persisted,
+backoff-controlled, read-only confirmation work. A fresh canonical observation
+plus exact-cycle closure evidence, or repeated rolling-inactive reset evidence
+after a full post-outcome window duration, may end the old action as
+`resolved_unknown`. This does not assert success/failure or repeat the prompt.
+Same-cycle active evidence can confirm normally. Missing cycle identity, stale
+data, unavailable provider, or insufficient timing evidence leaves the block
+intact with an explanation. No local expiry or weekly reset alone closes a
+five-hour action. The Overview's native review form remains available when an
+operator wants an audited check; requests survive restart and coalesce, and
 checked requests are not automatically retried. Future actions still pass all
 normal gates, including provider-wide serialization and protected cleanup.
-See [ADR-008](adr/008-unknown-action-resolution.md).
+See [ADR-008](adr/008-unknown-action-resolution.md) and
+[ADR-010](adr/010-verified-uncertain-recovery.md).
+
+When strict proof closes an old intent, it releases that intent's provider-wide
+serialization block only. The old state remains `resolved_unknown`, with its
+original attempt counters, history, dedupe identity and cleanup jobs. A later
+start must be a new intent for a demonstrably different opportunity and pass
+ordinary planning and fresh executor preflight.
 
 ### Allowance exhaustion
 
@@ -268,12 +277,35 @@ The DB unique constraint is the final guard. Repeated ticks can propose the same
 
 For `auto`, the cycle instant comes from durable **observed quota lifecycle**
 state, not epoch-aligned duration buckets. The key additionally includes the
-exact window kind. The first observation establishes an availability identity;
-it advances after a previously anchored reset expires and actionable fresh
-evidence identifies the next availability/active window, or a trustworthy
-active-to-inactive transition when reset timestamps are unavailable. A moving
-`now + duration` reset never changes that identity. Fixed/custom/active-hours
-policies keep their explicit schedule anchors.
+exact window kind and a stable availability generation made from the target
+cycle plus every allowance cycle consumed by that target. Its identity set uses
+durable previously observed cycle rows as well as current windows. A previously
+known shared allowance missing from the current snapshot makes the generation
+unavailable, so incomplete observations fail closed. A new reported member
+cannot change a same-target-cycle opportunity by membership alone: a prior
+generation must have a high-confidence, verified cycle advance. The first
+observation establishes an availability identity; it advances after a
+previously anchored reset expires and actionable fresh evidence identifies the
+next availability/active window, or a trustworthy active-to-inactive transition
+when reset timestamps are unavailable. A moving `now + duration` reset never
+changes that identity. Fixed/custom/active-hours policies keep their explicit
+schedule anchors.
+
+A shared allowance reset can create a distinct auto opportunity when the exact
+target cycle remains unchanged, but only after that allowance's durable cycle
+identity advances. If a previous automatic attempt for that target cycle was
+dispatched and the target's persisted lifecycle retains a valid anchored reset
+in the future, the scheduler blocks duplicate starts (including for confirmed
+intents) even if a shared allowance resets or the provider temporarily reports
+the window as inactive; the anchored reset must elapse before a subsequent
+opportunity can be scheduled. For an old target-only dedupe row, compatibility
+recovery also requires a preflight-skipped row with persisted `attempt_count = 0`
+(and no contradictory dispatch-start event), or a `resolved_unknown` row with
+linked closure evidence, plus an independently observed high-confidence
+consumed-allowance transition. An absent dispatch event alone is not proof
+because event retention can remove it. The regular planner and fresh executor
+preflight still reject an exhausted allowance. A weekly reset does not prove
+that a five-hour target cycle ended.
 
 Claude Code's unscoped canonical `session` meter is a bootstrap exception: an
 official exact-zero reading with no reset is treated as `INACTIVE` at high

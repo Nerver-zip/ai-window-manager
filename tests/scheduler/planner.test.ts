@@ -196,6 +196,23 @@ describe('planWindowAction', () => {
     ).toMatchObject({ kind: 'START' });
   });
 
+  it('waits for verified identities for the target and consumed allowances before an auto start', () => {
+    expect(
+      planWindowAction(input({ policy: policy({ kind: 'auto' }), eligibilityGeneration: null })),
+    ).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: PlannerReasonCode.AvailabilityCycleUnverified,
+    });
+    expect(
+      planWindowAction(
+        input({ policy: policy({ kind: 'auto' }), eligibilityGeneration: 'generation-1' }),
+      ),
+    ).toMatchObject({
+      kind: 'START',
+      explanation: { eligibilityGeneration: 'generation-1' },
+    });
+  });
+
   it('requires known actionable duration and phase confidence', () => {
     expect(planWindowAction(input({ window: windowWithoutDuration() }))).toMatchObject({
       kind: 'WAIT',

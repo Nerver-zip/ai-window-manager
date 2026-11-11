@@ -319,6 +319,22 @@ export class WindowSampleRepository {
     return row ? windowSnapshotFromRow(row) : undefined;
   }
 
+  latestAtOrBefore(
+    providerId: string,
+    windowKind: string,
+    atMs: number,
+  ): WindowSnapshot | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM window_samples
+         WHERE provider_id = ? AND window_kind = ? AND observed_at_ms <= ?
+         ORDER BY observed_at_ms DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(providerId, windowKind, atMs) as WindowSampleRow | undefined;
+    return row ? windowSnapshotFromRow(row) : undefined;
+  }
+
   listForUsageAggregation(afterId: number, limit: number): UsageSampleInput[] {
     return this.db
       .prepare(
@@ -701,6 +717,24 @@ export class EventRepository {
     return Number(result.lastInsertRowid);
   }
 
+  hasActionIntentReason(
+    providerId: string,
+    intentId: string,
+    type: string,
+    reasonCode: string,
+  ): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1 FROM events
+           WHERE provider_id = ? AND type = ? AND reason_code = ?
+             AND json_extract(data_json, '$.intentId') = ?
+           LIMIT 1`,
+        )
+        .get(providerId, type, reasonCode, intentId),
+    );
+  }
+
   list(providerId?: string, options: ListOptions = {}): EventRecord[] {
     const limit = boundedLimit(options.limit);
     const offset = boundedOffset(options.offset);
@@ -964,6 +998,32 @@ export class ActionIntentRepository {
     return row.atMs ?? undefined;
   }
 
+  wasDispatchStarted(id: string, providerId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1 FROM events
+           WHERE provider_id = ? AND type = 'action_dispatch_started'
+             AND json_extract(data_json, '$.intentId') = ?
+           LIMIT 1`,
+        )
+        .get(providerId, id),
+    );
+  }
+
+  hasResolutionEvidence(id: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(
+          `SELECT 1 FROM observed_cycle_closures WHERE intent_id = ?
+           UNION ALL
+           SELECT 1 FROM rolling_inactive_resolution_evidence WHERE intent_id = ?
+           LIMIT 1`,
+        )
+        .get(id, id),
+    );
+  }
+
   resolutionRequest(id: string): ActionResolutionRequest | undefined {
     return this.db
       .prepare(
@@ -1054,6 +1114,24 @@ export class ActionIntentRepository {
     const row = this.db
       .prepare('SELECT * FROM action_intents WHERE dedupe_key = ?')
       .get(dedupeKey) as ActionIntentRow | undefined;
+    return row ? actionIntentFromRow(row) : undefined;
+  }
+
+  latestForTargetCycle(
+    providerId: string,
+    policyId: string,
+    windowKind: string,
+    cycleAt: string,
+  ): ActionIntentRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM action_intents
+         WHERE provider_id = ? AND policy_id = ? AND action_type = 'trigger_window'
+           AND json_extract(explanation_json, '$.windowKind') = ?
+           AND json_extract(explanation_json, '$.observedCycleAt') = ?
+         ORDER BY created_at_ms DESC, id DESC LIMIT 1`,
+      )
+      .get(providerId, policyId, windowKind, cycleAt) as ActionIntentRow | undefined;
     return row ? actionIntentFromRow(row) : undefined;
   }
 
@@ -1161,6 +1239,7 @@ export class ActionIntentRepository {
     resolvedAtMs: number,
     verifiedAtMs: number,
     rollingEvidence?: RollingInactiveEvidence,
+    source: ActionResolutionSource = 'operator',
   ): boolean {
     if (
       !Number.isSafeInteger(resolvedAtMs) ||
@@ -1172,11 +1251,18 @@ export class ActionIntentRepository {
       const closure = this.db
         .prepare(
           `SELECT cycle_at_ms AS cycleAtMs, ended_at_ms AS endedAtMs,
-        observed_at_ms AS observedAtMs, window_kind AS windowKind
+        observed_at_ms AS observedAtMs, window_kind AS windowKind,
+        evidence_kind AS evidenceKind
         FROM observed_cycle_closures WHERE intent_id = ? AND provider_id = ?`,
         )
         .get(intent.id, intent.providerId) as
-        | { cycleAtMs: number; endedAtMs: number; observedAtMs: number; windowKind: string }
+        | {
+            cycleAtMs: number;
+            endedAtMs: number;
+            observedAtMs: number;
+            windowKind: string;
+            evidenceKind: 'anchored_boundary' | 'reported_inactive_transition';
+          }
         | undefined;
       if (rollingEvidence) {
         const recordedAt = this.outcomeRecordedAt(intent.id, intent.providerId);
@@ -1203,13 +1289,18 @@ export class ActionIntentRepository {
           `UPDATE action_intents SET state = 'resolved_unknown',
         finished_at_ms = @resolvedAtMs, updated_at_ms = @resolvedAtMs, confirmation_not_before_ms = NULL
         WHERE id = @id AND state = 'uncertain' AND updated_at_ms = @expectedUpdated
-          AND confirmation_attempt_count = @expectedAttempts`,
+          AND confirmation_attempt_count = @expectedAttempts
+          AND (@source = 'operator' OR NOT EXISTS (
+            SELECT 1 FROM action_resolution_requests
+            WHERE intent_id = @id AND state = 'pending'
+          ))`,
         )
         .run({
           id: intent.id,
           resolvedAtMs,
           expectedUpdated: intent.updatedAtMs,
           expectedAttempts: intent.confirmationAttemptCount,
+          source,
         });
       if (result.changes !== 1) return false;
       if (rollingEvidence) {
@@ -1238,11 +1329,14 @@ export class ActionIntentRepository {
       this.db
         .prepare(
           `INSERT INTO events (occurred_at_ms, provider_id, type, severity, reason_code, data_json)
-        VALUES (?, ?, 'action_resolved_unknown', 'warn', 'ACTION_OUTCOME_UNKNOWN', ?)`,
+        VALUES (?, ?, 'action_resolved_unknown', 'warn', ?, ?)`,
         )
         .run(
           resolvedAtMs,
           intent.providerId,
+          source === 'automatic'
+            ? 'ACTION_UNKNOWN_OUTCOME_CLOSED_VERIFIED'
+            : 'ACTION_OUTCOME_UNKNOWN',
           stringifyJson({
             intentId: intent.id,
             windowKind:
@@ -1250,9 +1344,20 @@ export class ActionIntentRepository {
             cycleAtMs:
               closure?.cycleAtMs ??
               Date.parse(String((intent.explanation as Record<string, unknown>).observedCycleAt)),
-            ...(closure ? { endedAtMs: closure.endedAtMs } : { rollingInactive: true }),
+            ...(closure
+              ? {
+                  endedAtMs: closure.endedAtMs,
+                  evidenceKind: closure.evidenceKind,
+                }
+              : {
+                  rollingInactive: true,
+                  rollingEvidence,
+                }),
             verifiedAtMs,
             outcome: 'unknown',
+            resolutionSource:
+              source === 'automatic' ? 'automatic_verified_evidence' : 'operator_review',
+            providerSerializationReleased: true,
           }),
         );
       return true;
@@ -1488,6 +1593,8 @@ export interface ActionResolutionRequest {
   requestedAtMs: number;
   checkedAtMs: number | null;
 }
+
+export type ActionResolutionSource = 'operator' | 'automatic';
 
 interface ProviderRow {
   id: string;

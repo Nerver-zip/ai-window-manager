@@ -311,6 +311,391 @@ function addAntigravityIntent(
 }
 
 describe('ActionExecutor', () => {
+  it('confirms fresh active evidence from the exact original cycle automatically', async () => {
+    const context = setup();
+    const nowMs = context.clock.now().getTime();
+    context.fake.setPhase('ACTIVE');
+    context.db.prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?').run(
+      JSON.stringify({
+        windowKind: 'five_hour',
+        observedCycleAt: new Date(nowMs).toISOString(),
+      }),
+      context.intent.id,
+    );
+    context.repositories.actionIntents.setState(context.intent.id, 'uncertain', nowMs, {
+      attemptCount: 1,
+      startedAtMs: nowMs,
+    });
+    context.repositories.events.append({
+      occurredAtMs: nowMs,
+      providerId: context.providerId,
+      type: 'action_uncertain',
+      severity: 'warn',
+      reasonCode: 'ACTION_DISPATCH_UNCERTAIN',
+      data: { intentId: context.intent.id },
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs: nowMs,
+      anchoredResetAtMs: nowMs + 18_000_000,
+      lastObservedAtMs: nowMs - 10_000,
+      lastResetAtMs: nowMs + 18_000_000,
+      phase: 'ACTIVE',
+      phaseConfidence: 'high',
+    });
+
+    await context.executor().executeDue();
+
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'confirmed',
+      attemptCount: 1,
+      confirmationAttemptCount: 1,
+    });
+    expect(context.triggerCount).toBe(0);
+    expect(
+      context.repositories.events
+        .list(context.providerId)
+        .filter((event) => event.type === 'action_resolved_unknown'),
+    ).toHaveLength(0);
+  });
+
+  it('does not close an uncertain five-hour start on a weekly reset alone', async () => {
+    const context = setup({ providerId: 'codex' });
+    const nowMs = context.clock.now().getTime();
+    const cycleAtMs = nowMs - 6 * 60 * 60 * 1000;
+    const targetResetAtMs = nowMs + 60 * 60 * 1000;
+    context.db.prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?').run(
+      JSON.stringify({
+        windowKind: 'five_hour',
+        observedCycleAt: new Date(cycleAtMs).toISOString(),
+      }),
+      context.intent.id,
+    );
+    context.repositories.actionIntents.setState(context.intent.id, 'uncertain', nowMs - 1, {
+      attemptCount: 1,
+      startedAtMs: cycleAtMs,
+    });
+    context.repositories.events.append({
+      occurredAtMs: nowMs - 1,
+      providerId: context.providerId,
+      type: 'action_uncertain',
+      severity: 'warn',
+      reasonCode: 'ACTION_DISPATCH_UNCERTAIN',
+      data: { intentId: context.intent.id },
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs,
+      anchoredResetAtMs: targetResetAtMs,
+      lastObservedAtMs: nowMs - 10_000,
+      lastResetAtMs: targetResetAtMs,
+      phase: 'ACTIVE',
+      phaseConfidence: 'high',
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'codex_weekly',
+      cycleAtMs: nowMs - 7 * 24 * 60 * 60 * 1000,
+      anchoredResetAtMs: nowMs - 1,
+      lastObservedAtMs: nowMs - 30_000,
+      lastResetAtMs: nowMs - 1,
+      phase: 'EXHAUSTED',
+      phaseConfidence: 'high',
+    });
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: () => {
+        const observedAt = context.clock.now().toISOString();
+        return Promise.resolve({
+          providerId: context.providerId,
+          health: 'UP',
+          observedAt,
+          staleAfterSeconds: 300,
+          windows: [
+            {
+              providerId: context.providerId,
+              windowKind: 'five_hour',
+              observedAt,
+              phase: { value: 'INACTIVE', source: 'observed', confidence: 'high', observedAt },
+              durationSeconds: {
+                value: 18_000,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              resetAt: {
+                value: new Date(targetResetAtMs).toISOString(),
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              usageRatio: {
+                value: 0,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+            },
+            {
+              providerId: context.providerId,
+              windowKind: 'codex_weekly',
+              observedAt,
+              phase: { value: 'INACTIVE', source: 'observed', confidence: 'exact', observedAt },
+              durationSeconds: {
+                value: 604_800,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              resetAt: {
+                value: new Date(nowMs + 604_800_000).toISOString(),
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              usageRatio: {
+                value: 0,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+            },
+          ],
+        } satisfies ProviderObservation);
+      },
+    };
+
+    await context.executor({ adapters: new Map([[context.providerId, adapter]]) }).executeDue();
+
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('uncertain');
+    expect(
+      context.repositories.events
+        .list(context.providerId)
+        .filter((event) => event.type === 'action_resolved_unknown'),
+    ).toHaveLength(0);
+    expect(
+      context.repositories.events
+        .list(context.providerId)
+        .some((event) => event.reasonCode === 'ACTION_RESOLUTION_WAITING_FOR_TARGET_BOUNDARY'),
+    ).toBe(true);
+  });
+
+  it('leaves a raced pending operator review to close an old intent as operator-requested', async () => {
+    const context = setup({ providerId: 'codex' });
+    const nowMs = context.clock.now().getTime();
+    const cycleAtMs = nowMs - 6 * 60 * 60 * 1000;
+    const endedAtMs = nowMs - 60 * 60 * 1000;
+    context.db.prepare('UPDATE action_intents SET explanation_json = ? WHERE id = ?').run(
+      JSON.stringify({
+        windowKind: 'five_hour',
+        observedCycleAt: new Date(cycleAtMs).toISOString(),
+      }),
+      context.intent.id,
+    );
+    context.repositories.actionIntents.setState(context.intent.id, 'uncertain', nowMs - 1, {
+      attemptCount: 1,
+      startedAtMs: cycleAtMs,
+    });
+    context.repositories.events.append({
+      occurredAtMs: cycleAtMs,
+      providerId: context.providerId,
+      type: 'action_uncertain',
+      severity: 'warn',
+      reasonCode: 'ACTION_DISPATCH_UNCERTAIN',
+      data: { intentId: context.intent.id },
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs,
+      anchoredResetAtMs: endedAtMs,
+      lastObservedAtMs: nowMs - 30_000,
+      lastResetAtMs: endedAtMs,
+      phase: 'ACTIVE',
+      phaseConfidence: 'high',
+    });
+    let requested = false;
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: () => {
+        if (!requested) {
+          requested = true;
+          context.repositories.actionIntents.requestResolution(
+            context.intent.id,
+            context.clock.now().getTime(),
+          );
+        }
+        const observedAt = context.clock.now().toISOString();
+        return Promise.resolve({
+          providerId: context.providerId,
+          health: 'UP',
+          observedAt,
+          staleAfterSeconds: 300,
+          windows: [
+            {
+              providerId: context.providerId,
+              windowKind: 'five_hour',
+              observedAt,
+              phase: { value: 'INACTIVE', source: 'observed', confidence: 'high', observedAt },
+              durationSeconds: {
+                value: 18_000,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              resetAt: {
+                value: new Date(nowMs + 18_000_000).toISOString(),
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              usageRatio: {
+                value: 0,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+            },
+          ],
+        } satisfies ProviderObservation);
+      },
+    };
+    const executor = context.executor({ adapters: new Map([[context.providerId, adapter]]) });
+
+    await executor.executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)?.state).toBe('uncertain');
+    expect(context.repositories.actionIntents.resolutionRequest(context.intent.id)?.state).toBe(
+      'pending',
+    );
+    expect(
+      context.repositories.events
+        .list(context.providerId)
+        .filter((event) => event.type === 'action_resolved_unknown'),
+    ).toHaveLength(0);
+
+    await executor.executeDue();
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'resolved_unknown',
+      attemptCount: 1,
+      confirmationAttemptCount: 1,
+    });
+    expect(context.repositories.actionIntents.resolutionRequest(context.intent.id)).toMatchObject({
+      state: 'checked',
+      reasonCode: 'ACTION_OUTCOME_UNKNOWN',
+    });
+    const event = context.repositories.events
+      .list(context.providerId)
+      .find((candidate) => candidate.type === 'action_resolved_unknown');
+    expect(event).toMatchObject({
+      reasonCode: 'ACTION_OUTCOME_UNKNOWN',
+      data: { resolutionSource: 'operator_review', outcome: 'unknown' },
+    });
+    expect(context.triggerCount).toBe(0);
+  });
+
+  it('automatically closes a 600-check unknown outcome after its exact target cycle ends', async () => {
+    const context = setup({ providerId: 'codex' });
+    const nowMs = context.clock.now().getTime();
+    const cycleAtMs = nowMs - 6 * 60 * 60 * 1000;
+    const endedAtMs = nowMs - 60 * 60 * 1000;
+    const durationSeconds = 18_000;
+    context.db
+      .prepare(
+        `UPDATE action_intents
+         SET state = 'uncertain', attempt_count = 1, confirmation_attempt_count = 600,
+             confirmation_not_before_ms = NULL, started_at_ms = ?, updated_at_ms = ?,
+             explanation_json = ?
+         WHERE id = ?`,
+      )
+      .run(
+        cycleAtMs,
+        nowMs - 1,
+        JSON.stringify({
+          windowKind: 'five_hour',
+          observedCycleAt: new Date(cycleAtMs).toISOString(),
+        }),
+        context.intent.id,
+      );
+    context.repositories.events.append({
+      occurredAtMs: cycleAtMs,
+      providerId: context.providerId,
+      type: 'action_uncertain',
+      severity: 'warn',
+      reasonCode: 'ACTION_DISPATCH_UNCERTAIN',
+      data: { intentId: context.intent.id },
+    });
+    context.repositories.windowCycles.upsert({
+      providerId: context.providerId,
+      windowKind: 'five_hour',
+      cycleAtMs,
+      anchoredResetAtMs: endedAtMs,
+      lastObservedAtMs: nowMs - 30_000,
+      lastResetAtMs: endedAtMs,
+      phase: 'ACTIVE',
+      phaseConfidence: 'high',
+    });
+    const adapter: ProviderAdapter = {
+      ...context.adapter,
+      inspect: () => {
+        const observedAt = context.clock.now().toISOString();
+        return Promise.resolve({
+          providerId: context.providerId,
+          health: 'UP',
+          observedAt,
+          staleAfterSeconds: 300,
+          windows: [
+            {
+              providerId: context.providerId,
+              windowKind: 'five_hour',
+              observedAt,
+              phase: { value: 'ACTIVE', source: 'observed', confidence: 'high', observedAt },
+              durationSeconds: {
+                value: durationSeconds,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              resetAt: {
+                value: new Date(nowMs + durationSeconds * 1000).toISOString(),
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+              usageRatio: {
+                value: 0,
+                source: 'official_supported',
+                confidence: 'exact',
+                observedAt,
+              },
+            },
+          ],
+        } satisfies ProviderObservation);
+      },
+    };
+
+    await context.executor({ adapters: new Map([[context.providerId, adapter]]) }).executeDue();
+
+    expect(context.triggerCount).toBe(0);
+    expect(context.repositories.actionIntents.get(context.intent.id)).toMatchObject({
+      state: 'resolved_unknown',
+      attemptCount: 1,
+      confirmationAttemptCount: 601,
+    });
+    expect(
+      context.repositories.events
+        .list(context.providerId)
+        .filter((event) => event.type === 'action_resolved_unknown'),
+    ).toHaveLength(1);
+    expect(
+      context.repositories.events
+        .list(context.providerId)
+        .some((event) => event.type === 'action_recovery_confirmed'),
+    ).toBe(false);
+  });
+
   it.each([null, 'expired' as const])(
     'resolves an old never-active attempt after restart with %s anchor',
     async (anchor) => {

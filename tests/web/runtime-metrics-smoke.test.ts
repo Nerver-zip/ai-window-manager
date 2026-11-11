@@ -47,20 +47,30 @@ it('starts the real offline bootstrap and preserves metrics access across gracef
     };
     child.stdout?.on('data', capture);
     child.stderr?.on('data', capture);
+    const childExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child?.once('exit', (code, signal) => resolve({ code, signal }));
+      },
+    );
     for (let attempt = 0; attempt < 200; attempt++) {
-      if (child.exitCode !== null) throw new Error('Offline runtime exited before health');
-      try {
-        const response = await fetch(`${baseUrl}/healthz`);
-        if (response.status === 200) return;
-      } catch {
-        // Listening starts only after migration and offline worker startup.
+      const outcome = await Promise.race([
+        fetch(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(250) })
+          .then((response) => ({ response }))
+          .catch(() => ({ response: undefined })),
+        childExit.then((exit) => ({ exit })),
+      ]);
+      if ('exit' in outcome) {
+        throw new Error(
+          `Offline runtime exited before health (code ${outcome.exit.code ?? 'none'}, signal ${outcome.exit.signal ?? 'none'})`,
+        );
       }
+      if (outcome.response?.status === 200) return;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error('Offline runtime health timeout');
   }
   async function stop(): Promise<void> {
-    if (!child || child.exitCode !== null) return;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
     const exited = once(child, 'exit');
     child.kill('SIGTERM');
     const result: unknown[] = await exited;
@@ -87,7 +97,7 @@ it('starts the real offline bootstrap and preserves metrics access across gracef
     expect(output).not.toContain(digest);
     expect(output).not.toContain(TEST_OPERATOR_ENV.AWM_AUTH_PASSWORD_HASH);
   } finally {
-    if (child && child.exitCode === null) {
+    if (child && child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');
       child.kill('SIGKILL');
       await exited;

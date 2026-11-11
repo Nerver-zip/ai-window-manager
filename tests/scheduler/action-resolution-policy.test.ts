@@ -129,6 +129,55 @@ describe('unknown outcome resolution policy', () => {
       reasonCode: 'ACTION_RESOLUTION_ELIGIBLE',
     });
   });
+  it('rejects rolling evidence whose first sample is not after the recorded outcome', () => {
+    const value = input();
+    const durationMs = 5 * 60 * 60 * 1000;
+    const outcomeAt = now - durationMs - 60_000;
+    const cycleAt = outcomeAt - 1000;
+    delete value.closure;
+    value.outcomeRecordedAtMs = outcomeAt;
+    value.intent.startedAtMs = outcomeAt - 1000;
+    value.intent.explanation = { windowKind: 'primary', observedCycleAt: iso(cycleAt) };
+    value.previousCycle = {
+      providerId: 'codex',
+      windowKind: 'primary',
+      cycleAtMs: cycleAt,
+      anchoredResetAtMs: null,
+      lastObservedAtMs: outcomeAt,
+      lastResetAtMs: outcomeAt + durationMs,
+      phase: 'INACTIVE',
+      phaseConfidence: 'high',
+    };
+    value.currentCycle = {
+      ...value.previousCycle,
+      lastObservedAtMs: now,
+      lastResetAtMs: now + durationMs,
+    };
+    value.observation.windows[0] = {
+      providerId: 'codex',
+      windowKind: 'primary',
+      observedAt: iso(now),
+      phase: { value: 'INACTIVE', source: 'inferred', confidence: 'high', observedAt: iso(now) },
+      usageRatio: { value: 0, source: 'observed', confidence: 'high', observedAt: iso(now) },
+      resetAt: {
+        value: iso(now + durationMs),
+        source: 'observed',
+        confidence: 'high',
+        observedAt: iso(now),
+      },
+      durationSeconds: {
+        value: durationMs / 1000,
+        source: 'observed',
+        confidence: 'high',
+        observedAt: iso(now),
+      },
+    };
+
+    expect(assessActionResolution(value)).toMatchObject({
+      allowed: false,
+      reasonCode: 'ACTION_RESOLUTION_ROLLING_EVIDENCE_INSUFFICIENT',
+    });
+  });
   it.each(['executing', 'confirmed', 'resolved_unknown'] as const)(
     'refuses %s regardless of expiry',
     (state) => {

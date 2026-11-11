@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Confidence, WindowPhase, WindowSnapshot } from '../../src/domain/types.js';
-import { findExhaustedAllowance } from '../../src/scheduler/allowance.js';
+import {
+  buildAvailabilityGeneration,
+  findExhaustedAllowance,
+} from '../../src/scheduler/allowance.js';
 
 const now = new Date('2026-11-10T12:00:00.000Z');
 const observedAt = '2026-11-10T11:59:50.000Z';
@@ -249,5 +252,98 @@ describe('findExhaustedAllowance', () => {
     const other = window('fake', 'weekly', { phase: 'EXHAUSTED', usage: 1 });
 
     expect(check('fake', 'five_hour', [target, other])).toEqual({ windowKind: 'weekly' });
+  });
+});
+
+describe('buildAvailabilityGeneration', () => {
+  function generation(providerId: string, target: string, windows: WindowSnapshot[]) {
+    return buildAvailabilityGeneration({
+      providerId,
+      windowKind: target,
+      windows,
+      cycles: new Map(
+        windows.map((candidate, index) => [
+          candidate.windowKind,
+          {
+            cycleAtMs: Date.parse(observedAt) - index * 1000,
+            lastObservedAtMs: Date.parse(observedAt),
+          },
+        ]),
+      ),
+    });
+  }
+
+  it('includes Codex target and every reported shared allowance in stable order', () => {
+    const primary = window('codex', 'codex_five_hour');
+    const weekly = window('codex', 'codex_weekly');
+    const extra = window('codex', 'codex_extra');
+    expect(generation('codex', primary.windowKind, [extra, weekly, primary])).toBe(
+      JSON.stringify([
+        { windowKind: 'codex_five_hour', cycleAtMs: Date.parse(observedAt) - 2000 },
+        { windowKind: 'codex_extra', cycleAtMs: Date.parse(observedAt) },
+        { windowKind: 'codex_weekly', cycleAtMs: Date.parse(observedAt) - 1000 },
+      ]),
+    );
+  });
+
+  it('keeps Antigravity Gemini, Claude/GPT and Argon generations in their own family', () => {
+    const gemini = window('antigravity', 'antigravity_gemini_five_hour');
+    const geminiWeekly = window('antigravity', 'antigravity_gemini_weekly');
+    const claude = window('antigravity', 'antigravity_claude_gpt_weekly');
+    const argon = window('antigravity', 'antigravity_argon_weekly');
+    expect(
+      generation('antigravity', gemini.windowKind, [gemini, geminiWeekly, claude, argon]),
+    ).toBe(
+      JSON.stringify([
+        { windowKind: gemini.windowKind, cycleAtMs: Date.parse(observedAt) },
+        { windowKind: geminiWeekly.windowKind, cycleAtMs: Date.parse(observedAt) - 1000 },
+      ]),
+    );
+    expect(generation('antigravity', argon.windowKind, [gemini, geminiWeekly, claude, argon])).toBe(
+      JSON.stringify([{ windowKind: argon.windowKind, cycleAtMs: Date.parse(observedAt) - 3000 }]),
+    );
+  });
+
+  it('includes Claude Code five-hour and canonical weekly allowance identities', () => {
+    const fiveHour = window('claude_code', 'claude_code_five_hour');
+    const weekly = window('claude_code', 'claude_code_seven_day');
+    const modelWeekly = window('claude_code', 'claude_code_weekly_opus');
+    expect(generation('claude_code', fiveHour.windowKind, [modelWeekly, weekly, fiveHour])).toBe(
+      JSON.stringify([
+        { windowKind: fiveHour.windowKind, cycleAtMs: Date.parse(observedAt) - 2000 },
+        { windowKind: weekly.windowKind, cycleAtMs: Date.parse(observedAt) - 1000 },
+      ]),
+    );
+  });
+
+  it('fails closed when a required identity is missing or newer than its window sample', () => {
+    const primary = window('codex', 'codex_five_hour');
+    const weekly = window('codex', 'codex_weekly');
+    const cycles = new Map([
+      [
+        primary.windowKind,
+        { cycleAtMs: Date.parse(observedAt), lastObservedAtMs: Date.parse(observedAt) },
+      ],
+    ]);
+    expect(
+      buildAvailabilityGeneration({
+        providerId: 'codex',
+        windowKind: primary.windowKind,
+        windows: [primary, weekly],
+        cycles,
+      }),
+    ).toBeUndefined();
+    cycles.set(weekly.windowKind, {
+      cycleAtMs: Date.parse(observedAt),
+      lastObservedAtMs: Date.parse(observedAt) + 1,
+    });
+    expect(
+      buildAvailabilityGeneration({
+        providerId: 'codex',
+        windowKind: primary.windowKind,
+        windows: [primary, weekly],
+        cycles,
+      }),
+    ).toBeUndefined();
   });
 });

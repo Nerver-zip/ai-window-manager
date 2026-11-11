@@ -69,6 +69,18 @@ export class WindowCycleRepository {
       .get(providerId, windowKind) as ObservedWindowCycle | undefined;
   }
 
+  list(providerId: string): ObservedWindowCycle[] {
+    return this.db
+      .prepare(
+        `SELECT provider_id AS providerId, window_kind AS windowKind,
+      cycle_at_ms AS cycleAtMs, anchored_reset_at_ms AS anchoredResetAtMs,
+      last_observed_at_ms AS lastObservedAtMs, last_reset_at_ms AS lastResetAtMs, phase,
+      phase_confidence AS phaseConfidence
+      FROM observed_window_cycles WHERE provider_id = ? ORDER BY window_kind`,
+      )
+      .all(providerId) as ObservedWindowCycle[];
+  }
+
   upsert(cycle: ObservedWindowCycle): void {
     this.db
       .prepare(

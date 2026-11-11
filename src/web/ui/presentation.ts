@@ -51,7 +51,8 @@ const PHASE_LABELS: Readonly<Record<string, string>> = {
 const EVENT_LABELS: Readonly<Record<string, string>> = {
   action_resolution_requested: 'Unknown outcome review requested',
   action_resolution_reviewed: 'Unknown outcome reviewed',
-  action_resolved_unknown: 'Old action closed with unknown outcome',
+  action_resolution_waiting: 'Automatic recovery waiting for cycle evidence',
+  action_resolved_unknown: 'Old start released after verified cycle evidence',
   action_claimed: 'Automatic action started',
   action_confirmed: 'Automatic action confirmed',
   action_dispatch_started: 'Automatic action started',
@@ -91,8 +92,10 @@ const EVENT_LABELS: Readonly<Record<string, string>> = {
 const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
   action_resolution_requested:
     'A read-only check was requested; the old prompt will not be repeated.',
+  action_resolution_waiting:
+    'A fresh read checked whether the old target cycle can be closed. The original prompt was not repeated.',
   action_resolved_unknown:
-    'The old cycle ended. Its action outcome remains unknown; pending cleanup is still required.',
+    'Fresh evidence proves the old target cycle is no longer actionable. The start result remains unknown; cleanup obligations remain independent.',
   action_claimed: 'The scheduled start was sent to the provider.',
   action_confirmed: 'A fresh provider update confirmed the new window.',
   action_dispatch_started: 'The provider is processing the scheduled start.',
@@ -133,6 +136,12 @@ const EVENT_REASON_LABELS: Readonly<Record<string, string>> = {
 const REASON_LABELS: Readonly<Record<string, string>> = {
   ACTION_OUTCOME_UNKNOWN:
     'The old start is no longer actionable; its outcome remains unknown and the old prompt will not be repeated.',
+  ACTION_UNKNOWN_OUTCOME_CLOSED_VERIFIED:
+    'Verified cycle evidence released the old provider block. The start result remains unknown; cleanup obligations remain independent.',
+  ACTION_AVAILABILITY_GENERATION_CHANGED:
+    'An allowance cycle changed after planning. This unsent opportunity was skipped and will be reassessed.',
+  AUTO_OPPORTUNITY_GENERATION_UNCHANGED:
+    'No independently verified allowance cycle has changed since this opportunity was recorded.',
   ACTION_RESOLUTION_READ_BLOCKED:
     'Review is blocked while the provider is disabled, signing in, or changing its client. Try again after that operation finishes.',
   ACTION_RESOLUTION_CYCLE_UNIDENTIFIED:
@@ -143,6 +152,10 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
     'A fresh valid provider observation is required. Restore the connection and request review again.',
   ACTION_RESOLUTION_CYCLE_NOT_CLOSED:
     'The old cycle has not been proven closed. The action remains blocked.',
+  ACTION_RESOLUTION_WAITING_FOR_TARGET_BOUNDARY:
+    'The old target window still has an unexpired anchor. A weekly reset cannot close it.',
+  ACTION_RESOLUTION_ROLLING_EVIDENCE_INSUFFICIENT:
+    'The rolling reset has not yet met the full-duration and two-reading proof.',
   ACTION_RESOLUTION_CONFLICT:
     'The action changed during review. Refresh to see its persisted outcome.',
   ACTION_RESOLUTION_NOT_UNCERTAIN: 'This action is no longer awaiting an unknown-outcome review.',
@@ -172,6 +185,8 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   ALLOWANCE_EXHAUSTED: 'The usage allowance is used up, so no start is requested until it resets.',
   ACTION_ALREADY_RECORDED: 'A start has already been recorded for this usage cycle.',
   WINDOW_CYCLE_MISSING: 'Waiting for a fresh update to identify this usage cycle.',
+  AVAILABILITY_CYCLE_UNVERIFIED:
+    'Waiting until the target and every consumed allowance have a verified cycle identity.',
   ACTIVE_HOURS_COVERAGE: 'The active-hours period has enough time remaining.',
   ACTIVE_HOURS_TOO_SHORT: 'There is not enough active time left to start a full window.',
   AUTO_WINDOW_AVAILABLE: 'The provider is ready for an automatic activation.',

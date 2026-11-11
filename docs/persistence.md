@@ -28,6 +28,9 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
   daily usage in the saved timezone.
 - `events`: append-only human/metric history, not the source of truth for reconstructing all state.
 - `action_intents`: durable side-effect state and duplicate prevention.
+  A claim increments `attempt_count` atomically before provider dispatch, so a
+  zero count is durable evidence that an intent was never claimed; missing
+  dispatch events are not used to prove this because events can expire.
   Confirmation attempts and their next eligible timestamps are persisted on the
   intent so an unresolved result is not inspected on every executor tick or
   reset to an immediate retry after restart.
@@ -96,6 +99,13 @@ after 400 days. No downsampling/OLAP platform is used.
 Action intents use conditional SQL transitions for claim, success, uncertainty,
 retryable failure, confirmation and terminal recovery. `executing` intents are
 recovered as uncertain on startup; an uncertain result is never blindly retried.
+The executor may transition an uncertain intent to `resolved_unknown` only from
+fresh exact-cycle closure or the existing strict rolling-inactive evidence, on
+the existing confirmation cadence. The audit event identifies automatic
+verified closure; intent counters, original dedupe key and cleanup obligations
+remain intact. Auto-opportunity generations are stored in existing intent
+dedupe/explanation fields and use the durable observed-cycle rows. This recovery
+adds no schema migration. See [ADR-010](adr/010-verified-uncertain-recovery.md).
 The retention pass protects current state, settings, policies, unresolved
 provider-artifact cleanup jobs and open/recovery states while pruning bounded
 historical classes. Cleanup jobs have no age-based expiry: the worker retries

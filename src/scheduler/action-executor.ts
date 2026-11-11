@@ -5,6 +5,7 @@ import type { ProviderCleanupArtifact } from '../domain/provider-cleanup.js';
 import { resolveWindowTarget } from '../domain/window-target.js';
 import { activationPolicyId, policyScopeForWindowKind } from './policy-scope.js';
 import { findExhaustedAllowance } from './allowance.js';
+import { currentAvailabilityGeneration } from './availability-generation.js';
 import type {
   ProviderActionResult,
   ProviderActionStatus,
@@ -40,6 +41,7 @@ export const ActionReasonCode = {
   RecoveryRequired: 'ACTION_RECOVERY_REQUIRED',
   AlreadySatisfied: 'ACTION_ALREADY_SATISFIED',
   AllowanceExhausted: 'ACTION_ALLOWANCE_EXHAUSTED',
+  AvailabilityGenerationChanged: 'ACTION_AVAILABILITY_GENERATION_CHANGED',
   PolicyChanged: 'ACTION_POLICY_CHANGED',
   TargetWindowMissing: 'ACTION_TARGET_WINDOW_MISSING',
   CycleChanged: 'ACTION_WINDOW_CYCLE_CHANGED',
@@ -94,6 +96,14 @@ const definitelyPreDispatchErrors = new Set([
 ]);
 const DEFAULT_CONFIRMATION_BASE_INTERVAL_MS = 30_000;
 const DEFAULT_CONFIRMATION_MAX_BACKOFF_MS = 300_000;
+const RESOLUTION_WAITING_REASONS = new Set([
+  'ACTION_RESOLUTION_CYCLE_UNIDENTIFIED',
+  'ACTION_RESOLUTION_EVIDENCE_MISSING',
+  'ACTION_RESOLUTION_OBSERVATION_UNAVAILABLE',
+  'ACTION_RESOLUTION_CYCLE_NOT_CLOSED',
+  'ACTION_RESOLUTION_WAITING_FOR_TARGET_BOUNDARY',
+  'ACTION_RESOLUTION_ROLLING_EVIDENCE_INSUFFICIENT',
+]);
 
 export class ActionExecutor {
   private running = false;
@@ -248,6 +258,12 @@ export class ActionExecutor {
     }
     if (!this.cycleStillCurrent(intent)) {
       this.markSkipped(intent, nowMs, ActionReasonCode.CycleChanged, report);
+      return;
+    }
+    if (
+      !availabilityGenerationStillCurrent(intent, preflight.observation, this.input.repositories)
+    ) {
+      this.markSkipped(intent, nowMs, ActionReasonCode.AvailabilityGenerationChanged, report);
       return;
     }
     if (!isEligibleForTrigger(preflight.observation, intent)) {
@@ -449,6 +465,20 @@ export class ActionExecutor {
     if (ageMs < 0 || ageMs > observation.staleAfterSeconds * 1000) {
       throw new DispatchAuthorizationError(ActionReasonCode.PreflightRejected);
     }
+    const targetWindowKind = windowKindFor(intent);
+    if (
+      findExhaustedAllowance({
+        now: this.input.clock.now(),
+        providerId: intent.providerId,
+        windowKind: targetWindowKind,
+        windows: observation.windows,
+      })
+    ) {
+      throw new DispatchAuthorizationError(ActionReasonCode.AllowanceExhausted);
+    }
+    if (!availabilityGenerationStillCurrent(intent, observation, this.input.repositories)) {
+      throw new DispatchAuthorizationError(ActionReasonCode.AvailabilityGenerationChanged);
+    }
     if (this.input.repositories.actionIntents.get(intent.id)?.state !== 'executing') {
       throw new DispatchAuthorizationError(ActionReasonCode.DispatchRejected);
     }
@@ -596,6 +626,7 @@ export class ActionExecutor {
           nowMs,
           Date.parse(inspection.observation!.observedAt),
           decision.rollingEvidence,
+          'operator',
         );
       finish(
         resolved
@@ -626,24 +657,43 @@ export class ActionExecutor {
     );
     if (!claimed) return;
 
+    const target = windowKindFor(claimed);
+    const previousCycle = target
+      ? this.input.repositories.windowCycles.get(claimed.providerId, target)
+      : undefined;
+    const readStartedAtMs = this.input.clock.now().getTime();
     const inspection = await this.inspect(adapter, true, 'confirmation');
-    if (
+    if (!this.confirmationReadStillAllowed(claimed.providerId, adapter)) return;
+    const checkedAtMs = this.input.clock.now().getTime();
+    const freshObservation =
       inspection.observation &&
-      this.cycleStillCurrent(intent) &&
-      isSatisfied(inspection.observation, intent)
+      target &&
+      hasFreshTargetObservation(
+        inspection.observation,
+        claimed.providerId,
+        target,
+        readStartedAtMs,
+        checkedAtMs,
+      )
+        ? inspection.observation
+        : undefined;
+    if (
+      freshObservation &&
+      this.cycleStillCurrent(claimed) &&
+      isSatisfied(freshObservation, claimed)
     ) {
       const confirmedAtMs = this.input.clock.now().getTime();
       if (
         this.input.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
-          intent.id,
+          claimed.id,
           confirmedAtMs,
         )
       ) {
-        report.confirmedIntentIds.push(intent.id);
+        report.confirmedIntentIds.push(claimed.id);
         this.appendEventOnce(
           this.actionEvent(
-            intent,
-            intent.state === 'uncertain' ? 'action_recovery_confirmed' : 'action_confirmed',
+            claimed,
+            claimed.state === 'uncertain' ? 'action_recovery_confirmed' : 'action_confirmed',
             ActionReasonCode.Confirmed,
           ),
         );
@@ -651,21 +701,112 @@ export class ActionExecutor {
       return;
     }
 
-    if (intent.state === 'succeeded') {
+    let unresolved = this.input.repositories.actionIntents.get(claimed.id);
+    if (unresolved?.state === 'succeeded') {
       const uncertainAtMs = this.input.clock.now().getTime();
       if (
         this.input.repositories.actionIntents.markUncertainIfSucceeded(
-          intent.id,
+          claimed.id,
           uncertainAtMs,
           inspection.failureCode ?? ActionReasonCode.ConfirmationFailed,
         )
       ) {
-        report.uncertainIntentIds.push(intent.id);
+        report.uncertainIntentIds.push(claimed.id);
         this.appendEventOnce(
-          this.actionEvent(intent, 'action_uncertain', ActionReasonCode.ConfirmationFailed),
+          this.actionEvent(claimed, 'action_uncertain', ActionReasonCode.ConfirmationFailed),
         );
       }
+      unresolved = this.input.repositories.actionIntents.get(claimed.id);
     }
+    if (
+      unresolved?.state !== 'uncertain' ||
+      !freshObservation ||
+      !this.automaticResolutionReadAllowed(claimed.providerId, adapter)
+    )
+      return;
+
+    const cycleAtMs = Date.parse(String(asRecord(unresolved.explanation).observedCycleAt));
+    const closure =
+      Number.isSafeInteger(cycleAtMs) && target
+        ? this.input.repositories.windowCycles.getClosure(unresolved.providerId, target, cycleAtMs)
+        : undefined;
+    const currentCycle = target
+      ? this.input.repositories.windowCycles.get(unresolved.providerId, target)
+      : undefined;
+    const outcomeRecordedAtMs = this.input.repositories.actionIntents.outcomeRecordedAt(
+      unresolved.id,
+      unresolved.providerId,
+    );
+    const decision = assessActionResolution({
+      intent: unresolved,
+      observation: freshObservation,
+      nowMs: checkedAtMs,
+      readStartedAtMs,
+      ...(closure ? { closure } : {}),
+      ...(currentCycle ? { currentCycle } : {}),
+      ...(previousCycle ? { previousCycle } : {}),
+      ...(outcomeRecordedAtMs !== undefined ? { outcomeRecordedAtMs } : {}),
+    });
+    if (!decision.allowed) {
+      if (RESOLUTION_WAITING_REASONS.has(decision.reasonCode))
+        this.recordResolutionAssessment(unresolved, decision.reasonCode);
+      return;
+    }
+    withTransaction(this.input.db, () => {
+      this.input.repositories.actionIntents.resolveUnknownIfUncertain(
+        unresolved,
+        this.input.clock.now().getTime(),
+        Date.parse(freshObservation.observedAt),
+        decision.rollingEvidence,
+        'automatic',
+      );
+    });
+  }
+
+  private confirmationReadStillAllowed(providerId: string, adapter: ProviderAdapter): boolean {
+    try {
+      return (
+        this.input.adapters.get(providerId) === adapter &&
+        this.input.isProviderRuntimeChanging?.(providerId) !== true
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private automaticResolutionReadAllowed(providerId: string, adapter: ProviderAdapter): boolean {
+    try {
+      return (
+        this.input.adapters.get(providerId) === adapter &&
+        this.input.isProviderRuntimeChanging?.(providerId) === false
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private recordResolutionAssessment(intent: ActionIntentRecord, reasonCode: string): void {
+    if (
+      this.input.repositories.events.hasActionIntentReason(
+        intent.providerId,
+        intent.id,
+        'action_resolution_waiting',
+        reasonCode,
+      )
+    )
+      return;
+    this.input.repositories.events.append({
+      occurredAtMs: this.input.clock.now().getTime(),
+      providerId: intent.providerId,
+      type: 'action_resolution_waiting',
+      severity: 'info',
+      reasonCode,
+      data: {
+        intentId: intent.id,
+        windowKind: windowKindFor(intent),
+        confirmationAttemptCount: intent.confirmationAttemptCount,
+      },
+    });
   }
 
   private confirmationDelay(intent: ActionIntentRecord): number {
@@ -902,6 +1043,37 @@ function isSatisfied(observation: ProviderObservation, intent: ActionIntentRecor
   return phase?.value === 'ACTIVE' && (phase.confidence === 'exact' || phase.confidence === 'high');
 }
 
+function hasFreshTargetObservation(
+  observation: ProviderObservation,
+  providerId: string,
+  windowKind: string,
+  readStartedAtMs: number,
+  nowMs: number,
+): boolean {
+  const window = observation.windows.find((candidate) => candidate.windowKind === windowKind);
+  const fresh = (value: string) => {
+    const atMs = Date.parse(value);
+    return (
+      Number.isSafeInteger(atMs) &&
+      atMs >= readStartedAtMs &&
+      atMs <= nowMs &&
+      nowMs - atMs <= observation.staleAfterSeconds * 1000
+    );
+  };
+  return (
+    Number.isSafeInteger(readStartedAtMs) &&
+    Number.isSafeInteger(nowMs) &&
+    readStartedAtMs <= nowMs &&
+    observation.providerId === providerId &&
+    observation.health === 'UP' &&
+    fresh(observation.observedAt) &&
+    window !== undefined &&
+    window.providerId === providerId &&
+    fresh(window.observedAt) &&
+    fresh(window.phase.observedAt)
+  );
+}
+
 function windowFor(
   observation: ProviderObservation,
   intent: ActionIntentRecord,
@@ -915,6 +1087,24 @@ function windowFor(
 function windowKindFor(intent: ActionIntentRecord): string | undefined {
   const windowKind = asRecord(intent.explanation).windowKind;
   return typeof windowKind === 'string' && windowKind.length > 0 ? windowKind : undefined;
+}
+
+function availabilityGenerationStillCurrent(
+  intent: ActionIntentRecord,
+  observation: ProviderObservation,
+  repositories: StorageRepositories,
+): boolean {
+  const expected = asRecord(intent.explanation).eligibilityGeneration;
+  if (expected === undefined) return true;
+  if (typeof expected !== 'string') return false;
+  return (
+    currentAvailabilityGeneration(
+      repositories,
+      intent.providerId,
+      windowKindFor(intent),
+      observation.windows,
+    ) === expected
+  );
 }
 
 function safeErrorCode(error: unknown): string | undefined {
