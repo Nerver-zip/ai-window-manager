@@ -147,6 +147,80 @@ function setup() {
   };
 }
 
+type WeeklyAllowanceState = {
+  present?: boolean;
+  resetVerified?: boolean;
+  resetAtMs?: number;
+  addNewAllowance?: boolean;
+  observedAtMs?: number;
+};
+
+function installWeeklyAllowance(
+  context: ReturnType<typeof setup>,
+  getState: (nowMs: number) => WeeklyAllowanceState,
+): void {
+  const inspect = context.adapter.inspect.bind(context.adapter);
+  context.adapter.inspect = async (providerContext) => {
+    const observation = await inspect(providerContext);
+    const nowMs = context.clock.now().getTime();
+    const state = getState(nowMs);
+    if (state.present === false && !state.addNewAllowance) return observation;
+    const observedAt = new Date(state.observedAtMs ?? nowMs).toISOString();
+    const makeWindow = (
+      windowKind: string,
+      phase: 'ACTIVE' | 'INACTIVE',
+      resetAtMs: number,
+      usageRatio: number,
+    ) => ({
+      providerId: 'codex',
+      windowKind,
+      observedAt,
+      phase: {
+        value: phase,
+        source: 'observed' as const,
+        confidence: 'exact' as const,
+        observedAt,
+      },
+      durationSeconds: {
+        value: 604_800,
+        source: 'official_supported' as const,
+        confidence: 'exact' as const,
+        observedAt,
+      },
+      resetAt: {
+        value: new Date(resetAtMs).toISOString(),
+        source: 'official_supported' as const,
+        confidence: 'exact' as const,
+        observedAt,
+      },
+      usageRatio: {
+        value: usageRatio,
+        source: 'official_supported' as const,
+        confidence: 'exact' as const,
+        observedAt,
+      },
+    });
+    const windows = [...observation.windows];
+    if (state.present !== false) {
+      const verified = state.resetVerified === true;
+      windows.push(
+        makeWindow(
+          'codex_weekly',
+          verified ? 'INACTIVE' : 'ACTIVE',
+          verified
+            ? nowMs + 604_800_000
+            : (state.resetAtMs ?? Date.parse('2026-10-07T04:28:00.000Z')),
+          verified ? 0 : 0.9,
+        ),
+      );
+    }
+    if (state.addNewAllowance) {
+      windows.push(makeWindow('codex_new_shared', 'INACTIVE', nowMs + 604_800_000, 0));
+    }
+    return { ...observation, windows } satisfies ProviderObservation;
+  };
+}
+
 describe('real observed cycle planning/execution', () => {
   it('retries only a read-only ambiguous preflight, not the quota-consuming action', async () => {
     const context = setup();
@@ -279,6 +353,176 @@ describe('real observed cycle planning/execution', () => {
     expect(context.repositories.actionIntents.get(planned.createdIntentIds[0]!)?.state).toBe(
       'uncertain',
     );
+  });
+
+  it('keeps the auto identity stable when a shared weekly window disappears and returns', async () => {
+    const context = setup();
+    context.anchorOnTrigger = false;
+    let allowancePresent = true;
+    installWeeklyAllowance(context, () => ({ present: allowancePresent }));
+    const services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const planned = await services.reconciler.reconcile();
+    expect(planned.createdIntentIds).toHaveLength(1);
+    const original = context.repositories.actionIntents.get(planned.createdIntentIds[0]!)!;
+    expect(original.dedupeKey).toContain('availability:');
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+    context.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+      original.id,
+      context.clock.now().getTime(),
+    );
+    const originalTargetCycle = context.repositories.windowCycles.get(
+      'codex',
+      'codex_codex_primary',
+    )!;
+    const originalWeeklyCycle = context.repositories.windowCycles.get('codex', 'codex_weekly')!;
+
+    allowancePresent = false;
+    context.clock.advanceMs(30_000);
+    const omitted = await services.reconciler.reconcile();
+    expect(omitted.createdIntentIds).toEqual([]);
+    expect(omitted.decisions[0]?.decision.kind).toBe('WAIT');
+    expect(context.repositories.actionIntents.get(original.id)?.attemptCount).toBe(1);
+
+    allowancePresent = true;
+    context.clock.advanceMs(30_000);
+    const reappeared = await services.reconciler.reconcile();
+    expect(reappeared.createdIntentIds).toEqual([]);
+    expect(reappeared.decisions[0]?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'ACTION_ALREADY_RECORDED',
+    });
+    expect(context.repositories.windowCycles.get('codex', 'codex_weekly')?.cycleAtMs).toBe(
+      originalWeeklyCycle.cycleAtMs,
+    );
+    expect(context.repositories.windowCycles.get('codex', 'codex_codex_primary')?.cycleAtMs).toBe(
+      originalTargetCycle.cycleAtMs,
+    );
+    expect(context.triggerCount).toBe(1);
+  });
+
+  it('does not start a new five-hour window when only the shared weekly cycle resets', async () => {
+    const context = setup();
+    const resetAtMs = context.clock.now().getTime() + 90_000;
+    let resetVerified = false;
+    installWeeklyAllowance(context, () => ({ resetAtMs, resetVerified }));
+    const services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const planned = await services.reconciler.reconcile();
+    expect(planned.createdIntentIds).toHaveLength(1);
+    const originalIntent = context.repositories.actionIntents.get(planned.createdIntentIds[0]!)!;
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+    expect(context.repositories.actionIntents.get(originalIntent.id)?.attemptCount).toBe(1);
+    context.clock.advanceMs(30_000);
+    await services.reconciler.reconcile();
+    const targetBefore = context.repositories.windowCycles.get('codex', 'codex_codex_primary')!;
+    const weeklyBefore = context.repositories.windowCycles.get('codex', 'codex_weekly')!;
+    expect(targetBefore.anchoredResetAtMs).not.toBeNull();
+
+    context.clock.advanceMs(30_000);
+    resetVerified = true;
+    const weeklyReset = await services.reconciler.reconcile();
+    expect(weeklyReset.createdIntentIds).toEqual([]);
+    expect(weeklyReset.decisions[0]?.decision.kind).toBe('WAIT');
+    const targetAfter = context.repositories.windowCycles.get('codex', 'codex_codex_primary')!;
+    const weeklyAfter = context.repositories.windowCycles.get('codex', 'codex_weekly')!;
+    expect(targetAfter.cycleAtMs).toBe(targetBefore.cycleAtMs);
+    expect(targetAfter.anchoredResetAtMs).toBe(targetBefore.anchoredResetAtMs);
+    expect(weeklyAfter.cycleAtMs).toBeGreaterThan(weeklyBefore.cycleAtMs);
+    expect(context.repositories.actionIntents.get(originalIntent.id)?.state).not.toBe(
+      'resolved_unknown',
+    );
+    expect(context.triggerCount).toBe(1);
+  });
+
+  it('blocks a new-format terminal intent when a new allowance member appears without a cycle advance', async () => {
+    const context = setup();
+    context.anchorOnTrigger = false;
+    let addNewAllowance = false;
+    installWeeklyAllowance(context, () => ({ present: true, addNewAllowance }));
+    const services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const planned = await services.reconciler.reconcile();
+    expect(planned.createdIntentIds).toHaveLength(1);
+    const original = context.repositories.actionIntents.get(planned.createdIntentIds[0]!)!;
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+    context.repositories.actionIntents.markConfirmedIfSucceededOrUncertain(
+      original.id,
+      context.clock.now().getTime(),
+    );
+    expect(context.repositories.actionIntents.get(original.id)?.dedupeKey).toContain(
+      'availability:',
+    );
+
+    addNewAllowance = true;
+    context.clock.advanceMs(30_000);
+    const inconsistent = await services.reconciler.reconcile();
+    expect(inconsistent.createdIntentIds).toEqual([]);
+    expect(inconsistent.decisions[0]?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'AUTO_OPPORTUNITY_GENERATION_UNCHANGED',
+    });
+    expect(context.repositories.actionIntents.listOpen('codex')).toEqual([]);
+    expect(context.repositories.actionIntents.get(original.id)?.attemptCount).toBe(1);
+    expect(context.triggerCount).toBe(1);
+  });
+
+  it('fails closed for a legacy skipped row when dispatch history is gone but attempts exist', async () => {
+    const context = setup();
+    context.anchorOnTrigger = false;
+    installWeeklyAllowance(context, () => ({ present: true }));
+    const services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const planned = await services.reconciler.reconcile();
+    expect(planned.createdIntentIds).toHaveLength(1);
+    const original = context.repositories.actionIntents.get(planned.createdIntentIds[0]!)!;
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+
+    const explanation = { ...(original.explanation as Record<string, unknown>) };
+    delete explanation.eligibilityGeneration;
+    const cycleAt = String(explanation.observedCycleAt);
+    context.repositories.actionIntents.setState(
+      original.id,
+      'skipped',
+      context.clock.now().getTime(),
+      {
+        attemptCount: 1,
+        lastErrorCode: 'ACTION_ALLOWANCE_EXHAUSTED',
+        finishedAtMs: context.clock.now().getTime(),
+      },
+    );
+    context.db
+      .prepare(`UPDATE action_intents SET dedupe_key = ?, explanation_json = ? WHERE id = ?`)
+      .run(
+        legacyAutoDedupeKey('codex', 'activation-codex', 'codex_codex_primary', cycleAt),
+        JSON.stringify(explanation),
+        original.id,
+      );
+    context.db
+      .prepare(
+        `DELETE FROM events WHERE provider_id = 'codex' AND type = 'action_dispatch_started'
+         AND json_extract(data_json, '$.intentId') = ?`,
+      )
+      .run(original.id);
+    expect(context.repositories.actionIntents.wasDispatchStarted(original.id, 'codex')).toBe(false);
+
+    context.clock.advanceMs(30_000);
+    const afterPruning = await services.reconciler.reconcile();
+    expect(afterPruning.createdIntentIds).toEqual([]);
+    expect(afterPruning.decisions[0]?.decision).toMatchObject({
+      kind: 'WAIT',
+      reasonCode: 'AUTO_OPPORTUNITY_GENERATION_UNCHANGED',
+    });
+    expect(context.repositories.actionIntents.get(original.id)?.attemptCount).toBe(1);
+    expect(context.triggerCount).toBe(1);
   });
 
   it('creates one new auto opportunity after a verified shared weekly cycle change', async () => {
@@ -456,6 +700,10 @@ describe('real observed cycle planning/execution', () => {
     const next = context.repositories.actionIntents.get(advanced.createdIntentIds[0]!)!;
     expect(next.id).not.toBe(oldId);
     expect(next.dedupeKey).not.toBe(skipped.dedupeKey);
+    const repeated = await services.reconciler.reconcile();
+    expect(repeated.createdIntentIds).toEqual([]);
+    expect(context.triggerCount).toBe(0);
+    await services.executor.executeDue();
     await services.executor.executeDue();
     expect(context.repositories.actionIntents.get(oldId)).toMatchObject({
       state: 'skipped',

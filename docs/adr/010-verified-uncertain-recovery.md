@@ -44,24 +44,34 @@ window. A later cycle's active state cannot confirm the old prompt.
 Automatic opportunities use a stable generation composed from the exact target
 cycle and every allowance cycle the provider's existing consumption contract
 checks: all reported Codex windows, the canonical Claude Code five-hour/weekly
-pair, or only the target's Antigravity family. A generation does not change on
-ordinary observation ticks or usage changes. Auto intents persist that identity
-in their existing dedupe key and explanation. The executor rechecks it together
-with policy, capability, exact target, current mode, fresh authorization,
-provider-wide serialization and every consumed allowance before dispatch.
+pair, or only the target's Antigravity family. The identity set includes
+previously observed durable cycle rows as well as current windows. A previously
+known allowance missing from a fresh snapshot makes the generation unavailable
+until that exact window and cycle evidence return. Current observation
+membership alone cannot remove a known identity or create an opportunity: when
+a new member changes a same-target-cycle generation, a prior-generation cycle
+must have advanced with high-confidence lifecycle evidence. A generation does
+not change on ordinary observation ticks or usage changes. Auto intents persist
+that identity in their existing dedupe key and explanation. The executor
+rechecks it together with policy, capability, exact target, current mode, fresh
+authorization, provider-wide serialization and every consumed allowance before
+dispatch.
 
 Legacy target-only dedupe rows remain intact. A preflight-skipped legacy row is
-considered superseded only if durable history proves no dispatch-start event and
-a fresh, high-confidence lifecycle transition in another consumed allowance is
-later than a prior exact/high active, exhausted or reset-due sample. A legacy
-`resolved_unknown` row requires its linked durable resolution evidence and such
-an independent transition. All other legacy rows continue to block. The normal
-planner and executor gates still decide whether a new action is eligible.
+considered superseded only when its persisted `attempt_count` is zero (the
+executor increments this atomically before dispatch), no contradictory
+dispatch-start event remains, and a fresh, high-confidence lifecycle transition
+in another consumed allowance is later than a prior exact/high active,
+exhausted or reset-due sample. Absence of a dispatch-start event is not proof
+because event retention can remove it. A legacy `resolved_unknown` row requires
+its linked durable resolution evidence and such an independent transition. All
+other legacy rows continue to block. The normal planner and executor gates
+still decide whether a new action is eligible.
 
 No schema migration is needed: cycle identities use `observed_window_cycles`,
-legacy proof uses existing samples/events and linked resolution evidence, and
-new generations use existing action intent fields. No old record is deleted or
-rewritten.
+legacy proof uses existing attempt counters, samples/events and linked
+resolution evidence, and new generations use existing action intent fields. No
+old record is deleted or rewritten.
 
 ## Consequences
 

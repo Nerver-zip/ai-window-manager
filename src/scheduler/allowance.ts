@@ -47,12 +47,13 @@ export function consumedAllowanceWindowKinds(
   providerId: string,
   targetWindowKind: string | undefined,
   windows: readonly WindowSnapshot[],
+  previouslyObservedWindowKinds: readonly string[] = [],
 ): string[] {
   if (!targetWindowKind) return [];
-  return windows
-    .filter((window) => consumesSameAllowance(providerId, targetWindowKind, window))
-    .map((window) => window.windowKind)
-    .filter((windowKind, index, values) => values.indexOf(windowKind) === index)
+  return [
+    ...new Set([...windows.map((window) => window.windowKind), ...previouslyObservedWindowKinds]),
+  ]
+    .filter((windowKind) => consumesSameAllowance(providerId, targetWindowKind, windowKind))
     .sort((left, right) => {
       if (left === targetWindowKind) return right === targetWindowKind ? 0 : -1;
       if (right === targetWindowKind) return 1;
@@ -71,7 +72,9 @@ export function buildAvailabilityGeneration(input: {
   windows: readonly WindowSnapshot[];
   cycles: ReadonlyMap<string, AllowanceCycleIdentity>;
 }): string | undefined {
-  const kinds = consumedAllowanceWindowKinds(input.providerId, input.windowKind, input.windows);
+  const kinds = consumedAllowanceWindowKinds(input.providerId, input.windowKind, input.windows, [
+    ...input.cycles.keys(),
+  ]);
   if (kinds.length === 0) return undefined;
   const identities: Array<{ windowKind: string; cycleAtMs: number }> = [];
   for (const windowKind of kinds) {
@@ -116,17 +119,17 @@ export function findExhaustedAllowance(
 function consumesSameAllowance(
   providerId: string,
   targetWindowKind: string,
-  candidate: WindowSnapshot,
+  candidateWindowKind: string,
 ): boolean {
-  if (candidate.windowKind === targetWindowKind) return true;
+  if (candidateWindowKind === targetWindowKind) return true;
   if (providerId === 'antigravity') {
     const scope = policyScopeForWindowKind(targetWindowKind);
-    return scope !== undefined && policyScopeForWindowKind(candidate.windowKind) === scope;
+    return scope !== undefined && policyScopeForWindowKind(candidateWindowKind) === scope;
   }
   if (providerId === 'claude_code') {
     return (
       CLAUDE_CODE_CANONICAL_WINDOW_KINDS.has(targetWindowKind) &&
-      CLAUDE_CODE_CANONICAL_WINDOW_KINDS.has(candidate.windowKind)
+      CLAUDE_CODE_CANONICAL_WINDOW_KINDS.has(candidateWindowKind)
     );
   }
   return true;

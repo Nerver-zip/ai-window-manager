@@ -278,21 +278,29 @@ The DB unique constraint is the final guard. Repeated ticks can propose the same
 For `auto`, the cycle instant comes from durable **observed quota lifecycle**
 state, not epoch-aligned duration buckets. The key additionally includes the
 exact window kind and a stable availability generation made from the target
-cycle plus every allowance cycle consumed by that target. The first observation establishes an availability identity;
-it advances after a previously anchored reset expires and actionable fresh
-evidence identifies the next availability/active window, or a trustworthy
-active-to-inactive transition when reset timestamps are unavailable. A moving
-`now + duration` reset never changes that identity. Fixed/custom/active-hours
-policies keep their explicit schedule anchors.
+cycle plus every allowance cycle consumed by that target. Its identity set uses
+durable previously observed cycle rows as well as current windows. A previously
+known shared allowance missing from the current snapshot makes the generation
+unavailable, so incomplete observations fail closed. A new reported member
+cannot change a same-target-cycle opportunity by membership alone: a prior
+generation must have a high-confidence, verified cycle advance. The first
+observation establishes an availability identity; it advances after a
+previously anchored reset expires and actionable fresh evidence identifies the
+next availability/active window, or a trustworthy active-to-inactive transition
+when reset timestamps are unavailable. A moving `now + duration` reset never
+changes that identity. Fixed/custom/active-hours policies keep their explicit
+schedule anchors.
 
 A shared allowance reset can create a distinct auto opportunity when the exact
 target cycle remains unchanged, but only after that allowance's durable cycle
 identity advances. For an old target-only dedupe row, compatibility recovery
-also requires proof that the row was skipped before dispatch, or that a
-resolved-unknown row has linked closure evidence, plus an independently
-observed high-confidence consumed-allowance transition. The regular planner and
-fresh executor preflight still reject an exhausted allowance. A weekly reset
-does not prove that a five-hour target cycle ended.
+also requires a preflight-skipped row with persisted `attempt_count = 0` (and no
+contradictory dispatch-start event), or a `resolved_unknown` row with linked
+closure evidence, plus an independently observed high-confidence
+consumed-allowance transition. An absent dispatch event alone is not proof
+because event retention can remove it. The regular planner and fresh executor
+preflight still reject an exhausted allowance. A weekly reset does not prove
+that a five-hour target cycle ended.
 
 Claude Code's unscoped canonical `session` meter is a bootstrap exception: an
 official exact-zero reading with no reset is treated as `INACTIVE` at high

@@ -1117,6 +1117,24 @@ export class ActionIntentRepository {
     return row ? actionIntentFromRow(row) : undefined;
   }
 
+  latestForTargetCycle(
+    providerId: string,
+    policyId: string,
+    windowKind: string,
+    cycleAt: string,
+  ): ActionIntentRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM action_intents
+         WHERE provider_id = ? AND policy_id = ? AND action_type = 'trigger_window'
+           AND json_extract(explanation_json, '$.windowKind') = ?
+           AND json_extract(explanation_json, '$.observedCycleAt') = ?
+         ORDER BY created_at_ms DESC, id DESC LIMIT 1`,
+      )
+      .get(providerId, policyId, windowKind, cycleAt) as ActionIntentRow | undefined;
+    return row ? actionIntentFromRow(row) : undefined;
+  }
+
   listOpen(providerId?: string): ActionIntentRecord[] {
     const states = ['planned', 'executing', 'succeeded', 'uncertain', 'failed_retryable'];
     const placeholders = states.map(() => '?').join(', ');

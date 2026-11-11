@@ -9,11 +9,9 @@ export function currentAvailabilityGeneration(
   windowKind: string | undefined,
   windows: readonly WindowSnapshot[],
 ): string | undefined {
-  const cycles = new Map<string, { cycleAtMs: number; lastObservedAtMs: number }>();
-  for (const kind of consumedAllowanceWindowKinds(providerId, windowKind, windows)) {
-    const cycle = repositories.windowCycles.get(providerId, kind);
-    if (cycle) cycles.set(kind, cycle);
-  }
+  const cycles = new Map(
+    repositories.windowCycles.list(providerId).map((cycle) => [cycle.windowKind, cycle] as const),
+  );
   return buildAvailabilityGeneration({ providerId, windowKind, windows, cycles });
 }
 
@@ -48,6 +46,7 @@ export function legacyAutoOpportunityBlocks(input: {
   if (previous.state === 'skipped') {
     if (
       previous.lastErrorCode !== 'ACTION_ALLOWANCE_EXHAUSTED' ||
+      previous.attemptCount !== 0 ||
       input.repositories.actionIntents.wasDispatchStarted(previous.id, previous.providerId)
     )
       return true;
@@ -64,6 +63,118 @@ export function legacyAutoOpportunityBlocks(input: {
   if (!Number.isSafeInteger(baselineAtMs)) return true;
 
   return !hasVerifiedIndependentCycleSince(input, baselineAtMs!);
+}
+
+/**
+ * A newly reported allowance member must not manufacture a new auto key for
+ * the same target cycle. Only a durable, high-confidence cycle advance from a
+ * member in the prior generation proves an independent opportunity.
+ */
+export function availabilityGenerationBlocks(input: {
+  repositories: StorageRepositories;
+  providerId: string;
+  policyId: string;
+  windowKind: string;
+  cycleAtMs: number;
+  generation: string;
+  windows: readonly WindowSnapshot[];
+}): boolean {
+  const cycleAt = new Date(input.cycleAtMs).toISOString();
+  const previous = input.repositories.actionIntents.latestForTargetCycle(
+    input.providerId,
+    input.policyId,
+    input.windowKind,
+    cycleAt,
+  );
+  if (!previous) return false;
+
+  const explanation = asRecord(previous.explanation);
+  if (!Object.hasOwn(explanation, 'eligibilityGeneration')) return false;
+  const previousGeneration = parseGeneration(explanation.eligibilityGeneration);
+  const currentGeneration = parseGeneration(input.generation);
+  if (!previousGeneration || !currentGeneration) return true;
+  if (
+    previous.state === 'resolved_unknown' &&
+    !input.repositories.actionIntents.hasResolutionEvidence(previous.id)
+  )
+    return true;
+  if (
+    ['planned', 'executing', 'succeeded', 'uncertain', 'failed_retryable'].includes(previous.state)
+  )
+    return true;
+  if (sameGeneration(previousGeneration, currentGeneration)) return false;
+
+  return !hasVerifiedGenerationAdvance(input, previousGeneration);
+}
+
+interface GenerationIdentity {
+  windowKind: string;
+  cycleAtMs: number;
+}
+
+function parseGeneration(value: unknown): GenerationIdentity[] | undefined {
+  if (typeof value !== 'string') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return undefined;
+  const identities: GenerationIdentity[] = [];
+  for (const entry of parsed as unknown[]) {
+    const record = asRecord(entry);
+    const windowKind = record.windowKind;
+    const cycleAtMs = record.cycleAtMs;
+    if (typeof windowKind !== 'string' || !Number.isSafeInteger(cycleAtMs)) return undefined;
+    identities.push({ windowKind, cycleAtMs: cycleAtMs as number });
+  }
+  if (new Set(identities.map((identity) => identity.windowKind)).size !== identities.length)
+    return undefined;
+  return identities;
+}
+
+function sameGeneration(left: readonly GenerationIdentity[], right: readonly GenerationIdentity[]) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasVerifiedGenerationAdvance(
+  input: {
+    repositories: StorageRepositories;
+    providerId: string;
+    windows: readonly WindowSnapshot[];
+  },
+  previousGeneration: readonly GenerationIdentity[],
+): boolean {
+  const windows = new Map(input.windows.map((window) => [window.windowKind, window]));
+  for (const previous of previousGeneration) {
+    const window = windows.get(previous.windowKind);
+    const cycle = input.repositories.windowCycles.get(input.providerId, previous.windowKind);
+    const observedAtMs = window ? Date.parse(window.observedAt) : NaN;
+    if (
+      !window ||
+      !cycle ||
+      cycle.cycleAtMs <= previous.cycleAtMs ||
+      cycle.lastObservedAtMs !== observedAtMs ||
+      !['exact', 'high'].includes(cycle.phaseConfidence) ||
+      !['ACTIVE', 'INACTIVE', 'EXHAUSTED'].includes(cycle.phase)
+    )
+      continue;
+    const priorSample = input.repositories.windowSamples.latestAtOrBefore(
+      input.providerId,
+      previous.windowKind,
+      cycle.cycleAtMs - 1,
+    );
+    const priorObservedAtMs = priorSample ? Date.parse(priorSample.observedAt) : NaN;
+    if (
+      priorSample &&
+      priorObservedAtMs >= previous.cycleAtMs &&
+      ['exact', 'high'].includes(priorSample.phase.confidence) &&
+      ['ACTIVE', 'EXHAUSTED', 'RESET_DUE'].includes(priorSample.phase.value)
+    )
+      return true;
+  }
+  return false;
 }
 
 function hasVerifiedIndependentCycleSince(

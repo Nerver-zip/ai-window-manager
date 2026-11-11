@@ -9,6 +9,7 @@ import { deriveCurrentWindow, deriveCurrentWindowForTarget } from './current-win
 import { planWindowAction, PlannerReasonCode, type PlannerDecision } from './planner.js';
 import { trackWindowCycles } from './window-cycle.js';
 import {
+  availabilityGenerationBlocks,
   currentAvailabilityGeneration,
   legacyAutoOpportunityBlocks,
 } from './availability-generation.js';
@@ -302,14 +303,23 @@ export class Reconciler {
           resolvedPolicy.kind === 'auto' &&
           window &&
           cycle &&
-          legacyAutoOpportunityBlocks({
+          (legacyAutoOpportunityBlocks({
             repositories: this.input.repositories,
             providerId: provider.id,
             policyId: policy.id,
             windowKind: window.windowKind,
             cycleAtMs: cycle.cycleAtMs,
             windows: state.observation.windows,
-          })
+          }) ||
+            availabilityGenerationBlocks({
+              repositories: this.input.repositories,
+              providerId: provider.id,
+              policyId: policy.id,
+              windowKind: window.windowKind,
+              cycleAtMs: cycle.cycleAtMs,
+              generation: decision.explanation.eligibilityGeneration,
+              windows: state.observation.windows,
+            }))
         ) {
           decision = {
             ...decision,
