@@ -50,12 +50,15 @@ known allowance missing from a fresh snapshot makes the generation unavailable
 until that exact window and cycle evidence return. Current observation
 membership alone cannot remove a known identity or create an opportunity: when
 a new member changes a same-target-cycle generation, a prior-generation cycle
-must have advanced with high-confidence lifecycle evidence. A generation does
-not change on ordinary observation ticks or usage changes. Auto intents persist
-that identity in their existing dedupe key and explanation. The executor
-rechecks it together with policy, capability, exact target, current mode, fresh
-authorization, provider-wide serialization and every consumed allowance before
-dispatch.
+must have advanced with high-confidence lifecycle evidence. If a previous
+attempt was dispatched for the target cycle and its persisted lifecycle retains
+a valid anchored reset in the future, duplicate automatic starts remain blocked
+even after a shared allowance reset and even when the previous intent is already
+confirmed. A generation does not change on ordinary observation ticks or usage
+changes. Auto intents persist that identity in their existing dedupe key and
+explanation. The executor rechecks it together with policy, capability, exact
+target, current mode, fresh authorization, provider-wide serialization and
+every consumed allowance before dispatch.
 
 Legacy target-only dedupe rows remain intact. A preflight-skipped legacy row is
 considered superseded only when its persisted `attempt_count` is zero (the

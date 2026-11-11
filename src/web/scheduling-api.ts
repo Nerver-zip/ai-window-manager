@@ -8,6 +8,7 @@ import type { ProviderAdapter } from '../providers/provider.js';
 import type { Clock } from '../scheduler/clock.js';
 import { deriveCurrentWindowForTarget } from '../scheduler/current-window.js';
 import {
+  availabilityGenerationBlocks,
   currentAvailabilityGeneration,
   legacyAutoOpportunityBlocks,
 } from '../scheduler/availability-generation.js';
@@ -61,6 +62,7 @@ export interface SchedulingRead {
 export function readScheduling(input: SchedulingApiInput): SchedulingRead {
   const timezone = readTimezoneSetting(input);
   const now = input.clock.now();
+  const nowMs = now.getTime();
   return {
     timezone: timezone ?? null,
     providers: filterVisibleProviders(
@@ -163,14 +165,24 @@ export function readScheduling(input: SchedulingApiInput): SchedulingRead {
           resolvedPolicy?.kind === 'auto' &&
           window &&
           cycle &&
-          legacyAutoOpportunityBlocks({
+          (legacyAutoOpportunityBlocks({
             repositories: input.repositories,
             providerId: provider.id,
             policyId: resolvedPolicy.id,
             windowKind: window.windowKind,
             cycleAtMs: cycle.cycleAtMs,
             windows: observation?.windows ?? [],
-          })
+          }) ||
+            availabilityGenerationBlocks({
+              repositories: input.repositories,
+              providerId: provider.id,
+              policyId: resolvedPolicy.id,
+              windowKind: window.windowKind,
+              cycleAtMs: cycle.cycleAtMs,
+              generation: decision.explanation.eligibilityGeneration,
+              windows: observation?.windows ?? [],
+              nowMs,
+            }))
         ) {
           decision = {
             ...decision,

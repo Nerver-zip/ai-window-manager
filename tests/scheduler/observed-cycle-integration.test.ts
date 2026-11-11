@@ -439,6 +439,144 @@ describe('real observed cycle planning/execution', () => {
     expect(context.triggerCount).toBe(1);
   });
 
+  it('prevents duplicate start during an anchored cycle when a confirmed intent exists, weekly allowance resets, and target is reported inactive', async () => {
+    const context = setup();
+    const originalInspect = context.adapter.inspect.bind(context.adapter);
+    const startMs = context.clock.now().getTime();
+    const weeklyResetAtMs = startMs + 2 * 60 * 60 * 1000;
+    let weeklyResetVerified = false;
+    let targetContradictoryInactive = false;
+
+    context.adapter.inspect = async (providerContext) => {
+      const observation = await originalInspect(providerContext);
+      const nowMs = context.clock.now().getTime();
+      const observedAt = context.clock.now().toISOString();
+      const windows = observation.windows.map((w) => {
+        if (w.windowKind !== 'codex_codex_primary' || !targetContradictoryInactive) return w;
+        return {
+          ...w,
+          observedAt,
+          phase: {
+            value: 'INACTIVE' as const,
+            source: 'observed' as const,
+            confidence: 'exact' as const,
+            observedAt,
+          },
+          usageRatio: {
+            value: 0,
+            source: 'official_supported' as const,
+            confidence: 'exact' as const,
+            observedAt,
+          },
+        };
+      });
+      windows.push({
+        providerId: 'codex',
+        windowKind: 'codex_weekly',
+        observedAt,
+        phase: {
+          value: weeklyResetVerified ? ('INACTIVE' as const) : ('ACTIVE' as const),
+          source: 'observed' as const,
+          confidence: 'exact' as const,
+          observedAt,
+        },
+        durationSeconds: {
+          value: 604_800,
+          source: 'official_supported' as const,
+          confidence: 'exact' as const,
+          observedAt,
+        },
+        resetAt: {
+          value: new Date(
+            weeklyResetVerified ? nowMs + 604_800_000 : weeklyResetAtMs,
+          ).toISOString(),
+          source: 'official_supported' as const,
+          confidence: 'exact' as const,
+          observedAt,
+        },
+        usageRatio: {
+          value: weeklyResetVerified ? 0 : 0.9,
+          source: 'official_supported' as const,
+          confidence: 'exact' as const,
+          observedAt,
+        },
+      });
+      return { ...observation, windows } satisfies ProviderObservation;
+    };
+
+    const services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const planned = await services.reconciler.reconcile();
+    expect(planned.createdIntentIds).toHaveLength(1);
+    const originalIntent = context.repositories.actionIntents.get(planned.createdIntentIds[0]!)!;
+
+    // First dispatch succeeds
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+    expect(context.repositories.actionIntents.get(originalIntent.id)?.attemptCount).toBe(1);
+
+    // Intent transitions to confirmed
+    context.clock.advanceMs(30_000);
+    const confirmReport = await services.executor.executeDue();
+    expect(confirmReport.confirmedIntentIds).toEqual([originalIntent.id]);
+    expect(context.repositories.actionIntents.get(originalIntent.id)?.state).toBe('confirmed');
+
+    // Target cycle retains its future reset anchor (~5h in the future)
+    const targetCycle = context.repositories.windowCycles.get('codex', 'codex_codex_primary')!;
+    expect(targetCycle.anchoredResetAtMs).not.toBeNull();
+    const anchoredResetAtMs = targetCycle.anchoredResetAtMs!;
+    expect(anchoredResetAtMs).toBeGreaterThan(context.clock.now().getTime());
+
+    // Advance 2 hours: reset is still ~3 hours in the future
+    context.clock.advanceMs(2 * 60 * 60 * 1000 - 60_000);
+    expect(anchoredResetAtMs - context.clock.now().getTime()).toBeGreaterThan(2 * 60 * 60 * 1000);
+
+    // Shared weekly allowance advances with valid, high-confidence evidence
+    weeklyResetVerified = true;
+
+    // Target observation incorrectly changes to INACTIVE (contradicting still-valid future anchor)
+    targetContradictoryInactive = true;
+
+    // Reconcile runs: anchored-cycle safety invariant prevents duplicate start
+    const contradictoryReconcile = await services.reconciler.reconcile();
+    expect(contradictoryReconcile.createdIntentIds).toEqual([]);
+    expect(contradictoryReconcile.decisions[0]?.decision.kind).toBe('WAIT');
+    expect(contradictoryReconcile.decisions[0]?.decision.reasonCode).toBe(
+      'AUTO_OPPORTUNITY_GENERATION_UNCHANGED',
+    );
+
+    // Assert that no new intent is created and total quota-consuming dispatches remain exactly one
+    await services.executor.executeDue();
+    expect(context.repositories.actionIntents.listOpen('codex')).toEqual([]);
+    expect(context.repositories.actionIntents.get(originalIntent.id)?.state).toBe('confirmed');
+    expect(context.triggerCount).toBe(1);
+
+    // Verify legitimate recovery remains functional:
+    // Once the original target cycle genuinely ends past the anchored reset boundary,
+    // normal planning can create and dispatch exactly one new intent.
+    context.clock.advanceMs(anchoredResetAtMs - context.clock.now().getTime() + 1_000);
+    targetContradictoryInactive = false;
+
+    // First reconcile after reset observes the elapsed anchor and registers UNKNOWN baseline
+    await services.reconciler.reconcile();
+    // 30 seconds later, elapsed movement confirms genuine INACTIVE in the new cycle
+    context.clock.advanceMs(30_000);
+    const genuineOpportunity = await services.reconciler.reconcile();
+    expect(genuineOpportunity.createdIntentIds).toHaveLength(1);
+    const newIntent = context.repositories.actionIntents.get(
+      genuineOpportunity.createdIntentIds[0]!,
+    )!;
+    expect(newIntent.id).not.toBe(originalIntent.id);
+    expect(newIntent.dedupeKey).not.toBe(originalIntent.dedupeKey);
+
+    // Dispatch the single legitimate recovery turn
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(2);
+    expect(context.repositories.actionIntents.get(newIntent.id)?.attemptCount).toBe(1);
+    expect(context.repositories.actionIntents.get(originalIntent.id)?.state).toBe('confirmed');
+  });
+
   it('blocks a new-format terminal intent when a new allowance member appears without a cycle advance', async () => {
     const context = setup();
     context.anchorOnTrigger = false;

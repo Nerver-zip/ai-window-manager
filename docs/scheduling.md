@@ -293,10 +293,15 @@ schedule anchors.
 
 A shared allowance reset can create a distinct auto opportunity when the exact
 target cycle remains unchanged, but only after that allowance's durable cycle
-identity advances. For an old target-only dedupe row, compatibility recovery
-also requires a preflight-skipped row with persisted `attempt_count = 0` (and no
-contradictory dispatch-start event), or a `resolved_unknown` row with linked
-closure evidence, plus an independently observed high-confidence
+identity advances. If a previous automatic attempt for that target cycle was
+dispatched and the target's persisted lifecycle retains a valid anchored reset
+in the future, the scheduler blocks duplicate starts (including for confirmed
+intents) even if a shared allowance resets or the provider temporarily reports
+the window as inactive; the anchored reset must elapse before a subsequent
+opportunity can be scheduled. For an old target-only dedupe row, compatibility
+recovery also requires a preflight-skipped row with persisted `attempt_count = 0`
+(and no contradictory dispatch-start event), or a `resolved_unknown` row with
+linked closure evidence, plus an independently observed high-confidence
 consumed-allowance transition. An absent dispatch event alone is not proof
 because event retention can remove it. The regular planner and fresh executor
 preflight still reject an exhausted allowance. A weekly reset does not prove

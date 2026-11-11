@@ -319,6 +319,7 @@ export class Reconciler {
               cycleAtMs: cycle.cycleAtMs,
               generation: decision.explanation.eligibilityGeneration,
               windows: state.observation.windows,
+              nowMs,
             }))
         ) {
           decision = {

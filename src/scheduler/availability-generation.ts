@@ -1,5 +1,5 @@
 import type { WindowSnapshot } from '../domain/types.js';
-import type { StorageRepositories } from '../storage/repositories.js';
+import type { StorageRepositories, ActionIntentRecord } from '../storage/repositories.js';
 import { buildAvailabilityGeneration, consumedAllowanceWindowKinds } from './allowance.js';
 import { legacyAutoDedupeKey } from './planner.js';
 
@@ -78,6 +78,7 @@ export function availabilityGenerationBlocks(input: {
   cycleAtMs: number;
   generation: string;
   windows: readonly WindowSnapshot[];
+  nowMs?: number;
 }): boolean {
   const cycleAt = new Date(input.cycleAtMs).toISOString();
   const previous = input.repositories.actionIntents.latestForTargetCycle(
@@ -102,9 +103,50 @@ export function availabilityGenerationBlocks(input: {
     ['planned', 'executing', 'succeeded', 'uncertain', 'failed_retryable'].includes(previous.state)
   )
     return true;
+  if (wasAttemptDispatched(previous, input.repositories) && targetLifecycleHasFutureAnchor(input))
+    return true;
   if (sameGeneration(previousGeneration, currentGeneration)) return false;
 
   return !hasVerifiedGenerationAdvance(input, previousGeneration);
+}
+
+function wasAttemptDispatched(
+  intent: ActionIntentRecord,
+  repositories: StorageRepositories,
+): boolean {
+  return (
+    intent.attemptCount > 0 ||
+    intent.state === 'confirmed' ||
+    repositories.actionIntents.wasDispatchStarted(intent.id, intent.providerId)
+  );
+}
+
+function targetLifecycleHasFutureAnchor(input: {
+  repositories: StorageRepositories;
+  providerId: string;
+  windowKind: string;
+  cycleAtMs: number;
+  windows: readonly WindowSnapshot[];
+  nowMs?: number;
+}): boolean {
+  const cycle = input.repositories.windowCycles.get(input.providerId, input.windowKind);
+  if (!cycle) return false;
+  if (cycle.cycleAtMs !== input.cycleAtMs) return false;
+  if (cycle.anchoredResetAtMs === null || !Number.isSafeInteger(cycle.anchoredResetAtMs))
+    return false;
+  if (cycle.anchoredResetAtMs <= cycle.cycleAtMs) return false;
+  const observationInstants = input.windows
+    .map((window) => Date.parse(window.observedAt))
+    .filter(Number.isSafeInteger);
+  const nowMs = Number.isSafeInteger(input.nowMs)
+    ? (input.nowMs as number)
+    : Number.isSafeInteger(cycle.lastObservedAtMs)
+      ? cycle.lastObservedAtMs
+      : observationInstants.length > 0
+        ? Math.max(...observationInstants)
+        : NaN;
+  if (!Number.isSafeInteger(nowMs)) return false;
+  return cycle.anchoredResetAtMs > nowMs;
 }
 
 interface GenerationIdentity {
