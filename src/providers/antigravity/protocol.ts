@@ -127,7 +127,7 @@ export function parseAntigravityActionEnvelope(value: unknown): AntigravityActio
 
 export function containsAuthenticationMarker(value: string | undefined): boolean {
   if (!value) return false;
-  return /authentication required|auth required|unauthenticated|not authenticated|login required|sign[ -]?in required|please log in/i.test(
+  return /authentication (?:required|expired|failed|error)|auth required|unauthenticated|not authenticated|not logged in|not signed in|login required|sign[ -]?in required|please log in|please sign in/i.test(
     value,
   );
 }

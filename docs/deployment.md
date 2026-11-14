@@ -122,6 +122,9 @@ and supported cleanup to be idle. A scheduled pin workflow proposes changes as
 review-only pull requests after quality gates, image build and unauthenticated
 read-only version probes; it never auto-merges.
 
+The Antigravity adapter disables `agy`'s built-in self-updater so the runtime
+version cannot drift from its verified AWM release pin.
+
 ## Web-assisted provider sign-in acceptance
 
 Authentication sessions are temporary and reset to idle if the daemon restarts;

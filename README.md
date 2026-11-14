@@ -44,7 +44,7 @@ starts with your schedule instead of checking providers manually.
   a window is eligible; alternatively, keep automatic starts off and start a
   supported window yourself.
 - Configure separate schedules for Antigravity's Gemini, Claude/GPT, and
-  Argon model families. Argon starts in manual mode and requires review.
+  Argon model families. A fresh Argon policy starts manual and targetless.
 - Review status, usage charts, a daily usage heatmap, and paginated activity in
   the Overview, Usage, Schedule, and Logs pages.
 - Connect provider accounts through guided flows in the web UI.
@@ -96,11 +96,13 @@ Argon window is exposed. Review the [provider notes](docs/providers.md) for the
 current support boundary and operator-specific evidence before connecting or
 enabling actions.
 
-The existing Gemini and Claude/GPT trigger flow has account-specific
-operator-confirmed evidence. Argon is separate: its trigger gate defaults off,
-its model must be one of the supported Argon slugs, and there is no live AWM
-Argon trigger acceptance. Any normal prompt can consume quota. AWM persists an
-intent before dispatch and does not blindly retry uncertain outcomes.
+The Gemini and Claude/GPT trigger flows have account-specific operator-confirmed
+evidence. One live Argon weekly start was also confirmed on 2026-11-14 with the
+pinned CLI 1.5.3 and `gemini-4-argon-low`; that single account, model, and client
+result does not generalize. Argon has a separate trigger gate that defaults off
+and accepts only the supported Argon slugs. Any normal prompt can consume quota.
+AWM persists an intent before dispatch and does not blindly retry uncertain
+outcomes.
 
 Claude Code is monitored with the official CLI's `/usage` command, which does
 not send a model request. Connect it from Settings; AWM runs the unmodified CLI

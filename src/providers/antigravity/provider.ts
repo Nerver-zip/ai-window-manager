@@ -412,6 +412,13 @@ export class AntigravityProvider implements ProviderAdapter {
         return actionResult('uncertain', 'AGY_TRIGGER_OUTPUT_INVALID', occurredAt);
       }
 
+      if (
+        containsAuthenticationMarker(envelope.error) ||
+        containsAuthenticationMarker(envelope.response)
+      ) {
+        return actionResult('uncertain', 'AGY_TRIGGER_AUTH_REJECTED', occurredAt);
+      }
+
       if (envelope.status === 'SUCCESS' && envelope.num_turns === 1 && envelope.response?.trim()) {
         if (group === 'argon' && envelope.model !== undefined && envelope.model !== model) {
           return actionResult('uncertain', 'AGY_TRIGGER_MODEL_MISMATCH', occurredAt);
@@ -434,7 +441,13 @@ export class AntigravityProvider implements ProviderAdapter {
             ? 'AGY_TRIGGER_OUTPUT_INVALID'
             : error.code === 'PROCESS_START_FAILED'
               ? 'PROCESS_START_FAILED'
-              : 'AGY_TRIGGER_OUTCOME_UNKNOWN',
+              : error.code === 'AUTH_REQUIRED'
+                ? 'AUTH_REQUIRED'
+                : error.code === 'AUTH_REJECTED_AFTER_DISPATCH'
+                  ? 'AGY_TRIGGER_AUTH_REJECTED'
+                  : error.code === 'ARGON_MODEL_SELECTION_UNVERIFIED'
+                    ? 'AGY_ARGON_MODEL_SELECTION_UNVERIFIED'
+                    : 'AGY_TRIGGER_OUTCOME_UNKNOWN',
           occurredAt,
         );
       }

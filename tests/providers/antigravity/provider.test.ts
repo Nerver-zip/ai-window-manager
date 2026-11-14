@@ -675,30 +675,76 @@ describe('AntigravityProvider', () => {
             JSON.stringify({
               event: 'init',
               conversation_id: '00000000-0000-4000-8000-000000000001',
-              model: 'gemini-3.8-flash-low',
+              init: { model: 'gemini-3.8-flash-low' },
             }) + '\n',
           ),
         );
       }),
     });
     expect(
-      (
-        await provider.triggerWindow(
-          {
-            registerCleanupArtifact: () => {
-              registrations++;
-              return Promise.resolve();
-            },
+      await provider.triggerWindow(
+        {
+          registerCleanupArtifact: () => {
+            registrations++;
+            return Promise.resolve();
           },
-          {
-            intentId: 'synthetic-argon-init-mismatch',
-            dedupeKey: 'synthetic-argon-init-mismatch',
-            reasonCode: 'test',
-            windowKind: 'antigravity_argon_weekly',
+        },
+        {
+          intentId: 'synthetic-argon-init-mismatch',
+          dedupeKey: 'synthetic-argon-init-mismatch',
+          reasonCode: 'test',
+          windowKind: 'antigravity_argon_weekly',
+        },
+      ),
+    ).toMatchObject({
+      status: 'failed',
+      errorCode: 'AGY_ARGON_MODEL_SELECTION_UNVERIFIED',
+    });
+    expect(registrations).toBe(1);
+    expect(prompts).toBe(0);
+  });
+
+  it('does not trust a top-level model field when Argon init.model is missing', async () => {
+    let prompts = 0;
+    let registrations = 0;
+    const provider = providerFor('', {
+      triggerEnabled: true,
+      argonTriggerEnabled: true,
+      triggerModels: { argon: 'gemini-4-argon-low' },
+      spawnProcess: scriptedProcessFactory((process) => {
+        process.stdin.on('data', () => prompts++);
+        process.start();
+        queueMicrotask(() =>
+          process.stdout.write(
+            `${JSON.stringify({
+              event: 'init',
+              conversation_id: '00000000-0000-4000-8000-000000000001',
+              model: 'gemini-4-argon-low',
+            })}\n`,
+          ),
+        );
+      }),
+    });
+
+    await expect(
+      provider.triggerWindow(
+        {
+          registerCleanupArtifact: () => {
+            registrations++;
+            return Promise.resolve();
           },
-        )
-      ).status,
-    ).toBe('failed');
+        },
+        {
+          intentId: 'synthetic-argon-undocumented-model-location',
+          dedupeKey: 'synthetic-argon-undocumented-model-location',
+          reasonCode: 'test',
+          windowKind: 'antigravity_argon_weekly',
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'AGY_ARGON_MODEL_SELECTION_UNVERIFIED',
+    });
     expect(registrations).toBe(1);
     expect(prompts).toBe(0);
   });
@@ -731,7 +777,10 @@ describe('AntigravityProvider', () => {
           windowKind: 'antigravity_argon_weekly',
         },
       ),
-    ).toMatchObject({ status: 'failed', errorCode: 'AGY_TRIGGER_OUTPUT_INVALID' });
+    ).toMatchObject({
+      status: 'failed',
+      errorCode: 'AGY_ARGON_MODEL_SELECTION_UNVERIFIED',
+    });
     expect(registrations).toBe(1);
     expect(prompts).toBe(0);
   });
@@ -1249,7 +1298,7 @@ describe('AntigravityProvider', () => {
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
-    ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN' });
+    ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_AUTH_REJECTED' });
   });
 
   it('classifies an authentication rejection reported in the response field safely', async () => {
@@ -1270,7 +1319,7 @@ describe('AntigravityProvider', () => {
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
-    ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_OUTCOME_UNKNOWN' });
+    ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_AUTH_REJECTED' });
   });
 
   it.each([
