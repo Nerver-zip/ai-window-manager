@@ -29,11 +29,19 @@ experimental evidence, not a universal guarantee.
 The JSON envelope follows the official [headless CLI output contract](https://antigravity.google/docs/cli/headless/);
 the successful sample is validated offline with a sanitized fixture.
 
-Before a child starts, invalid configuration or a process-start failure is a
-definite failure. Once the child has started, timeout, EOF, malformed output,
-authentication errors, or an unexpected exit is `uncertain`; the adapter does
-not retry. Fresh observation and target-window confirmation belong to the
-application executor, not this provider adapter.
+Before prompt dispatch, invalid configuration or a process-start failure is a
+definite failure. An authentication marker before dispatch is reported as
+`AUTH_REQUIRED`. Once the prompt has been written, timeout, EOF, malformed
+output, authentication errors, or an unexpected exit is `uncertain`; the
+adapter does not retry. Fresh observation and target-window confirmation belong
+to the application executor, not this provider adapter.
+
+For Argon, the adapter verifies the configured model from the documented
+`init.model` payload. A missing or mismatched model is reported as a known
+pre-dispatch failure, since the `Hi!` prompt has not been written. An
+authentication marker before dispatch is reported as `AUTH_REQUIRED`; after
+dispatch it is recorded as an auth-specific uncertain outcome and remains
+non-retryable until resolved by fresh provider evidence.
 
 Authentication remains owned by the official CLI and its dedicated state /
 keyring. This adapter never reads credentials, parses tokens, or calls

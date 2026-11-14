@@ -135,11 +135,10 @@ blindly retried.
   URL. AWM advances only when the official screen explicitly marks option 1
   (Google OAuth) as selected, then exposes the complete URL and forwards only
   the operator-entered browser code to the waiting CLI.
-- The current Antigravity CLI pin is `1.4.3` with official architecture-specific
-  SHA-256 digests. CLI 1.4.3 lists the Argon low/medium/high model variants and
-  returns the structured Argon weekly bucket described in SPIKE-006. The
-  pre-change 1.3.3 build required sign-in to list models in an empty home; its
-  authenticated Argon behavior remains unverified.
+- The current Antigravity CLI pin is `1.5.3` with official architecture-specific
+  SHA-256 digests. The official CLI returns the structured Argon weekly bucket
+  described in SPIKE-006. A live AWM Argon start is confirmed below for one
+  configured account/model/client combination; it is not a universal guarantee.
 - The operator's Google AI Pro CLI 1.4.2 output listed the three Argon model
   slugs and an Argon weekly row with 33% remaining and a reset of
   `2026-10-24 22:16 -03`. This is one operator-provided snapshot. The separate
@@ -235,12 +234,20 @@ manual, review-required, with no target selected. A mismatch found before
 dispatch is rejected without a prompt; once a prompt may have been sent, an
 ambiguous result remains uncertain and is never retried. A request selects
 only its exact allowlisted target. For Argon, dispatch requires the stream
-`init.model` to exactly equal the configured Argon slug. A missing or
-mismatched init model fails after registering the exact conversation cleanup
+`init.model` to exactly equal the configured Argon slug. The check reads the
+documented nested model field. A missing or mismatched init model fails after
+registering the exact conversation cleanup
 artifact and before sending the user event. A missing result-level model is
 accepted only after that init verification; an explicit result mismatch remains
-uncertain. This guard is offline-only; live AWM Argon trigger compatibility
-remains unverified.
+uncertain. AWM disables the CLI's self-updater for every invocation so runtime
+versions remain governed by the verified AWM release pin.
+
+The official CLI documents no separate machine-readable authentication-status
+command. A successful `/usage` refresh confirms access to quota inspection for
+that CLI home, but it does not verify model-generation authorization. AWM
+normalizes auth markers before prompt dispatch to `AUTH_REQUIRED`; after
+dispatch they produce `AGY_TRIGGER_AUTH_REJECTED` and remain uncertain, with
+no credential or raw response text persisted.
 
 The adapter derives an operational phase from the observed remaining fraction:
 values within `0.00001` of full allowance are normalized to `INACTIVE`, values
@@ -251,11 +258,12 @@ eligibility for the project's safety checks; a `99.95%` remaining observation
 still counts as active.
 
 The owner confirms end-to-end AWM trigger acceptance for the existing Gemini
-and Claude/GPT windows only. This evidence applies to the tested account,
-pinned client and models; it does not generalize to every account, plan or
-future CLI version. There is no AWM live Argon trigger acceptance, and this
-release-preparation work did not send an Argon prompt or repeat a
-quota-consuming request.
+and Claude/GPT windows and one Argon weekly start. On 2026-11-14, the configured
+local deployment used the pinned Antigravity CLI 1.5.3 and
+`gemini-4-argon-low`; AWM sent its fixed `Hi!` prompt, received a successful
+single-turn result, and confirmed the Argon weekly window became active from a
+fresh usage observation. This evidence covers one account, model and client
+version; it does not generalize to other plans, accounts or future CLI versions.
 
 The official Antigravity CLI README states that Google may collect and use
 interaction data under its Terms of Service and Privacy Policy, with an opt-out

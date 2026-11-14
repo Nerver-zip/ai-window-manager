@@ -146,6 +146,10 @@ atomically with one rollback version. No credentials or quota-consuming
 actions are used for update validation; automatic stable updates are an
 off-by-default SQLite preference.
 
+The Antigravity adapter disables the CLI's own self-updater for each child
+process. This keeps the executable on the verified AWM-managed runtime version
+until an AWM release update activates a new pinned client.
+
 HTTP handlers do not inspect providers or dispatch actions. Settings and
 activation-policy forms validate non-secret values and persist them in SQLite; all
 mutations require same-origin Origin and double-submit CSRF proof.
