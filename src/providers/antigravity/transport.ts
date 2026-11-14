@@ -5,7 +5,6 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from 'n
 import { StringDecoder } from 'node:string_decoder';
 import type { ProviderCleanupArtifact } from '../provider.js';
 import { DispatchAuthorizationError } from '../dispatch-authorization.js';
-import { containsAuthenticationMarker } from './protocol.js';
 
 const MAX_STDOUT_BYTES = 512 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
@@ -26,9 +25,6 @@ export type AntigravityTransportErrorCode =
 
 export type AntigravityActionFailureDisposition = 'failed' | 'uncertain';
 export type AntigravityActionTransportErrorCode =
-  | 'AUTH_REQUIRED'
-  | 'AUTH_REJECTED_AFTER_DISPATCH'
-  | 'ARGON_MODEL_SELECTION_UNVERIFIED'
   | 'PROCESS_START_FAILED'
   | 'CLEANUP_REGISTRATION_FAILED'
   | 'STREAM_PROTOCOL_ERROR'
@@ -106,16 +102,18 @@ function antigravityProcessEnvironment(source: NodeJS.ProcessEnv): NodeJS.Proces
     'XDG_RUNTIME_DIR',
     'DBUS_SESSION_BUS_ADDRESS',
   ];
-  return {
-    ...Object.fromEntries(
-      names.flatMap((name) => {
-        const value = source[name];
-        return value === undefined ? [] : [[name, value]];
-      }),
-    ),
-    // AWM owns the verified runtime pin; don't let the CLI replace itself in place.
-    AGY_CLI_DISABLE_AUTO_UPDATE: 'true',
-  };
+  return Object.fromEntries(
+    names.flatMap((name) => {
+      const value = source[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+}
+
+function hasAuthenticationMarker(value: string): boolean {
+  return /authentication required|auth required|unauthenticated|not authenticated|login required|sign[ -]?in required|please log in/i.test(
+    value,
+  );
 }
 
 function classifyProcessFailure(value: string): AntigravityTransportErrorCode {
@@ -134,7 +132,7 @@ function classifyProcessFailure(value: string): AntigravityTransportErrorCode {
   ) {
     return 'DBUS_UNAVAILABLE';
   }
-  return containsAuthenticationMarker(value) ? 'AUTH_REQUIRED' : 'PROVIDER_UNAVAILABLE';
+  return hasAuthenticationMarker(value) ? 'AUTH_REQUIRED' : 'PROVIDER_UNAVAILABLE';
 }
 
 function killProcess(child: ChildProcessWithoutNullStreams): void {
@@ -158,12 +156,6 @@ function actionFailure(
   disposition: AntigravityActionFailureDisposition,
 ): AntigravityActionTransportError {
   return new AntigravityActionTransportError(code, disposition);
-}
-
-function authenticationFailure(promptSent: boolean): AntigravityActionTransportError {
-  return promptSent
-    ? actionFailure('AUTH_REJECTED_AFTER_DISPATCH', 'uncertain')
-    : actionFailure('AUTH_REQUIRED', 'failed');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -243,7 +235,6 @@ export async function runAntigravityTriggerCommand(
       let promptSent = false;
       let stdoutBytes = 0;
       let stderrBytes = 0;
-      let stderrTail = '';
       let lineBuffer = '';
       let conversationId: string | undefined;
       let resultJson: string | undefined;
@@ -287,10 +278,6 @@ export async function runAntigravityTriggerCommand(
 
       const processLine = async (line: string): Promise<void> => {
         if (settled || line.trim().length === 0) return;
-        if (containsAuthenticationMarker(line)) {
-          failStream(authenticationFailure(promptSent));
-          return;
-        }
         let event: unknown;
         try {
           event = JSON.parse(line) as unknown;
@@ -329,12 +316,9 @@ export async function runAntigravityTriggerCommand(
             failStream(actionFailure('CLEANUP_REGISTRATION_FAILED', 'failed'));
             return;
           }
-          if (options.verifyModelSelection) {
-            const init = isRecord(event.init) ? event.init : undefined;
-            if (init?.model !== options.model) {
-              failStream(actionFailure('ARGON_MODEL_SELECTION_UNVERIFIED', 'failed'));
-              return;
-            }
+          if (options.verifyModelSelection && event.model !== options.model) {
+            failStream(actionFailure('STREAM_PROTOCOL_ERROR', 'failed'));
+            return;
           }
           if (settled || options.signal?.aborted) return;
           try {
@@ -413,12 +397,6 @@ export async function runAntigravityTriggerCommand(
         if (settled) return;
         const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
         stderrBytes += Buffer.byteLength(text, 'utf8');
-        const diagnosticTail = stderrTail + text;
-        if (containsAuthenticationMarker(diagnosticTail)) {
-          failStream(authenticationFailure(promptSent));
-          return;
-        }
-        stderrTail = diagnosticTail.slice(-256);
         if (stderrBytes > MAX_STDERR_BYTES) {
           failStream(failureForDispatch(promptSent));
         }

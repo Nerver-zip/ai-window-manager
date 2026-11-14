@@ -852,7 +852,6 @@ describe('real observed cycle planning/execution', () => {
     expect(context.triggerCount).toBe(1);
   });
 
-  // This deliberately runs 600 executor passes against SQLite under parallel CI workers.
   it('releases an old uncertain start after 600 reads and dispatches one new verified opportunity', async () => {
     const context = setup();
     context.anchorOnTrigger = false;
@@ -973,7 +972,7 @@ describe('real observed cycle planning/execution', () => {
     });
     expect(context.repositories.actionIntents.get(newIntent.id)?.attemptCount).toBe(1);
     expect(context.triggerCount).toBe(2);
-  }, 15_000);
+  });
 
   it('preserves last-known-good lifecycle through inspection failure', async () => {
     const context = setup();

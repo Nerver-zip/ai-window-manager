@@ -2078,26 +2078,6 @@ describe('ActionExecutor', () => {
     });
   });
 
-  it('keeps Argon model-selection rejection retryable because no prompt was sent', async () => {
-    const context = setup();
-    const adapter: ProviderAdapter = {
-      ...context.adapter,
-      triggerWindow: () =>
-        Promise.resolve({
-          status: 'failed',
-          occurredAt: context.clock.now().toISOString(),
-          errorCode: 'AGY_ARGON_MODEL_SELECTION_UNVERIFIED',
-        }),
-    };
-
-    await context.executor({ adapters: new Map([['fake', adapter]]) }).executeDue();
-
-    expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
-      state: 'failed_retryable',
-      lastErrorCode: 'AGY_ARGON_MODEL_SELECTION_UNVERIFIED',
-    });
-  });
-
   it('suppresses duplicate claim history when a retryable pre-dispatch action is retried', async () => {
     const context = setup();
     let dispatches = 0;

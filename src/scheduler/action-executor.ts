@@ -88,7 +88,6 @@ interface FreshInspection {
 
 const definitelyPreDispatchErrors = new Set([
   'AUTH_REQUIRED',
-  'AGY_ARGON_MODEL_SELECTION_UNVERIFIED',
   'CAPABILITY_UNAVAILABLE',
   'PROCESS_START_FAILED',
   'PROVIDER_NOT_AVAILABLE',

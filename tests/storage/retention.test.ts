@@ -124,16 +124,15 @@ describe('retention maintenance', () => {
     );
   });
 
-  it('continues an expired SQLite backlog after a bounded default worker pass', async () => {
+  it('drains daily expired input above nominal through bounded default worker passes', async () => {
     const { db } = openTestDatabase();
     const clock = new FakeClock(new Date(NOW));
     const deleted: number[] = [];
     const worker = new RetentionWorker({
       clock,
       idleIntervalMs: 86_400_000,
-      batchSize: 2,
       processBatch: () => {
-        const result = runRetentionMaintenance(db, { clock, batchSize: 2 });
+        const result = runRetentionMaintenance(db, { clock });
         deleted.push(result.eventsDeleted.lifecycle);
         return result;
       },
@@ -142,69 +141,62 @@ describe('retention maintenance', () => {
       },
       yieldBetweenBatches: () => Promise.resolve(),
     });
-    db.prepare(
-      `WITH RECURSIVE rows(n) AS (
-        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 65
-      )
-      INSERT INTO events (provider_id, type, occurred_at_ms, data_json)
-      SELECT 'fake', 'provider_inspected', ?, '{}' FROM rows`,
-    ).run(NOW - 366 * DAY_MS);
-
-    // Keep the worker's production default of 32 batches per pass while using
-    // tiny batches so this integration test exercises the real SQL cheaply.
-    await worker.runPass();
-    expect(db.prepare('SELECT COUNT(*) AS count FROM events').get()).toEqual({ count: 1 });
-    expect(worker.snapshot()).toMatchObject({ pending: true, batches: 32, totalDeleted: 64 });
-
-    await worker.runPass();
-    expect(db.prepare('SELECT COUNT(*) AS count FROM events').get()).toEqual({ count: 0 });
-    expect(worker.snapshot()).toMatchObject({ pending: false, batches: 1, totalDeleted: 1 });
-    expect(deleted.every((count) => count <= 2)).toBe(true);
+    for (let day = 0; day < 3; day += 1) {
+      db.prepare(
+        `WITH RECURSIVE rows(n) AS (
+          SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 24000
+        )
+        INSERT INTO events (provider_id, type, occurred_at_ms, data_json)
+        SELECT 'fake', 'provider_inspected', ?, '{}' FROM rows`,
+      ).run(NOW - 366 * DAY_MS);
+      for (let pass = 0; pass < 4; pass += 1) await worker.runPass();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM events').get()).toEqual({ count: 0 });
+      clock.advanceMs(DAY_MS);
+    }
+    expect(deleted.every((count) => count <= 500)).toBe(true);
     await worker.stop();
   });
 
-  it('continues the remaining sample backlog after a worker restart', async () => {
+  it('keeps up with sample input above nominal and resumes remaining SQL rows after worker restart', async () => {
     const { db, repositories } = openTestDatabase();
     const clock = new FakeClock(new Date(NOW));
     const makeWorker = (maxBatchesPerPass?: number) =>
       new RetentionWorker({
         clock,
         idleIntervalMs: 86_400_000,
-        batchSize: 2,
         ...(maxBatchesPerPass === undefined ? {} : { maxBatchesPerPass }),
-        processBatch: () => runRetentionMaintenance(db, { clock, batchSize: 2 }),
+        processBatch: () => runRetentionMaintenance(db, { clock }),
         yieldBetweenBatches: () => Promise.resolve(),
         onError: (error) => {
           throw error;
         },
       });
-    db.prepare(
-      `WITH RECURSIVE rows(n) AS (
-        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 70
+    for (let day = 0; day < 3; day += 1) {
+      db.prepare(
+        `WITH RECURSIVE rows(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM rows WHERE n < 18000
       ) INSERT INTO window_samples (provider_id, window_kind, observed_at_ms, phase)
-      SELECT 'fake', 'five_hour', ?, 'unknown' FROM rows`,
-    ).run(NOW - 91 * DAY_MS);
-    repositories.usageAggregation.advanceCheckpoint(
-      repositories.usageAggregation.maxSampleId(),
-      NOW,
-    );
-
-    // Tiny SQL batches keep the test quick while retaining the default 32-batch restart pass.
-    const first = makeWorker(2);
-    await first.runPass();
-    await first.stop();
-    expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({ count: 66 });
-    expect(first.snapshot()).toMatchObject({ pending: true, batches: 2, totalDeleted: 4 });
-
-    // A replacement worker does not need the previous worker's in-memory progress.
-    const restarted = makeWorker();
-    await restarted.runPass();
-    expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({ count: 2 });
-    expect(restarted.snapshot()).toMatchObject({ pending: true, batches: 32, totalDeleted: 64 });
-    await restarted.runPass();
-    expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({ count: 0 });
-    expect(restarted.snapshot()).toMatchObject({ pending: false, totalDeleted: 2 });
-    await restarted.stop();
+        SELECT 'fake', 'five_hour', ?, 'unknown' FROM rows`,
+      ).run(NOW - 91 * DAY_MS);
+      repositories.usageAggregation.advanceCheckpoint(
+        repositories.usageAggregation.maxSampleId(),
+        NOW,
+      );
+      const first = makeWorker(2);
+      await first.runPass();
+      await first.stop();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({
+        count: 17_000,
+      });
+      // A replacement worker does not need the previous worker's in-memory progress.
+      const restarted = makeWorker();
+      for (let pass = 0; pass < 2; pass += 1) await restarted.runPass();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM window_samples').get()).toEqual({
+        count: 0,
+      });
+      await restarted.stop();
+      clock.advanceMs(DAY_MS);
+    }
   });
 
   it('deletes old samples/events and terminal intents while preserving current state and open intents', () => {

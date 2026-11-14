@@ -126,7 +126,7 @@ export function streamingActionProcessFactory(
         `${JSON.stringify({
           event: 'init',
           conversation_id: conversationId,
-          init: initModel === undefined ? {} : { model: initModel },
+          ...(initModel === undefined ? {} : { model: initModel }),
         })}\n`,
       );
     });

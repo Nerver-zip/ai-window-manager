@@ -8,8 +8,6 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { TEST_OPERATOR_ENV } from '../helpers/operator-auth.js';
 
-const STARTUP_TIMEOUT_MS = 20_000;
-
 it('starts the real offline bootstrap and preserves metrics access across graceful restart without logging credentials', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-runtime-metrics-'));
   const listener = net.createServer();
@@ -24,9 +22,7 @@ it('starts the real offline bootstrap and preserves metrics access across gracef
   const baseUrl = `http://127.0.0.1:${port}`;
   let child: ChildProcess | undefined;
   let output = '';
-  let startupOutput = '';
   async function start(metricsDigest: string): Promise<void> {
-    startupOutput = '';
     child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: process.cwd(),
       env: {
@@ -47,57 +43,31 @@ it('starts the real offline bootstrap and preserves metrics access across gracef
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const capture = (chunk: Buffer): void => {
-      const text = chunk.toString();
-      output = (output + text).slice(-100_000);
-      startupOutput = (startupOutput + text).slice(-100_000);
+      output = (output + chunk.toString()).slice(-100_000);
     };
     child.stdout?.on('data', capture);
     child.stderr?.on('data', capture);
-    const currentChild = child;
-    if (!currentChild) throw new Error('Offline runtime failed to spawn');
-    const listeningMessage = `Server listening at ${baseUrl}`;
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const cleanup = (): void => {
-        clearTimeout(timeout);
-        currentChild.stdout?.off('data', checkOutput);
-        currentChild.stderr?.off('data', checkOutput);
-        currentChild.off('error', onError);
-        currentChild.off('exit', onExit);
-      };
-      const finish = (error?: Error): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        if (error) reject(error);
-        else resolve();
-      };
-      const checkOutput = (): void => {
-        if (startupOutput.includes(listeningMessage)) finish();
-      };
-      const onError = (error: Error): void => finish(error);
-      const onExit = (code: number | null, signal: NodeJS.Signals | null): void =>
-        finish(
-          new Error(
-            `Offline runtime exited before listening (code ${code ?? 'none'}, signal ${signal ?? 'none'})`,
-          ),
+    const childExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => {
+        child?.once('exit', (code, signal) => resolve({ code, signal }));
+      },
+    );
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const outcome = await Promise.race([
+        fetch(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(250) })
+          .then((response) => ({ response }))
+          .catch(() => ({ response: undefined })),
+        childExit.then((exit) => ({ exit })),
+      ]);
+      if ('exit' in outcome) {
+        throw new Error(
+          `Offline runtime exited before health (code ${outcome.exit.code ?? 'none'}, signal ${outcome.exit.signal ?? 'none'})`,
         );
-      const timeout = setTimeout(
-        () => finish(new Error(`Offline runtime did not listen within ${STARTUP_TIMEOUT_MS}ms`)),
-        STARTUP_TIMEOUT_MS,
-      );
-      currentChild.stdout?.on('data', checkOutput);
-      currentChild.stderr?.on('data', checkOutput);
-      currentChild.once('error', onError);
-      currentChild.once('exit', onExit);
-      if (currentChild.exitCode !== null || currentChild.signalCode !== null)
-        onExit(currentChild.exitCode, currentChild.signalCode);
-      else checkOutput();
-    });
-
-    const health = await fetch(`${baseUrl}/healthz`, { signal: AbortSignal.timeout(2_000) });
-    if (health.status !== 200)
-      throw new Error(`Offline runtime listened but health returned ${health.status}`);
+      }
+      if (outcome.response?.status === 200) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error('Offline runtime health timeout');
   }
   async function stop(): Promise<void> {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -134,4 +104,4 @@ it('starts the real offline bootstrap and preserves metrics access across gracef
     }
     fs.rmSync(directory, { recursive: true, force: true });
   }
-}, 70_000);
+}, 20_000);

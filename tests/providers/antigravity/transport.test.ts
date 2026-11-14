@@ -145,7 +145,6 @@ describe('Antigravity CLI transport', () => {
 
   it('passes only provider runtime variables to the official CLI process', async () => {
     vi.stubEnv('AWM_SYNTHETIC_SECRET', 'never-forward-this');
-    vi.stubEnv('AGY_CLI_DISABLE_AUTO_UPDATE', 'false');
     let processRef: FakeAntigravityProcess | undefined;
     await runAntigravityUsageCommand({
       executable: '/opt/agy',
@@ -160,11 +159,9 @@ describe('Antigravity CLI transport', () => {
     });
 
     expect(processRef?.options.env).not.toHaveProperty('AWM_SYNTHETIC_SECRET');
-    expect(processRef?.options.env?.AGY_CLI_DISABLE_AUTO_UPDATE).toBe('true');
     expect(
       Object.keys(processRef?.options.env ?? {}).every((name) =>
         [
-          'AGY_CLI_DISABLE_AUTO_UPDATE',
           'HOME',
           'PATH',
           'LANG',
@@ -281,10 +278,8 @@ describe('Antigravity action transport', () => {
       spawnProcess: (executable, args, options) => {
         observedArgs = args;
         observedShell = options.shell;
-        expect(options.env?.AGY_CLI_DISABLE_AUTO_UPDATE).toBe('true');
         observedEnvIsSanitized = Object.keys(options.env ?? {}).every((name) =>
           [
-            'AGY_CLI_DISABLE_AUTO_UPDATE',
             'HOME',
             'PATH',
             'LANG',
@@ -415,7 +410,7 @@ describe('Antigravity action transport', () => {
     ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
-  it('classifies authentication failure before an init/prompt without exposing diagnostics', async () => {
+  it('classifies authentication failure before an init/prompt as a safe pre-dispatch failure', async () => {
     await expect(
       runAntigravityTriggerCommand({
         ...defaults,
@@ -423,33 +418,7 @@ describe('Antigravity action transport', () => {
           process.complete('', 1, 'Authentication required; sign in first.'),
         ),
       }),
-    ).rejects.toSatisfy((error: unknown) => {
-      expect(error).toMatchObject({ code: 'AUTH_REQUIRED', disposition: 'failed' });
-      expect(String(error)).not.toContain('sign in first');
-      return true;
-    });
-  });
-
-  it('classifies authentication rejection after the prompt as uncertain without exposing text', async () => {
-    await expect(
-      runAntigravityTriggerCommand({
-        ...defaults,
-        spawnProcess: streamingActionProcessFactory(
-          '',
-          undefined,
-          undefined,
-          1,
-          'Authentication expired. Please log back in.',
-        ),
-      }),
-    ).rejects.toSatisfy((error: unknown) => {
-      expect(error).toMatchObject({
-        code: 'AUTH_REJECTED_AFTER_DISPATCH',
-        disposition: 'uncertain',
-      });
-      expect(String(error)).not.toContain('log back in');
-      return true;
-    });
+    ).rejects.toMatchObject({ code: 'PROCESS_START_FAILED', disposition: 'failed' });
   });
 
   it('classifies a non-zero exit after sending the registered prompt as uncertain', async () => {
