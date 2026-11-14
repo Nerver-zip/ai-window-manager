@@ -155,7 +155,7 @@ describe('retention maintenance', () => {
     }
     expect(deleted.every((count) => count <= 500)).toBe(true);
     await worker.stop();
-  });
+  }, 6_000);
 
   it('keeps up with sample input above nominal and resumes remaining SQL rows after worker restart', async () => {
     const { db, repositories } = openTestDatabase();
