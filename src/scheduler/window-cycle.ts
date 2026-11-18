@@ -4,7 +4,14 @@ import type { StorageRepositories } from '../storage/repositories.js';
 
 const JITTER_MS = 5_000;
 const MIN_EVIDENCE_SPAN_MS = 15_000;
+// Require a longer rolling streak when overriding an unexpired anchor so a
+// transient backend rollout oscillation does not clear a live cycle anchor.
+const FORCED_RESET_EVIDENCE_SPAN_MS = 180_000;
 const actionable = (confidence: string) => confidence === 'exact' || confidence === 'high';
+
+function isRollingProjection(observedAtMs: number, resetAtMs: number, durationMs: number): boolean {
+  return resetAtMs > observedAtMs && Math.abs(resetAtMs - observedAtMs - durationMs) <= JITTER_MS;
+}
 
 /** Pure lifecycle inference. Moving projections are evidence, never cycle identities. */
 export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWindowCycle) {
@@ -19,6 +26,7 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
       : undefined;
   const zero = window.usageRatio?.value === 0;
   const oldAnchor = previous?.anchoredResetAtMs ?? null;
+  const hasUnexpiredAnchor = oldAnchor !== null && oldAnchor > at;
   let phase = window.phase;
   // A previously confirmed future reset means the session has started. If a
   // later read omits that reset and shows zero use, do not reinterpret it as
@@ -28,8 +36,7 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
     actionable(phase.confidence) &&
     reset === null &&
     zero &&
-    oldAnchor !== null &&
-    oldAnchor > at
+    hasUnexpiredAnchor
   ) {
     phase = {
       value: 'UNKNOWN',
@@ -71,23 +78,37 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
     };
   }
 
+  let forcedResetConfirmed = false;
+  let keepRollingBaseline = false;
   if (temporal) {
     let value: WindowSnapshot['phase']['value'] = 'UNKNOWN';
     if (!window.usageRatio || !actionable(window.usageRatio.confidence)) {
       value = 'UNKNOWN';
-    } else if (reset !== null && oldAnchor !== null && oldAnchor > at) {
-      if (Math.abs(reset - oldAnchor) <= JITTER_MS) value = 'ACTIVE';
+    } else if (hasUnexpiredAnchor && reset !== null && Math.abs(reset - oldAnchor) <= JITTER_MS) {
+      value = 'ACTIVE';
     } else if (reset !== null && duration !== undefined && previous?.lastResetAtMs != null) {
       const elapsed = at - previous.lastObservedAtMs;
       const movement = reset - previous.lastResetAtMs;
-      if (elapsed >= MIN_EVIDENCE_SPAN_MS && reset > at) {
-        if (
-          Math.abs(reset - at - duration) <= JITTER_MS &&
-          Math.abs(movement - elapsed) <= JITTER_MS
-        )
-          value = 'INACTIVE';
-        else if (Math.abs(movement) <= JITTER_MS && reset - at < duration - JITTER_MS)
-          value = 'ACTIVE';
+      if (reset > at) {
+        const currentIsRolling = isRollingProjection(at, reset, duration);
+        const tracksRolling = currentIsRolling && Math.abs(movement - elapsed) <= JITTER_MS;
+        if (hasUnexpiredAnchor) {
+          const previousIsRollingBaseline =
+            previous.phase === 'UNKNOWN' &&
+            isRollingProjection(previous.lastObservedAtMs, previous.lastResetAtMs, duration);
+          if (previousIsRollingBaseline && tracksRolling) {
+            if (elapsed >= FORCED_RESET_EVIDENCE_SPAN_MS) {
+              value = 'INACTIVE';
+              forcedResetConfirmed = true;
+            } else {
+              keepRollingBaseline = true;
+            }
+          }
+        } else if (elapsed >= MIN_EVIDENCE_SPAN_MS) {
+          if (tracksRolling) value = 'INACTIVE';
+          else if (Math.abs(movement) <= JITTER_MS && reset - at < duration - JITTER_MS)
+            value = 'ACTIVE';
+        }
       }
     }
     phase = {
@@ -96,9 +117,13 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
       confidence: value === 'UNKNOWN' ? 'unknown' : 'high',
       observedAt: window.observedAt,
     };
-    // Keep the evidence baseline across short executor ticks until enough
-    // elapsed time exists to distinguish a rolling projection from an anchor.
-    if (value === 'UNKNOWN' && previous && at - previous.lastObservedAtMs < MIN_EVIDENCE_SPAN_MS)
+    // Keep the evidence baseline across short executor ticks (or a forced-reset
+    // confirmation streak) until enough elapsed time confirms a rolling projection.
+    if (
+      value === 'UNKNOWN' &&
+      previous &&
+      (keepRollingBaseline || at - previous.lastObservedAtMs < MIN_EVIDENCE_SPAN_MS)
+    )
       return { window: { ...window, phase }, cycle: previous };
   }
 
@@ -129,18 +154,20 @@ export function observeWindowCycle(window: WindowSnapshot, previous?: ObservedWi
     actionable(previous.phaseConfidence) &&
     ['ACTIVE', 'EXHAUSTED', 'RESET_DUE'].includes(previous.phase) &&
     (oldAnchor === null || oldAnchor <= at);
-  const cycleAtMs =
-    previous &&
-    oldAnchor !== null &&
-    oldAnchor <= at &&
-    known &&
-    ['INACTIVE', 'ACTIVE', 'EXHAUSTED'].includes(phase.value)
+  const cycleAtMs = forcedResetConfirmed
+    ? at
+    : previous &&
+        oldAnchor !== null &&
+        oldAnchor <= at &&
+        known &&
+        ['INACTIVE', 'ACTIVE', 'EXHAUSTED'].includes(phase.value)
       ? Math.max(previous.cycleAtMs, oldAnchor)
       : inactiveTransition
         ? at
         : (previous?.cycleAtMs ?? at);
-  const anchor =
-    known && ['ACTIVE', 'EXHAUSTED'].includes(phase.value) && reset !== null && reset > at
+  const anchor = forcedResetConfirmed
+    ? null
+    : known && ['ACTIVE', 'EXHAUSTED'].includes(phase.value) && reset !== null && reset > at
       ? oldAnchor !== null && oldAnchor > at && Math.abs(reset - oldAnchor) <= JITTER_MS
         ? oldAnchor
         : reset
@@ -182,7 +209,8 @@ export function trackWindowCycles(
           endedAtMs: result.cycle.cycleAtMs,
           observedAtMs: Date.parse(result.window.observedAt),
           evidenceKind:
-            previous.anchoredResetAtMs !== null
+            previous.anchoredResetAtMs !== null &&
+            previous.anchoredResetAtMs <= result.cycle.cycleAtMs
               ? 'anchored_boundary'
               : 'reported_inactive_transition',
         });

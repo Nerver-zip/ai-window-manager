@@ -309,6 +309,22 @@ describe('storage repositories', () => {
     expect(repositories.windowSamples.get(999_999)).toBeUndefined();
     expect(repositories.windowSamples.latest('fake', 'five_hour')).toEqual(sample());
     expect(repositories.windowSamples.latest('fake', 'missing')).toBeUndefined();
+    expect(
+      repositories.windowSamples.latestActionableInRange(
+        'fake',
+        'five_hour',
+        observedAtMs,
+        observedAtMs,
+      ),
+    ).toEqual(sample());
+    expect(
+      repositories.windowSamples.latestActionableInRange(
+        'fake',
+        'weekly',
+        observedAtMs,
+        Date.parse(laterObservedAt),
+      ),
+    ).toBeUndefined();
     expect(repositories.windowSamples.list('fake', { limit: 1 })).toHaveLength(1);
     expect(
       repositories.windowSamples.list('fake', { beforeMs: observedAtMs + 30_000 }),
