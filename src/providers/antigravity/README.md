@@ -37,8 +37,11 @@ adapter does not retry. Fresh observation and target-window confirmation belong
 to the application executor, not this provider adapter.
 
 For Argon, the adapter verifies the configured model from the documented
-`init.model` payload. A missing or mismatched model is reported as a known
-pre-dispatch failure, since the `Hi!` prompt has not been written. An
+`init.model` payload and sends a short tool-free prompt
+(`ANTIGRAVITY_ARGON_TRIGGER_MESSAGE`) rather than `Hi!`, because a bare `Hi!`
+was observed to stay below the Argon weekly bucket's activation threshold on
+CLI `1.5.9`. A missing or mismatched model is reported as a known
+pre-dispatch failure, since the prompt has not been written. An
 authentication marker before dispatch is reported as `AUTH_REQUIRED`; after
 dispatch it is recorded as an auth-specific uncertain outcome and remains
 non-retryable until resolved by fresh provider evidence.

@@ -18,6 +18,7 @@ export {
 export {
   AntigravityActionTransportError,
   AntigravityTransportError,
+  ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
   ANTIGRAVITY_TRIGGER_MESSAGE,
   runAntigravityTriggerCommand,
   runAntigravityUsageCommand,

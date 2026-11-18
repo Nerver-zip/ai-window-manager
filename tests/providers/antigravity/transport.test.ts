@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
   AntigravityActionTransportError,
   AntigravityTransportError,
   runAntigravityTriggerCommand,
@@ -323,6 +324,26 @@ describe('Antigravity action transport', () => {
     });
     expect(observedShell).toBe(false);
     expect(observedEnvIsSanitized).toBe(true);
+  });
+
+  it('writes custom promptMessage when provided for Argon triggers', async () => {
+    let observedInput = '';
+    await runAntigravityTriggerCommand({
+      ...defaults,
+      model: 'gemini-4-argon-high',
+      promptMessage: ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
+      spawnProcess: streamingActionProcessFactory(validActionJson, {
+        initModel: 'gemini-4-argon-high',
+        onPrompt: (input) => {
+          observedInput = input;
+        },
+      }),
+    });
+
+    expect(JSON.parse(observedInput)).toEqual({
+      event: 'user',
+      message: { content: ANTIGRAVITY_ARGON_TRIGGER_MESSAGE },
+    });
   });
 
   it('returns only the terminal result after successful stream completion', async () => {
