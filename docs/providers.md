@@ -275,7 +275,10 @@ The monitor continues to use the documented headless
 `agy -p /usage --output-format json` read path. Triggering uses the official
 `--input-format stream-json --output-format stream-json` protocol: AWM validates
 the initial `init` event, durably records its canonical UUID conversation ID,
-and only then writes the fixed `Hi!` user event. It discards step text and the
+and only then writes the fixed user event (`Hi!` for Gemini and Claude/GPT;
+`ANTIGRAVITY_ARGON_TRIGGER_MESSAGE`, a short tool-free prompt, for Argon because
+`Hi!` on CLI `1.5.9` stayed below the Argon weekly activation threshold). It
+discards step text and the
 final answer after validating the transient result. Any timeout, EOF, malformed
 output or auth-looking message after the prompt is written is ambiguous and
 remains `uncertain`; it is never blindly retried. The durable executor confirms

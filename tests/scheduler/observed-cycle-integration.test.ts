@@ -991,4 +991,212 @@ describe('real observed cycle planning/execution', () => {
     expect(context.repositories.windowCycles.get('codex', 'codex_codex_primary')).toEqual(before);
     expect(context.triggerCount).toBe(0);
   });
+
+  it('auto-recovers after a sustained forced provider reset while absorbing rollout flicker', async () => {
+    const context = setup();
+    let mode: 'normal' | 'forced_reset' | 'flicker_active' = 'normal';
+    const inspect = context.adapter.inspect.bind(context.adapter);
+    let oldAnchorMs = 0;
+    context.adapter.inspect = async (providerContext) => {
+      const obs = await inspect(providerContext);
+      if (mode === 'normal') return obs;
+      const observedAt = context.clock.now().toISOString();
+      const nowMs = context.clock.now().getTime();
+      return {
+        ...obs,
+        windows: obs.windows.map((w) =>
+          mode === 'flicker_active'
+            ? {
+                ...w,
+                observedAt,
+                phase: {
+                  value: 'ACTIVE' as const,
+                  confidence: 'high' as const,
+                  source: 'inferred' as const,
+                  observedAt,
+                },
+                resetAt: {
+                  value: new Date(oldAnchorMs).toISOString(),
+                  confidence: 'exact' as const,
+                  source: 'official_supported' as const,
+                  observedAt,
+                },
+                usageRatio: {
+                  value: 0.34,
+                  confidence: 'exact' as const,
+                  source: 'official_supported' as const,
+                  observedAt,
+                },
+              }
+            : {
+                ...w,
+                observedAt,
+                phase: {
+                  value: 'UNKNOWN' as const,
+                  confidence: 'unknown' as const,
+                  source: 'inferred' as const,
+                  observedAt,
+                },
+                resetAt: {
+                  value: new Date(nowMs + 18_000_000).toISOString(),
+                  confidence: 'exact' as const,
+                  source: 'official_supported' as const,
+                  observedAt,
+                },
+                usageRatio: {
+                  value: 0,
+                  confidence: 'exact' as const,
+                  source: 'official_supported' as const,
+                  observedAt,
+                },
+              },
+        ),
+      };
+    };
+
+    let services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const first = await services.reconciler.reconcile();
+    expect(first.createdIntentIds).toHaveLength(1);
+    const firstIntentId = first.createdIntentIds[0]!;
+    await services.executor.executeDue();
+    context.clock.advanceMs(30_000);
+    await services.executor.executeDue();
+    expect(context.repositories.actionIntents.get(firstIntentId)?.state).toBe('confirmed');
+    oldAnchorMs = context.repositories.windowCycles.get(
+      'codex',
+      'codex_codex_primary',
+    )!.anchoredResetAtMs!;
+    expect(oldAnchorMs).toBeGreaterThan(context.clock.now().getTime());
+
+    // Provider begins forced reset with a 90s flicker before reverting briefly to ACTIVE.
+    mode = 'forced_reset';
+    for (let i = 0; i < 4; i++) {
+      context.clock.advanceMs(30_000);
+      const tick = await services.reconciler.reconcile();
+      expect(tick.createdIntentIds).toEqual([]);
+    }
+    mode = 'flicker_active';
+    context.clock.advanceMs(30_000);
+    expect((await services.reconciler.reconcile()).createdIntentIds).toEqual([]);
+
+    // Provider settles on 0% + rolling now+5h permanently; verify restart safety mid-streak.
+    mode = 'forced_reset';
+    context.clock.advanceMs(30_000);
+    expect((await services.reconciler.reconcile()).createdIntentIds).toEqual([]);
+    context.reopen();
+    services = context.services();
+
+    // 150s more (< 180s total) stays UNKNOWN and does not trigger.
+    for (let i = 0; i < 5; i++) {
+      context.clock.advanceMs(30_000);
+      const waiting = await services.reconciler.reconcile();
+      expect(waiting.createdIntentIds).toEqual([]);
+      expect(waiting.decisions[0]?.decision.reasonCode).toBe('WINDOW_PHASE_CONFIDENCE_TOO_LOW');
+    }
+
+    // At 180s after the post-flicker rolling baseline, recovery confirms INACTIVE and plans once.
+    context.clock.advanceMs(30_000);
+    const recovered = await services.reconciler.reconcile();
+    expect(recovered.createdIntentIds).toHaveLength(1);
+    const secondIntentId = recovered.createdIntentIds[0]!;
+    expect(secondIntentId).not.toBe(firstIntentId);
+
+    // Executor preflights against the rolling INACTIVE read, dispatches once, and
+    // confirms once the provider anchors the newly started cycle.
+    const trigger = context.adapter.triggerWindow!.bind(context.adapter);
+    context.adapter.triggerWindow = async (providerContext, request) => {
+      const result = await trigger(providerContext, request);
+      mode = 'normal';
+      return result;
+    };
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(2);
+    context.clock.advanceMs(30_000);
+    await services.executor.executeDue();
+    expect(context.repositories.actionIntents.get(secondIntentId)?.state).toBe('confirmed');
+  });
+
+  it('unblocks a skipped primary intent when a companion allowance recovers via forced reset', async () => {
+    const context = setup();
+    const inspect = context.adapter.inspect.bind(context.adapter);
+    const startMs = context.clock.now().getTime();
+    const weeklyResetAtMs = startMs + 60 * 60 * 1000;
+    let inspectionCount = 0;
+    let weeklyForcedReset = false;
+
+    context.adapter.inspect = async (providerContext) => {
+      inspectionCount += 1;
+      const observation = await inspect(providerContext);
+      const nowMs = context.clock.now().getTime();
+      const exhausted = !weeklyForcedReset && inspectionCount >= 3;
+      const observedAt = context.clock.now().toISOString();
+      return {
+        ...observation,
+        windows: [
+          ...observation.windows,
+          {
+            providerId: 'codex',
+            windowKind: 'codex_weekly',
+            observedAt,
+            phase: weeklyForcedReset
+              ? { value: 'UNKNOWN', source: 'inferred', confidence: 'unknown', observedAt }
+              : {
+                  value: exhausted ? 'EXHAUSTED' : 'ACTIVE',
+                  source: 'observed',
+                  confidence: 'exact',
+                  observedAt,
+                },
+            durationSeconds: {
+              value: 604_800,
+              source: 'official_supported',
+              confidence: 'exact',
+              observedAt,
+            },
+            resetAt: {
+              value: new Date(
+                weeklyForcedReset ? nowMs + 604_800_000 : weeklyResetAtMs,
+              ).toISOString(),
+              source: 'official_supported',
+              confidence: 'exact',
+              observedAt,
+            },
+            usageRatio: {
+              value: exhausted ? 1 : weeklyForcedReset ? 0 : 0.9,
+              source: 'official_supported',
+              confidence: 'exact',
+              observedAt,
+            },
+          },
+        ],
+      } satisfies ProviderObservation;
+    };
+
+    const services = context.services();
+    await services.reconciler.reconcile();
+    context.clock.advanceMs(30_000);
+    const planned = await services.reconciler.reconcile();
+    const oldId = planned.createdIntentIds[0]!;
+    await services.executor.executeDue();
+    expect(context.repositories.actionIntents.get(oldId)).toMatchObject({
+      state: 'skipped',
+      lastErrorCode: 'ACTION_ALLOWANCE_EXHAUSTED',
+    });
+
+    // Weekly window gets force-reset mid-cycle (before weeklyResetAtMs).
+    weeklyForcedReset = true;
+    context.clock.advanceMs(30_000);
+    expect((await services.reconciler.reconcile()).createdIntentIds).toEqual([]);
+    for (let i = 0; i < 5; i++) {
+      context.clock.advanceMs(30_000);
+      expect((await services.reconciler.reconcile()).createdIntentIds).toEqual([]);
+    }
+    context.clock.advanceMs(30_000);
+    const unblocked = await services.reconciler.reconcile();
+    expect(unblocked.createdIntentIds).toHaveLength(1);
+    expect(unblocked.createdIntentIds[0]).not.toBe(oldId);
+    await services.executor.executeDue();
+    expect(context.triggerCount).toBe(1);
+  });
 });

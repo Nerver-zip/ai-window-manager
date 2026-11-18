@@ -13,6 +13,8 @@ const MAX_ACTION_STDOUT_BYTES = 128 * 1024;
 const MAX_ACTION_TIMEOUT_MS = 120_000;
 const TERMINATION_GRACE_MS = 250;
 export const ANTIGRAVITY_TRIGGER_MESSAGE = 'Hi!';
+export const ANTIGRAVITY_ARGON_TRIGGER_MESSAGE =
+  'Without using any tools, reply with two short sentences explaining why the sky appears blue during the day.';
 
 export type AntigravityTransportErrorCode =
   | 'AUTH_REQUIRED'
@@ -74,6 +76,7 @@ export interface AntigravityUsageCommandOptions {
 export interface AntigravityTriggerCommandOptions {
   executable: string;
   model: string;
+  promptMessage?: string;
   verifyModelSelection?: boolean;
   timeoutMs: number;
   registerCleanupArtifact: (artifact: ProviderCleanupArtifact) => Promise<void>;
@@ -354,7 +357,7 @@ export async function runAntigravityTriggerCommand(
             child.stdin.write(
               `${JSON.stringify({
                 event: 'user',
-                message: { content: ANTIGRAVITY_TRIGGER_MESSAGE },
+                message: { content: options.promptMessage ?? ANTIGRAVITY_TRIGGER_MESSAGE },
               })}\n`,
             );
             child.stdin.end();
