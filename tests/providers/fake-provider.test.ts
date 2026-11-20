@@ -15,7 +15,6 @@ describe('FakeProvider', () => {
           {},
           {
             intentId: 'i1',
-            dedupeKey: 'd1',
             reasonCode: 'test',
           },
         )
@@ -70,9 +69,10 @@ describe('FakeProvider', () => {
       usageRatio: { value: 0.4 },
       remainingRatio: { value: 0.6 },
     });
-    expect(
-      await provider.triggerWindow({}, { intentId: 'i2', dedupeKey: 'd2', reasonCode: 'test' }),
-    ).toMatchObject({ status: 'rejected', errorCode: 'WINDOW_ALREADY_ACTIVE' });
+    expect(await provider.triggerWindow({}, { intentId: 'i2', reasonCode: 'test' })).toMatchObject({
+      status: 'rejected',
+      errorCode: 'WINDOW_ALREADY_ACTIVE',
+    });
   });
 
   it.each(['succeeded', 'failed', 'uncertain', 'rejected'] as const)(
@@ -86,10 +86,7 @@ describe('FakeProvider', () => {
       } as const;
       const provider = new FakeProvider(clock, { triggerResult });
 
-      const result = await provider.triggerWindow(
-        {},
-        { intentId: 'intent', dedupeKey: 'dedupe', reasonCode: 'test' },
-      );
+      const result = await provider.triggerWindow({}, { intentId: 'intent', reasonCode: 'test' });
 
       expect(result.status).toBe(status);
       expect(result.occurredAt).toBe('2026-09-14T11:00:00.000Z');
@@ -105,10 +102,10 @@ describe('FakeProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow({}, { intentId: 'i1', dedupeKey: 'd1', reasonCode: 'test' }),
+      provider.triggerWindow({}, { intentId: 'i1', reasonCode: 'test' }),
     ).resolves.toMatchObject({ status: 'failed' });
     await expect(
-      provider.triggerWindow({}, { intentId: 'i2', dedupeKey: 'd2', reasonCode: 'test' }),
+      provider.triggerWindow({}, { intentId: 'i2', reasonCode: 'test' }),
     ).resolves.toMatchObject({ status: 'succeeded' });
   });
 
@@ -124,7 +121,7 @@ describe('FakeProvider', () => {
     );
     provider.setPhase('INACTIVE');
     provider.setTriggerResult('succeeded');
-    await provider.triggerWindow({}, { intentId: 'i1', dedupeKey: 'd1', reasonCode: 'test' });
+    await provider.triggerWindow({}, { intentId: 'i1', reasonCode: 'test' });
     clock.advanceMs(10_000);
     expect((await provider.inspect({})).windows[0]?.phase.value).toBe('INACTIVE');
   });
@@ -175,7 +172,7 @@ describe('FakeProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow({}, { intentId: 'i1', dedupeKey: 'd1', reasonCode: 'test' }),
+      provider.triggerWindow({}, { intentId: 'i1', reasonCode: 'test' }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode: 'PROVIDER_NOT_AVAILABLE' });
   });
 

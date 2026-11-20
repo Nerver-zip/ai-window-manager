@@ -50,14 +50,15 @@ describe('capability and action schemas', () => {
   });
 
   it('validates the minimal provider action shapes without adding scheduler state', () => {
-    expect(
-      TriggerWindowRequestSchema.parse({
-        intentId: 'intent-1',
-        dedupeKey: 'fake:trigger_window:policy:target',
-        reasonCode: 'TARGET_RESET_WINDOW_MATCH',
-        windowKind: 'antigravity_gemini_five_hour',
-      }),
-    ).toMatchObject({ windowKind: 'antigravity_gemini_five_hour' });
+    const request = {
+      intentId: 'intent-1',
+      reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+      windowKind: 'antigravity_gemini_five_hour',
+    };
+    expect(TriggerWindowRequestSchema.parse(request)).toEqual(request);
+    expect(() =>
+      TriggerWindowRequestSchema.parse({ ...request, dedupeKey: 'scheduler-state' }),
+    ).toThrow();
     expect(
       ProviderActionResultSchema.parse({
         status: 'uncertain',

@@ -337,7 +337,6 @@ export class ActionExecutor {
         },
         {
           intentId: claimed.id,
-          dedupeKey: claimed.dedupeKey,
           reasonCode: claimed.reasonCode,
           ...(targetWindowKind ? { windowKind: targetWindowKind } : {}),
         },

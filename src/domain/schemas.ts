@@ -166,7 +166,6 @@ export const ProviderCapabilitiesSchema = z
 export const TriggerWindowRequestSchema = z
   .object({
     intentId: z.string().min(1).max(128),
-    dedupeKey: z.string().min(1).max(256),
     reasonCode: z.string().min(1).max(128),
     windowKind: z.string().min(1).max(128).optional(),
   })

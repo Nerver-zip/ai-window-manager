@@ -304,7 +304,6 @@ describe('AntigravityProvider', () => {
     await expect(
       triggerProvider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-unknown-family',
-        dedupeKey: 'dedupe-synthetic-unknown-family',
         reasonCode: 'test',
         windowKind: 'antigravity_group_1_weekly',
       }),
@@ -366,7 +365,6 @@ describe('AntigravityProvider', () => {
     expect(
       await triggerProvider.triggerWindow(cleanupContext, {
         intentId: 'synthetic-unverified-argon-target',
-        dedupeKey: 'synthetic-unverified-argon-target',
         reasonCode: 'test',
         windowKind: unknownWindow.windowKind,
       }),
@@ -588,7 +586,6 @@ describe('AntigravityProvider', () => {
       (
         await provider.triggerWindow(cleanupContext, {
           intentId: 'synthetic-argon-gated',
-          dedupeKey: 'synthetic-argon-gated',
           reasonCode: 'test',
           windowKind: 'antigravity_argon_weekly',
         })
@@ -631,7 +628,6 @@ describe('AntigravityProvider', () => {
           },
           {
             intentId: 'synthetic-argon-model',
-            dedupeKey: 'synthetic-argon-model',
             reasonCode: 'test',
             windowKind: 'antigravity_argon_weekly',
           },
@@ -662,7 +658,6 @@ describe('AntigravityProvider', () => {
     expect(
       await provider.triggerWindow(cleanupContext, {
         intentId: 'synthetic-argon-mismatch',
-        dedupeKey: 'synthetic-argon-mismatch',
         reasonCode: 'test',
         windowKind: 'antigravity_argon_weekly',
       }),
@@ -700,7 +695,6 @@ describe('AntigravityProvider', () => {
         },
         {
           intentId: 'synthetic-argon-init-mismatch',
-          dedupeKey: 'synthetic-argon-init-mismatch',
           reasonCode: 'test',
           windowKind: 'antigravity_argon_weekly',
         },
@@ -745,7 +739,6 @@ describe('AntigravityProvider', () => {
         },
         {
           intentId: 'synthetic-argon-undocumented-model-location',
-          dedupeKey: 'synthetic-argon-undocumented-model-location',
           reasonCode: 'test',
           windowKind: 'antigravity_argon_weekly',
         },
@@ -781,7 +774,6 @@ describe('AntigravityProvider', () => {
         },
         {
           intentId: 'synthetic-argon-init-model-missing',
-          dedupeKey: 'synthetic-argon-init-model-missing',
           reasonCode: 'test',
           windowKind: 'antigravity_argon_weekly',
         },
@@ -967,7 +959,6 @@ describe('AntigravityProvider', () => {
         {},
         {
           intentId: 'intent-synthetic-no-cleanup',
-          dedupeKey: 'dedupe-synthetic-no-cleanup',
           reasonCode: 'test',
           windowKind: 'antigravity_gemini_five_hour',
         },
@@ -990,7 +981,6 @@ describe('AntigravityProvider', () => {
 
     const result = await provider.triggerWindow(cleanupContext, {
       intentId: 'intent-synthetic-privacy',
-      dedupeKey: 'dedupe-synthetic-privacy',
       reasonCode: 'test',
       windowKind: 'antigravity_gemini_five_hour',
     });
@@ -1032,7 +1022,6 @@ describe('AntigravityProvider', () => {
         { ...cleanupContext, signal: controller.signal },
         {
           intentId: 'intent-synthetic-1',
-          dedupeKey: 'dedupe-synthetic-1',
           reasonCode: 'test',
           windowKind,
         },
@@ -1076,7 +1065,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-2',
-        dedupeKey: 'dedupe-synthetic-2',
         reasonCode: 'test',
         ...(windowKind ? { windowKind } : {}),
       }),
@@ -1106,7 +1094,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-3',
-        dedupeKey: 'dedupe-synthetic-3',
         reasonCode: 'test',
         windowKind: 'antigravity_claude_gpt_five_hour',
       }),
@@ -1132,7 +1119,6 @@ describe('AntigravityProvider', () => {
     await expect(
       invalidModelProvider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-invalid-model',
-        dedupeKey: 'dedupe-synthetic-invalid-model',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1151,7 +1137,6 @@ describe('AntigravityProvider', () => {
     await expect(
       validModelProvider.triggerWindow(cleanupContext, {
         intentId: '',
-        dedupeKey: 'dedupe-synthetic-invalid-request',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1173,7 +1158,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-4',
-        dedupeKey: 'dedupe-synthetic-4',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1204,7 +1188,6 @@ describe('AntigravityProvider', () => {
 
     const action = provider.triggerWindow(cleanupContext, {
       intentId: 'intent-synthetic-5',
-      dedupeKey: 'dedupe-synthetic-5',
       reasonCode: 'test',
       windowKind: 'antigravity_gemini_five_hour',
     });
@@ -1232,7 +1215,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-invalid',
-        dedupeKey: 'dedupe-synthetic-invalid',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1256,7 +1238,6 @@ describe('AntigravityProvider', () => {
     await expect(
       clockThrowsProvider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-throwing-clock',
-        dedupeKey: 'dedupe-synthetic-throwing-clock',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1283,7 +1264,6 @@ describe('AntigravityProvider', () => {
 
     const result = await provider.triggerWindow(cleanupContext, {
       intentId: 'intent-synthetic-6',
-      dedupeKey: 'dedupe-synthetic-6',
       reasonCode: 'test',
       windowKind: 'antigravity_gemini_five_hour',
     });
@@ -1303,7 +1283,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-7',
-        dedupeKey: 'dedupe-synthetic-7',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1324,7 +1303,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-auth-response',
-        dedupeKey: 'dedupe-synthetic-auth-response',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1346,7 +1324,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-unverified-turn-count',
-        dedupeKey: 'dedupe-synthetic-unverified-turn-count',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_five_hour',
       }),
@@ -1369,7 +1346,6 @@ describe('AntigravityProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-synthetic-8',
-        dedupeKey: 'dedupe-synthetic-8',
         reasonCode: 'test',
         windowKind: 'antigravity_gemini_weekly',
       }),

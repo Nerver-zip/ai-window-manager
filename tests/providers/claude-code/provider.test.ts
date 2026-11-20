@@ -54,7 +54,6 @@ function provider(
 
 const request = {
   intentId: 'intent-1',
-  dedupeKey: 'claude_code:trigger_window:manual:claude_code_five_hour:1',
   reasonCode: 'MANUAL_TRIGGER_REQUESTED',
   windowKind: CLAUDE_CODE_FIVE_HOUR_WINDOW,
 };
