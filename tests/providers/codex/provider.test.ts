@@ -118,7 +118,7 @@ describe('CodexProvider', () => {
             lifecycle.push('registered');
           }),
       },
-      { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
+      { intentId: 'intent-1', reasonCode: 'test' },
     );
     expect(result).toMatchObject({
       status: 'succeeded',
@@ -142,10 +142,7 @@ describe('CodexProvider', () => {
     });
 
     await expect(
-      provider.triggerWindow(
-        {},
-        { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
-      ),
+      provider.triggerWindow({}, { intentId: 'intent-1', reasonCode: 'test' }),
     ).resolves.toMatchObject({
       status: 'rejected',
       errorCode: 'CODEX_CLEANUP_REGISTRATION_REQUIRED',
@@ -175,7 +172,7 @@ describe('CodexProvider', () => {
         registerCleanupArtifact: () =>
           Promise.reject(new Error('storage failure with private-thread-id')),
       },
-      { intentId: 'intent-1', dedupeKey: 'dedupe-1', reasonCode: 'test' },
+      { intentId: 'intent-1', reasonCode: 'test' },
     );
 
     expect(result).toMatchObject({
@@ -327,7 +324,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
@@ -339,7 +335,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status: 'rejected', errorCode: 'CODEX_TRIGGER_DISABLED' });
@@ -377,7 +372,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status, errorCode });
@@ -405,7 +399,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({
@@ -444,7 +437,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_FAILED' });
@@ -741,7 +733,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({
@@ -767,7 +758,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status: 'failed', errorCode: 'PROCESS_START_FAILED' });
@@ -791,7 +781,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
@@ -808,7 +797,6 @@ describe('CodexProvider', () => {
 
     const result = await provider.triggerWindow(cleanupContext, {
       intentId: 'intent-1',
-      dedupeKey: 'dedupe-1',
       reasonCode: 'test',
     });
     expect(result).toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });
@@ -827,7 +815,6 @@ describe('CodexProvider', () => {
     await expect(
       provider.triggerWindow(cleanupContext, {
         intentId: 'intent-1',
-        dedupeKey: 'dedupe-1',
         reasonCode: 'test',
       }),
     ).resolves.toMatchObject({ status: 'uncertain', errorCode: 'CODEX_TURN_OUTCOME_UNKNOWN' });

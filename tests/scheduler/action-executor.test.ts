@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderObservation } from '../../src/domain/types.js';
+import { TriggerWindowRequestSchema } from '../../src/domain/schemas.js';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import { FakeProvider } from '../../src/providers/fake-provider.js';
 import { ActionExecutor, type ActionExecutorPhase } from '../../src/scheduler/action-executor.js';
@@ -1185,14 +1186,20 @@ describe('ActionExecutor', () => {
     await first;
   });
 
-  it('claims, dispatches, confirms and audits a successful FakeProvider action', async () => {
+  it('keeps long persisted dedupe keys out of provider requests', async () => {
     const context = setup();
+    const dedupeKey = `synthetic:auto:availability:${'x'.repeat(280)}`;
+    context.db
+      .prepare('UPDATE action_intents SET dedupe_key = ? WHERE id = ?')
+      .run(dedupeKey, 'intent-1');
     const trigger = context.adapter.triggerWindow?.bind(context.adapter);
     if (!trigger) throw new Error('fake trigger missing');
     let dispatchedWindowKind: string | undefined;
+    let dispatchedRequest: unknown;
     const adapter: ProviderAdapter = {
       ...context.adapter,
       triggerWindow: (ctx, request) => {
+        dispatchedRequest = TriggerWindowRequestSchema.parse(request);
         dispatchedWindowKind = request.windowKind;
         return trigger(ctx, request);
       },
@@ -1203,9 +1210,15 @@ describe('ActionExecutor', () => {
     expect(report.confirmedIntentIds).toEqual(['intent-1']);
     expect(context.triggerCount).toBe(1);
     expect(dispatchedWindowKind).toBe('five_hour');
+    expect(dispatchedRequest).toEqual({
+      intentId: 'intent-1',
+      reasonCode: 'TARGET_RESET_WINDOW_MATCH',
+      windowKind: 'five_hour',
+    });
     expect(context.repositories.actionIntents.get('intent-1')).toMatchObject({
       state: 'confirmed',
       attemptCount: 1,
+      dedupeKey,
     });
     expect(context.repositories.events.list('fake').map((event) => event.type)).toEqual(
       expect.arrayContaining([
