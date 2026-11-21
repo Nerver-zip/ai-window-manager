@@ -470,7 +470,8 @@ windowTrigger         = enabled by default; AWM_OPENCODE_GO_TRIGGER_ENABLED=fals
 weekly / monthly      = monitored only, never targets
 confirmation          = fresh independent usage read; process exit never confirms
 cleanup               = exact session ID registered before dispatch; `session delete`
-credentials           = client-owned Console login in AWM's isolated home; AWM never reads them
+credentials           = client-owned Console login in AWM's isolated home, guided in AWM Settings
+                        (OAuth device flow, `--method device`); AWM never reads them
 ```
 
 ## Provider contract change detection

@@ -87,9 +87,13 @@ class TestDriver implements ProviderAuthDriver {
           ? 'https://auth.openai.com/codex/device'
           : this.providerId === 'antigravity'
             ? 'https://accounts.google.com/o/oauth2/auth?state=synthetic'
-            : 'https://claude.com/oauth/authorize?state=synthetic',
-      ...(this.providerId === 'codex' ? { userCode: 'ABCD-EFGH' } : {}),
-      requiresCodeSubmission: this.providerId !== 'codex',
+            : this.providerId === 'opencode_go'
+              ? 'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli'
+              : 'https://claude.com/oauth/authorize?state=synthetic',
+      ...(this.providerId === 'codex' || this.providerId === 'opencode_go'
+        ? { userCode: this.providerId === 'codex' ? 'ABCD-EFGH' : 'NPMX-PNKR' }
+        : {}),
+      requiresCodeSubmission: this.providerId !== 'codex' && this.providerId !== 'opencode_go',
     };
   }
 
@@ -228,6 +232,7 @@ describe('provider auth routes', () => {
     { providerId: 'codex' as const, action: 'Connect Codex' },
     { providerId: 'antigravity' as const, action: 'Connect Antigravity' },
     { providerId: 'claude_code' as const, action: 'Connect Claude Code' },
+    { providerId: 'opencode_go' as const, action: 'Connect OpenCode Go' },
   ])(
     'links a disconnected $providerId from Overview to its own Settings connection card',
     async ({ providerId, action }) => {
@@ -254,6 +259,39 @@ describe('provider auth routes', () => {
       expect(driver.launchCount).toBe(0);
     },
   );
+
+  it('runs the OpenCode Go device sign-in through the shared routes without a code step', async () => {
+    const { app, driver } = createAuthApp('opencode_go', true);
+    const headers = {
+      origin: 'http://127.0.0.1:8787',
+      host: '127.0.0.1:8787',
+      cookie: `awm_csrf=${CSRF}`,
+      'x-csrf-token': CSRF,
+    };
+
+    const started = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/opencode_go/auth/start',
+      headers,
+    });
+    await flushMicrotasks();
+    driver.process.output('stdout', 'auth-prompt\n');
+    const awaiting = await app.inject('/api/v1/providers/opencode_go/auth/status');
+
+    expect(started.statusCode).toBeLessThan(300);
+    expect(awaiting.json()).toMatchObject({
+      providerId: 'opencode_go',
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl:
+        'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli',
+      userCode: 'NPMX-PNKR',
+      requiresCodeSubmission: false,
+    });
+    expect(driver.launchCount).toBe(1);
+    const settings = await app.inject('/settings?connect=opencode_go');
+    expect(settings.body).toContain('Sign in to your OpenCode Console account');
+    expect(settings.body).toContain('NPMX-PNKR');
+  });
 
   it('protects auth session mutations with same-origin and CSRF checks', async () => {
     const { app, driver } = createAuthApp();

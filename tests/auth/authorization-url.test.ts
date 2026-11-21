@@ -78,3 +78,36 @@ describe('validateAuthorizationUrl', () => {
     expect(validateAuthorizationUrl('claude_code', url)).toBeUndefined();
   });
 });
+
+describe('OpenCode device authorization URLs', () => {
+  const device = 'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli';
+
+  it('accepts only the observed Console device page', () => {
+    expect(validateAuthorizationUrl('opencode_go', device)).toBe(device);
+    expect(
+      validateAuthorizationUrl(
+        'opencode_go',
+        'https://opencode.ai/console/device?user_code=ABCD-0123',
+      ),
+    ).toBe('https://opencode.ai/console/device?user_code=ABCD-0123');
+  });
+
+  it.each([
+    'https://opencode.ai/console/device',
+    'https://opencode.ai/console/device?user_code=NPMX-PNKR&user_code=ABCD-EFGH',
+    'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli&x=1',
+    'https://opencode.ai/console/device?user_code=NPMX-PNKR#fragment',
+    'https://opencode.ai:8443/console/device?user_code=NPMX-PNKR',
+    'https://opencode.ai/console/device/extra?user_code=NPMX-PNKR',
+    'https://opencode.ai/auth/device?user_code=NPMX-PNKR',
+    'https://user:pass@opencode.ai/console/device?user_code=NPMX-PNKR',
+    'https://auth.openai.com/console/device?user_code=NPMX-PNKR',
+  ])('rejects %s', (url) => {
+    expect(validateAuthorizationUrl('opencode_go', url)).toBeUndefined();
+  });
+
+  it('does not let OpenCode URLs pass for another provider', () => {
+    expect(validateAuthorizationUrl('codex', device)).toBeUndefined();
+    expect(validateAuthorizationUrl('claude_code', device)).toBeUndefined();
+  });
+});

@@ -236,7 +236,7 @@ const ERROR_LABELS: Readonly<Record<string, string>> = {
     'The Claude Code usage report changed shape; readings are paused until the app is updated.',
   CLAUDE_CODE_NO_USAGE_WINDOWS: 'The Claude Code usage report contained no usage windows.',
   OPENCODE_GO_AUTH_REQUIRED:
-    'Sign in to the OpenCode Console with the official OpenCode CLI in the container (see docs/providers.md) to resume usage checks. A bare API key is not enough.',
+    'Connect your OpenCode Console account in Settings to resume usage checks. An API key is not enough.',
   OPENCODE_GO_NOT_SUBSCRIBED:
     'OpenCode is signed in, but this workspace member has no OpenCode Go subscription, so no Go usage windows are reported.',
   OPENCODE_GO_EXECUTABLE_UNAVAILABLE: 'The official OpenCode CLI is not installed.',

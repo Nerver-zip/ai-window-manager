@@ -103,11 +103,12 @@ const reconciler = new Reconciler({
   inspections: providerInspections,
   resolveTargetResetAt,
   isProviderRuntimeChanging: (providerId) => {
+    if (providerId === 'opencode_go') return authenticationActive(providerId);
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
     if (!clientId) return false;
     return (
       (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false) ||
-      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authenticationState(clientId))
+      authenticationActive(clientId)
     );
   },
   onObservation: (observation) => {
@@ -135,6 +136,8 @@ const authSessions = new AuthSessionManager({
     antigravityExecutable: providerExecutables.antigravity,
     claudeCodeHome: config.AWM_CLAUDE_CODE_HOME,
     claudeCodeExecutable: providerExecutables.claude_code,
+    openCodeGoHome: config.AWM_OPENCODE_GO_HOME,
+    openCodeGoExecutable: config.AWM_OPENCODE_GO_EXECUTABLE,
   }),
   sessionTimeoutMs: config.AWM_AUTH_SESSION_TIMEOUT_SECONDS * 1000,
   onAuthenticationReadRequested: (providerId, phase) => {
@@ -210,11 +213,11 @@ const executor = new ActionExecutor({
   confirmationBaseIntervalMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
   retryDelayMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
   isProviderRuntimeChanging: (providerId) => {
+    if (providerId === 'opencode_go') return authenticationActive(providerId);
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
     if (!clientId) return false;
-    const authentication = authenticationState(clientId);
     return (
-      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authentication) ||
+      authenticationActive(clientId) ||
       (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false)
     );
   },
@@ -462,10 +465,19 @@ function registerAntigravityProvider(): void {
   );
 }
 
-function authenticationState(providerId: ProviderClientId): string {
-  return providerId === 'codex' || providerId === 'antigravity' || providerId === 'claude_code'
+function authenticationState(providerId: ProviderClientId | 'opencode_go'): string {
+  return providerId === 'codex' ||
+    providerId === 'antigravity' ||
+    providerId === 'claude_code' ||
+    providerId === 'opencode_go'
     ? authSessions.status(providerId).state
     : 'IDLE';
+}
+
+function authenticationActive(providerId: ProviderClientId | 'opencode_go'): boolean {
+  return ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(
+    authenticationState(providerId),
+  );
 }
 
 function registerClaudeCodeProvider(): void {

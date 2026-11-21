@@ -89,14 +89,28 @@ monthly}` with `percent` (0–100), `limited` and `resetsAt` (epoch ms), plus
    default is `opencode-go/deepseek-v4.1-flash`, a low-price paid Go model.
    Free models are not used: whether they draw Go allowance is unverified, so
    they cannot be assumed to start the window.
-10. **Authentication.** The operator signs in once with the unmodified official
-    CLI in the dedicated home (`opencode auth login opencode`, the Console
-    login), from a terminal. AWM relays no codes or keys. A guided browser flow
-    in Settings and a packaged, pinned client are deferred (see below).
+10. **Authentication.** Sign-in is guided in AWM Settings through the shared
+    `AuthSessionManager`, like the other providers. The driver runs the
+    unmodified official `opencode --standalone auth login opencode --method
+device` over plain pipes in the dedicated home. Naming the method skips the
+    CLI's login-method menu, whose second entry is an API-key prompt that would
+    not carry a Console workspace. The method is an OAuth device flow in `auto`
+    mode: the CLI prints `Enter code: XXXX-XXXX` and
+    `https://opencode.ai/console/device?user_code=XXXX-XXXX&client_id=opencode-cli`,
+    then polls ("Waiting for authorization..."). AWM shows the URL and code and
+    relays nothing back; the operator approves in their browser.
+    - Only HTTPS URLs on exactly `opencode.ai` at `/console/device` are exposed,
+      with only `user_code` (`XXXX-XXXX`) and an optional `client_id=opencode-cli`
+      query parameter; anything else is dropped. The URL stays in memory.
+    - An existing sign-in is detected with a fresh usage read and never replaced.
+    - After the CLI exits, AWM independently verifies with a usage read (`UP`, or
+      `DEGRADED` for a workspace without a Go subscription). The CLI's exit never
+      confirms sign-in.
+    - Provider reads pause while a sign-in is active, as for the other providers.
 
 ## Consequences
 
-- Monitoring needs only a Console sign-in in AWM's isolated home. A Go-only API
+- Monitoring needs only a Console sign-in in AWM's isolated home, done from AWM Settings. A Go-only API
   key is not sufficient and is reported as `OPENCODE_GO_AUTH_REQUIRED`.
 - The usage route is experimental. Schema drift pauses readings with
   `OPENCODE_GO_CONTRACT_CHANGED` and keeps last-known-good state; the documented
@@ -110,10 +124,15 @@ monthly}` with `percent` (0–100), `limited` and `resetsAt` (epoch ms), plus
 
 ## Deferred
 
-- A pinned, checksum-verified OpenCode release in the container image, the
-  provider-client updater integration, and a Settings-guided PTY sign-in driver.
-  Until then `AWM_OPENCODE_GO_EXECUTABLE` points at an operator-supplied official
-  binary and sign-in is done from a terminal.
+- A pinned, checksum-verified OpenCode release in the container image and the
+  provider-client updater integration. Until then `AWM_OPENCODE_GO_EXECUTABLE`
+  points at an operator-supplied official binary (the Settings sign-in works with
+  it).
+- What the CLI prints after the operator approves (for example a workspace
+  choice or a success line) has not been observed; it was never approved against
+  a real account. The driver sends no input and relies on the independent usage
+  read, so an unexpected post-approval prompt would surface as a failed
+  verification, not a wrong success.
 - A live acceptance of the start (one `Hi!` on the owner's account). Everything
   above about the success path is derived from the client source and fakes; only
   the signed-out failure path and the usage route were exercised against the

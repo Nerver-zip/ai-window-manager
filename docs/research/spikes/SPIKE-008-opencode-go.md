@@ -80,7 +80,19 @@ limited: boolean, resetsAt: epoch ms}`, and `data.budgets[]`. `go` is absent whe
   the member does not subscribe to Go (the client gets a 403).
 - `opencode --standalone auth list --format json` prints `[]` signed out.
 - `opencode auth login opencode-go` needs an interactive terminal for its API-key
-  method; `opencode auth login opencode` offers several methods (the Console login).
+  method. `opencode auth login opencode` (observed under a PTY, throwaway home) shows
+  a menu: `OpenCode Console account` (preselected) and `API key (service account)`.
+- **Sign-in transcript.** `opencode --standalone auth login opencode --method device`
+  (method ID `device`, from `packages/core/src/plugin/provider/opencode.ts`, an
+  OAuth device flow in `auto` mode) needs no TTY and no stdin. After terminal-control
+  stripping it prints, one line each:
+  `┌  Connect an integration`, spinner text ending `◇  Authorization started`,
+  `●  Enter code: XXXX-XXXX`,
+  `●  https://opencode.ai/console/device?user_code=XXXX-XXXX&client_id=opencode-cli`,
+  `◇  Waiting for authorization...`, then polls. Run under a PTY without `--method`,
+  an early Enter can land on the API-key prompt, so the method is always passed.
+  The device token carries an `org_id`, which becomes the credential's `orgID`
+  (what the usage route requires). The output after approval was **not** observed.
 - `opencode --standalone run --format json --session <id> --archived --model
 opencode-go/<model> "Hi!"` signed out emits one NDJSON line,
   `{"type":"error","sessionID":"<id>","error":{"type":"provider.no-route",…}}`, exits
