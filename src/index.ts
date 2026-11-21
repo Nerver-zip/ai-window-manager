@@ -12,6 +12,7 @@ import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
 import { AntigravityProvider } from './providers/antigravity/index.js';
 import { ClaudeCodeProvider } from './providers/claude-code/index.js';
+import { OpenCodeGoProvider } from './providers/opencode/index.js';
 import { filterVisibleProviders } from './providers/visibility.js';
 import { AuthSessionManager } from './auth/session-manager.js';
 import { OperatorAuthService } from './auth/operator-auth.js';
@@ -58,6 +59,7 @@ import type { ProviderClientUpdateWebControls } from './provider-clients/web-con
 
 const config = loadConfig();
 const CLAUDE_CODE_MIN_POLL_INTERVAL_SECONDS = 120;
+const OPENCODE_GO_MIN_POLL_INTERVAL_SECONDS = 120;
 const providerRuntimeStore = await initializeProviderRuntime();
 const providerExecutables = {
   codex: providerRuntimeStore
@@ -82,6 +84,7 @@ registerFakeProvider();
 registerCodexProvider();
 registerAntigravityProvider();
 registerClaudeCodeProvider();
+registerOpenCodeGoProvider();
 hydrateMetricsFromState();
 const readBackoff = new ProviderReadBackoff({
   db,
@@ -100,11 +103,12 @@ const reconciler = new Reconciler({
   inspections: providerInspections,
   resolveTargetResetAt,
   isProviderRuntimeChanging: (providerId) => {
+    if (providerId === 'opencode_go') return authenticationActive(providerId);
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
     if (!clientId) return false;
     return (
       (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false) ||
-      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authenticationState(clientId))
+      authenticationActive(clientId)
     );
   },
   onObservation: (observation) => {
@@ -132,6 +136,8 @@ const authSessions = new AuthSessionManager({
     antigravityExecutable: providerExecutables.antigravity,
     claudeCodeHome: config.AWM_CLAUDE_CODE_HOME,
     claudeCodeExecutable: providerExecutables.claude_code,
+    openCodeGoHome: config.AWM_OPENCODE_GO_HOME,
+    openCodeGoExecutable: config.AWM_OPENCODE_GO_EXECUTABLE,
   }),
   sessionTimeoutMs: config.AWM_AUTH_SESSION_TIMEOUT_SECONDS * 1000,
   onAuthenticationReadRequested: (providerId, phase) => {
@@ -207,11 +213,11 @@ const executor = new ActionExecutor({
   confirmationBaseIntervalMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
   retryDelayMs: config.AWM_RECONCILE_INTERVAL_SECONDS * 1000,
   isProviderRuntimeChanging: (providerId) => {
+    if (providerId === 'opencode_go') return authenticationActive(providerId);
     const clientId = PROVIDER_CLIENT_IDS.find((candidate) => candidate === providerId);
     if (!clientId) return false;
-    const authentication = authenticationState(clientId);
     return (
-      ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(authentication) ||
+      authenticationActive(clientId) ||
       (providerClientUpdateTasks?.isRuntimeChanging(clientId) ?? false)
     );
   },
@@ -283,6 +289,7 @@ const cleanupBudgetMs =
       config.AWM_CODEX_ACTION_TIMEOUT_SECONDS,
       config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
       config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS,
+      config.AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS,
     ) *
       1000);
 loopMonitor.register('reconcile', {
@@ -458,10 +465,19 @@ function registerAntigravityProvider(): void {
   );
 }
 
-function authenticationState(providerId: ProviderClientId): string {
-  return providerId === 'codex' || providerId === 'antigravity' || providerId === 'claude_code'
+function authenticationState(providerId: ProviderClientId | 'opencode_go'): string {
+  return providerId === 'codex' ||
+    providerId === 'antigravity' ||
+    providerId === 'claude_code' ||
+    providerId === 'opencode_go'
     ? authSessions.status(providerId).state
     : 'IDLE';
+}
+
+function authenticationActive(providerId: ProviderClientId | 'opencode_go'): boolean {
+  return ['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING'].includes(
+    authenticationState(providerId),
+  );
 }
 
 function registerClaudeCodeProvider(): void {
@@ -488,6 +504,33 @@ function registerClaudeCodeProvider(): void {
     config.AWM_CLAUDE_CODE_TRIGGER_ENABLED,
     // The official /usage read is a server request; poll it gently.
     CLAUDE_CODE_MIN_POLL_INTERVAL_SECONDS,
+  );
+}
+
+function registerOpenCodeGoProvider(): void {
+  const provider = new OpenCodeGoProvider({
+    homeDirectory: config.AWM_OPENCODE_GO_HOME,
+    executable: config.AWM_OPENCODE_GO_EXECUTABLE,
+    triggerEnabled: config.AWM_OPENCODE_GO_TRIGGER_ENABLED,
+    triggerModel: config.AWM_OPENCODE_GO_TRIGGER_MODEL,
+    actionTimeoutMs: config.AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS * 1000,
+  });
+  // Per-ID cleanup obligations remain actionable even while monitoring is hidden.
+  cleanupAdapters.set(provider.id, provider);
+  if (!config.AWM_OPENCODE_GO_ENABLED) return;
+  adapters.set(provider.id, provider);
+  seedProvider(
+    {
+      id: provider.id,
+      kind: 'opencode_go',
+      config: {
+        home: config.AWM_OPENCODE_GO_HOME,
+        triggerEnabled: config.AWM_OPENCODE_GO_TRIGGER_ENABLED,
+      },
+    },
+    config.AWM_OPENCODE_GO_TRIGGER_ENABLED,
+    // The usage read starts a private client server and a Console request; poll gently.
+    OPENCODE_GO_MIN_POLL_INTERVAL_SECONDS,
   );
 }
 

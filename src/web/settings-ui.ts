@@ -287,7 +287,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         <section class="current-window-summary schedule-outlook-section" aria-labelledby="current-window-title"><h3 id="current-window-title">Current window</h3><p class="field-help">The latest saved usage information from your provider.</p>${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}</section>
         <section class="schedule-details schedule-outlook-section" aria-label="Next decision">${scheduleExplanation}</section>
         <section class="schedule-horizon-card schedule-outlook-section" aria-labelledby="horizon-title"><h3 id="horizon-title">Next 24 hours</h3><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
-        ${policyScope === 'argon' || selectedProvider?.kind === 'claude_code' ? `<section class="schedule-outlook-section" aria-label="Safety notes">${renderScheduleSafety(selectedProvider, policyScope)}</section>` : ''}
+        ${policyScope === 'argon' || selectedProvider?.kind === 'claude_code' || selectedProvider?.kind === 'opencode_go' ? `<section class="schedule-outlook-section" aria-label="Safety notes">${renderScheduleSafety(selectedProvider, policyScope)}</section>` : ''}
       </aside>
       </div>
     </div>`,
@@ -742,6 +742,9 @@ function crossWindowSideEffectWarning(
   }
   if (kind.includes('claude_code')) {
     return 'Only the Claude Code 5-hour window can be started. Every start request also counts against the weekly allowance.';
+  }
+  if (kind.includes('opencode_go')) {
+    return 'Only the OpenCode Go 5-hour window can be started. The weekly (Monday 00:00 UTC) and monthly windows start by themselves, and every start request counts against their shared allowance.';
   }
   if (kind.includes('codex')) {
     return 'This choice controls which Codex window the schedule follows; a start request may still count against more than one Codex quota window.';

@@ -5,6 +5,7 @@
 //
 // env: PORT (default 4870), AWM_DEMO_TMP (temp dir root, default os.tmpdir()),
 //      AWM_DEMO_NO_AUTOSTART (skip auto-starting the Claude Code sign-in session)
+//      AWM_DEMO_ALL_CONNECTED (seed Claude Code as connected, for README screenshots)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,6 +36,7 @@ import { processUsageAggregationBatch } from '../../src/usage/service.js';
 import { CodexProvider } from '../../src/providers/codex/index.js';
 import { AntigravityProvider } from '../../src/providers/antigravity/index.js';
 import { ClaudeCodeProvider } from '../../src/providers/claude-code/index.js';
+import { OpenCodeGoProvider } from '../../src/providers/opencode/index.js';
 import type { ProviderAdapter } from '../../src/providers/provider.js';
 import type { ProviderClientId } from '../../src/provider-clients/runtime-store.js';
 import type { ProviderClientUpdateWebControls } from '../../src/provider-clients/web-controls.js';
@@ -49,6 +51,7 @@ import type {
 } from '../../src/domain/types.js';
 
 const PORT = Number(process.env.PORT ?? 4870);
+const ALL_CONNECTED = process.env.AWM_DEMO_ALL_CONNECTED === '1';
 const NOW = '2026-11-04T15:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
 const MIN = 60_000;
@@ -78,6 +81,8 @@ const config = loadConfig({
   AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED: 'true',
   AWM_CLAUDE_CODE_ENABLED: 'true',
   AWM_CLAUDE_CODE_TRIGGER_ENABLED: 'true',
+  AWM_OPENCODE_GO_ENABLED: 'true',
+  AWM_OPENCODE_GO_TRIGGER_ENABLED: 'true',
 });
 const db = openDatabase(dbPath);
 const repositories = createRepositories(db);
@@ -101,6 +106,11 @@ const real = [
     executable: 'claude-not-run',
     triggerEnabled: true,
     triggerModel: 'haiku',
+  }),
+  new OpenCodeGoProvider({
+    homeDirectory: path.join(dir, 'oc'),
+    executable: 'opencode-not-run',
+    triggerEnabled: true,
   }),
 ];
 const adapters = new Map<string, ProviderAdapter>();
@@ -199,6 +209,13 @@ provider(
   { home: '/data/claude-code', triggerEnabled: true },
   120,
 );
+provider(
+  'opencode_go',
+  'opencode_go',
+  'automation',
+  { home: '/data/opencode-go', triggerEnabled: true },
+  120,
+);
 
 const codexObs = NOW_MS - 2 * MIN;
 const codexFiveStart = NOW_MS - 95 * MIN;
@@ -218,14 +235,30 @@ state('antigravity', 'UP', agObs, [
 const ccObs = NOW_MS - 9 * HOUR;
 state(
   'claude_code',
-  'AUTH_REQUIRED',
+  ALL_CONNECTED ? 'UP' : 'AUTH_REQUIRED',
   ccObs,
   [
     win('claude_code', 'claude_code_five_hour', 0.9, ccObs - 3 * HOUR, FIVE, ccObs, 'ACTIVE'),
     win('claude_code', 'claude_code_seven_day', 0.47, ccObs - 2 * DAY, WEEK, ccObs),
   ],
-  'CLAUDE_CODE_AUTH_REQUIRED',
+  ALL_CONNECTED ? null : 'CLAUDE_CODE_AUTH_REQUIRED',
 );
+
+// OpenCode Go: 5-hour (20% of the allowance), weekly (resets Monday 00:00 UTC) and a
+// billing-period monthly window. Synthetic values only.
+const ocObs = NOW_MS - 3 * MIN;
+state('opencode_go', 'UP', ocObs, [
+  win('opencode_go', 'opencode_go_five_hour', 0.18, NOW_MS - 80 * MIN, FIVE, ocObs),
+  win('opencode_go', 'opencode_go_weekly', 0.42, Date.parse('2026-11-02T00:00:00Z'), WEEK, ocObs),
+  win(
+    'opencode_go',
+    'opencode_go_monthly',
+    0.31,
+    Date.parse('2026-11-01T00:00:00Z'),
+    30 * 86_400,
+    ocObs,
+  ),
+]);
 
 const tz = 'America/Sao_Paulo';
 function policy(
@@ -271,6 +304,9 @@ policy(
   { windowKind: 'antigravity_argon_weekly' },
   { requiresReview: true, kindExplicit: false },
 );
+policy('activation-opencode_go', 'opencode_go', 'default', 'auto', {
+  windowKind: 'opencode_go_five_hour',
+});
 policy('activation-claude_code', 'claude_code', 'default', 'fixed', {
   windowKind: 'claude_code_five_hour',
   anchorLocalTime: '07:30',
@@ -302,6 +338,7 @@ repositories.actionIntents.createIfAbsent({
 
 // events (~42)
 const evs: Array<[number, string | null, string, EventSeverity, string | null]> = [
+  [3, 'opencode_go', 'provider_inspected', 'info', null],
   [5, 'codex', 'provider_inspected', 'info', null],
   [12, 'antigravity', 'provider_inspected', 'info', null],
   [20, 'codex', 'action_uncertain', 'warn', 'ACTION_DISPATCH_UNCERTAIN'],
@@ -314,6 +351,8 @@ const evs: Array<[number, string | null, string, EventSeverity, string | null]> 
   [82, 'antigravity', 'action_succeeded', 'info', null],
   [84, 'antigravity', 'action_claimed', 'info', null],
   [95, 'antigravity', 'action_intent_planned', 'info', null],
+  [210, 'opencode_go', 'action_succeeded', 'info', null],
+  [212, 'opencode_go', 'action_confirmed', 'info', null],
   [140, 'codex', 'unexpected_reset_detected', 'info', null],
   [190, 'codex', 'external_window_started', 'info', null],
   [260, 'antigravity', 'schedule_missed', 'warn', null],
@@ -388,6 +427,8 @@ const kinds: Array<[string, string]> = [
   ['antigravity', 'antigravity_claude_gpt_five_hour'],
   ['antigravity', 'antigravity_claude_gpt_weekly'],
   ['antigravity', 'antigravity_argon_weekly'],
+  ['opencode_go', 'opencode_go_five_hour'],
+  ['opencode_go', 'opencode_go_weekly'],
 ];
 for (let t = NOW_MS - 30 * DAY; t <= NOW_MS - 6 * MIN; t += 10 * MIN) {
   for (const [p, k] of kinds) {
@@ -459,7 +500,8 @@ const authSessions = new AuthSessionManager({
   drivers: new Map<AuthProviderId, ProviderAuthDriver>([
     ['codex', makeDriver('codex', true)],
     ['antigravity', makeDriver('antigravity', true)],
-    ['claude_code', makeDriver('claude_code', false)],
+    ['claude_code', makeDriver('claude_code', ALL_CONNECTED)],
+    ['opencode_go', makeDriver('opencode_go', true)],
   ]),
   sessionTimeoutMs: 24 * HOUR,
 });

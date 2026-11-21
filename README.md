@@ -4,7 +4,7 @@
 
 <h1 align="center">AI Window Manager</h1>
 
-<p align="center">Self-hosted monitoring and scheduling for Codex, Antigravity and Claude Code usage windows.</p>
+<p align="center">Self-hosted monitoring and scheduling for Codex, Antigravity, Claude Code and OpenCode Go usage windows.</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&amp;logoColor=white" alt="TypeScript">
@@ -38,7 +38,7 @@ starts with your schedule instead of checking providers manually.
 
 ## Features
 
-- Monitor reported five-hour and weekly usage windows for Codex, Antigravity and Claude Code.
+- Monitor reported five-hour and weekly usage windows for Codex, Antigravity and Claude Code, and the 5-hour, weekly and monthly windows for OpenCode Go.
   Argon is currently supported as a separate weekly window only.
 - Schedule starts by local times, a repeating cycle, active hours, or whenever
   a window is eligible; alternatively, keep automatic starts off and start a
@@ -83,11 +83,22 @@ use persisted state; opening a dashboard does not itself inspect a provider.
 
 ## Providers
 
-| Provider              | Monitoring                                                       | Window start                                                                                             | Authentication                                                        |
-| --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| OpenAI Codex          | Official Codex app-server rate-limit data                        | Minimal app-server turn                                                                                  | Official OpenAI sign-in, guided in AWM                                |
-| Google Antigravity    | Official `agy` CLI usage output                                  | Normal prompt using the selected family model                                                            | Official Google sign-in through the CLI, guided in AWM                |
-| Anthropic Claude Code | Official `claude -p /usage` structured report (no model request) | One ordinary `Hi!` request (five-hour window only); opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false` | Official CLI login guided in AWM Settings; optional terminal fallback |
+| Provider              | Monitoring                                                                                      | Window start                                                                                                                                  | Authentication                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| OpenAI Codex          | Official Codex app-server rate-limit data                                                       | Minimal app-server turn                                                                                                                       | Official OpenAI sign-in, guided in AWM                                |
+| Google Antigravity    | Official `agy` CLI usage output                                                                 | Normal prompt using the selected family model                                                                                                 | Official Google sign-in through the CLI, guided in AWM                |
+| Anthropic Claude Code | Official `claude -p /usage` structured report (no model request)                                | One ordinary `Hi!` request (five-hour window only); opt out with `AWM_CLAUDE_CODE_TRIGGER_ENABLED=false`                                      | Official CLI login guided in AWM Settings; optional terminal fallback |
+| OpenCode Go           | Official `opencode` client's usage report: 5-hour, weekly and monthly meters (no model request) | One ordinary `Hi!` request (5-hour window only; weekly and monthly start by themselves); opt out with `AWM_OPENCODE_GO_TRIGGER_ENABLED=false` | Official OpenCode Console device login, guided in AWM Settings        |
+
+OpenCode Go is monitored through the official `opencode` client's private server,
+which reports the signed-in Console workspace's Go meters without a model request.
+The client keeps its own credentials in an isolated home; AWM never reads them, and sign-in is guided in Settings with a one-time code approved in your browser. A
+Go-only API key is not enough, because the usage report needs a Console login. Only
+the 5-hour window is started; the weekly (Monday 00:00 UTC) and monthly windows start
+by themselves. The start session is deleted by exact ID. The image bundles a pinned official
+OpenCode client (v2.3.2). See
+[ADR-011](docs/adr/011-opencode-go-provider.md) and
+[SPIKE-008](docs/research/spikes/SPIKE-008-opencode-go.md).
 
 Codex policies target one exact reported window at a time. Antigravity has
 independent policies for **Gemini Models**, **Claude and GPT Models**, and
@@ -184,20 +195,23 @@ from the Codex and Google provider sign-ins.
 
 The checked-in `.env.example` is the full local `awm` profile:
 
-| Setting                                                         | Example default        | Purpose                                                                                   |
-| --------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------- |
-| `AWM_HOST_BIND`                                                 | `0.0.0.0`              | Host interfaces that publish the web service. Use `127.0.0.1` for local-only access.      |
-| `AWM_HOST_PORT`                                                 | `8878`                 | Host port; the container listens on `8787`.                                               |
-| `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`    | Initial timezone used for schedules and date displays.                                    |
-| `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                 | Enable the corresponding provider client.                                                 |
-| `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                 | Allow that provider's trigger capability. Set `false` to opt out.                         |
-| `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED`                         | `false`                | Additional Argon-only action gate; the global Antigravity gate must also be enabled.      |
-| `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL`                           | `gemini-4-argon-low`   | Argon model (`low`, `medium`, `high` slug), or blank to disable Argon model selection.    |
-| `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low` | Model used for Gemini-family starts.                                                      |
-| `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`    | Model used for Claude/GPT-family starts.                                                  |
-| `AWM_CLAUDE_CODE_ENABLED`                                       | `false`                | Enable Claude Code monitoring.                                                            |
-| `AWM_CLAUDE_CODE_TRIGGER_ENABLED`                               | `true`                 | Allow quota-consuming Claude Code starts (five-hour window only). Set `false` to opt out. |
-| `AWM_CLAUDE_CODE_TRIGGER_MODEL`                                 | `haiku`                | Model for that start request (`haiku`, `sonnet`, `opus` or a `claude-*` ID).              |
+| Setting                                                         | Example default                   | Purpose                                                                                   |
+| --------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- |
+| `AWM_HOST_BIND`                                                 | `0.0.0.0`                         | Host interfaces that publish the web service. Use `127.0.0.1` for local-only access.      |
+| `AWM_HOST_PORT`                                                 | `8878`                            | Host port; the container listens on `8787`.                                               |
+| `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`               | Initial timezone used for schedules and date displays.                                    |
+| `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                            | Enable the corresponding provider client.                                                 |
+| `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                            | Allow that provider's trigger capability. Set `false` to opt out.                         |
+| `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED`                         | `false`                           | Additional Argon-only action gate; the global Antigravity gate must also be enabled.      |
+| `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL`                           | `gemini-4-argon-low`              | Argon model (`low`, `medium`, `high` slug), or blank to disable Argon model selection.    |
+| `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low`            | Model used for Gemini-family starts.                                                      |
+| `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`               | Model used for Claude/GPT-family starts.                                                  |
+| `AWM_CLAUDE_CODE_ENABLED`                                       | `false`                           | Enable Claude Code monitoring.                                                            |
+| `AWM_CLAUDE_CODE_TRIGGER_ENABLED`                               | `true`                            | Allow quota-consuming Claude Code starts (five-hour window only). Set `false` to opt out. |
+| `AWM_CLAUDE_CODE_TRIGGER_MODEL`                                 | `haiku`                           | Model for that start request (`haiku`, `sonnet`, `opus` or a `claude-*` ID).              |
+| `AWM_OPENCODE_GO_ENABLED`                                       | `false`                           | Enable OpenCode Go monitoring.                                                            |
+| `AWM_OPENCODE_GO_TRIGGER_ENABLED`                               | `true`                            | Allow quota-consuming OpenCode Go starts (5-hour window only). Set `false` to opt out.    |
+| `AWM_OPENCODE_GO_TRIGGER_MODEL`                                 | `opencode-go/deepseek-v4.1-flash` | Model for that start request (must be `opencode-go/<model>`).                             |
 
 An enabled trigger gate does not itself send a request. Provider connection,
 automation mode, an enabled schedule, and an exact target are still required.
@@ -266,7 +280,7 @@ for troubleshooting and operational details.
 The overview is the main entry point. Expand the other screens to see usage,
 scheduling, and activity details.
 
-![AI Window Manager overview showing connected providers, current usage windows, and selected start policies](assets/images/screenshots/overview.png)
+![AI Window Manager overview showing the connected providers (Antigravity, Claude Code, Codex and OpenCode Go) and OpenCode Go's 5-hour, weekly and monthly usage windows](assets/images/screenshots/overview.png)
 
 <details>
 <summary>More app screens</summary>
@@ -277,7 +291,7 @@ scheduling, and activity details.
 
 **Schedule — provider, model family, target window, and start policy**
 
-![Schedule page showing an activation policy for a selected provider window](assets/images/screenshots/schedule.png)
+![Schedule page showing the start policy for OpenCode Go's 5-hour window](assets/images/screenshots/schedule.png)
 
 **Logs — paginated observations and decisions**
 
@@ -304,6 +318,7 @@ Named volumes preserve state across container rebuilds and ordinary `down`:
 | `awm-antigravity-state`   | Antigravity CLI state and authentication.                   |
 | `awm-antigravity-keyring` | Dedicated Antigravity keyring data.                         |
 | `awm-claude-code-state`   | Claude Code CLI state and authentication.                   |
+| `awm-opencode-go-state`   | OpenCode CLI state and Console sign-in.                     |
 | `awm-provider-clients`    | Validated active provider-client versions.                  |
 
 Do not use `docker compose down -v` unless you intend to delete these volumes,

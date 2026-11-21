@@ -125,6 +125,7 @@ const STATIC_IMAGE_ASSETS = [
   ['providers/antigravity.png', 'providers/antigravity.png'],
   ['providers/claude-code.png', 'providers/claude-code.png'],
   ['providers/codex.png', 'providers/codex.png'],
+  ['providers/opencode.png', 'providers/opencode.png'],
 ] as const;
 const DEFAULT_REQUEST_RATE_LIMIT = 300;
 const REQUEST_RATE_LIMIT_WINDOW_MS = 60_000;
@@ -132,7 +133,12 @@ const REQUEST_RATE_LIMIT_CACHE_SIZE = 5_000;
 const PROVIDER_AUTH_OPERATION_RATE_LIMIT = 12;
 const PROVIDER_AUTH_OPERATION_RATE_LIMIT_WINDOW_MS = 5 * 60_000;
 const PROVIDER_CLIENT_OPERATION_RATE_LIMIT = 6;
-const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = ['codex', 'antigravity', 'claude_code'];
+const AUTH_PROVIDER_IDS: readonly AuthProviderId[] = [
+  'codex',
+  'antigravity',
+  'claude_code',
+  'opencode_go',
+];
 const APP_CSS_WITH_AUTH = `${APP_CSS}\n${AUTH_ONBOARDING_CSS}\n${OPERATOR_AUTH_CSS}`;
 const APP_JS_WITH_ENHANCEMENTS = `${APP_JS}\n${AUTH_ONBOARDING_JS}\n${PROGRESSIVE_INTERACTIONS_JS}`;
 
@@ -493,7 +499,11 @@ export function buildServer(input: BuildServerInput) {
     async (request, reply) => {
       const providerId = configuredAuthProviderId(input, (request.params as { id?: unknown }).id);
       if (!providerId) return reply.code(404).send({ error: { code: 'PROVIDER_NOT_FOUND' } });
-      if (input.providerClientUpdates?.isRuntimeChanging(providerId)) {
+      // OpenCode Go has no managed client runtime yet, so it has no update task.
+      if (
+        providerId !== 'opencode_go' &&
+        input.providerClientUpdates?.isRuntimeChanging(providerId)
+      ) {
         return reply.code(409).send({
           error: {
             code: 'PROVIDER_CLIENT_UPDATE_IN_PROGRESS',

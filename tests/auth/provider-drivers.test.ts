@@ -83,6 +83,8 @@ function options(overrides: Partial<ProviderAuthDriverOptions> = {}): ProviderAu
     antigravityExecutable: '/opt/antigravity/bin/agy',
     claudeCodeHome: '/private/claude-code-state',
     claudeCodeExecutable: '/opt/claude-code/bin/claude',
+    openCodeGoHome: '/private/opencode-go-state',
+    openCodeGoExecutable: '/opt/opencode/bin/opencode',
     ...overrides,
   };
 }
@@ -579,5 +581,198 @@ describe('provider auth drivers', () => {
       driver.isAlreadyAuthenticated(new AbortController().signal),
     ).resolves.toBeUndefined();
     expect(spawnProcess).not.toHaveBeenCalled();
+  });
+});
+
+describe('OpenCode Go auth driver', () => {
+  // Lines captured from the real official CLI (SPIKE-008), after terminal-control stripping.
+  const DEVICE_URL =
+    'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli';
+  const TRANSCRIPT = [
+    '┌  Connect an integration',
+    '│',
+    '◒  Starting authorization◐  Starting authorization◇  Authorization started',
+    '│',
+    '●  Enter code: NPMX-PNKR',
+    '│',
+    `●  ${DEVICE_URL}`,
+    '│',
+    '◇  Waiting for authorization...',
+  ];
+
+  function driverWith(
+    health: 'UP' | 'DEGRADED' | 'AUTH_REQUIRED' | 'UNAVAILABLE' = 'AUTH_REQUIRED',
+  ) {
+    const adapter = provider('opencode_go', health);
+    const process = managedProcess();
+    const spawnProcess = vi.fn<NonNullable<ProviderAuthDriverOptions['spawnProcess']>>(
+      () => process,
+    );
+    const driver = createProviderAuthDrivers(
+      options({ adapters: new Map([['opencode_go', adapter]]), spawnProcess }),
+    ).get('opencode_go');
+    if (!driver) throw new Error('OpenCode Go auth driver missing');
+    return { adapter, process, spawnProcess, driver };
+  }
+
+  it('is only created when the OpenCode Go adapter is configured', () => {
+    expect(createProviderAuthDrivers(options()).has('opencode_go')).toBe(false);
+    expect(driverWith().driver.providerId).toBe('opencode_go');
+  });
+
+  it('launches the Console device method directly, over pipes, in the isolated home', () => {
+    const { process, spawnProcess, driver } = driverWith();
+    expect(driver.launch()).toBe(process);
+    const [executable, args, processOptions] = spawnProcess.mock.calls[0]!;
+    expect(executable).toBe('/opt/opencode/bin/opencode');
+    // The method is explicit, so the login-method menu (and its API-key entry) never appears.
+    expect(args).toEqual(['--standalone', 'auth', 'login', 'opencode', '--method', 'device']);
+    expect(processOptions.cwd).toBe('/private/opencode-go-state');
+    expect(processOptions.interactive).toBeUndefined();
+    expect(processOptions.env).toMatchObject({
+      HOME: '/private/opencode-go-state',
+      XDG_DATA_HOME: '/private/opencode-go-state/.local/share',
+      OPENCODE_DISABLE_AUTOUPDATE: '1',
+    });
+    expect(Object.keys(processOptions.env)).not.toContain('OPENCODE_API_KEY');
+  });
+
+  it('publishes the code and URL from the observed transcript without any code submission', () => {
+    const { driver } = driverWith();
+    driver.launch();
+    const updates = TRANSCRIPT.map((line) => driver.parseOutput('stdout', line)).filter(Boolean);
+    expect(updates).toEqual([
+      // the code line arrives first; no URL yet, so nothing is published for it
+      {
+        awaitingUserAction: true,
+        authorizationUrl: DEVICE_URL,
+        userCode: 'NPMX-PNKR',
+        requiresCodeSubmission: false,
+      },
+    ]);
+    expect(() => driver.submitCode(managedProcess(), '123456')).toThrow(/official website/);
+  });
+
+  it('takes the code from the URL when the labeled line was not seen', () => {
+    const { driver } = driverWith();
+    driver.launch();
+    expect(driver.parseOutput('stdout', `●  ${DEVICE_URL}`)).toEqual({
+      awaitingUserAction: true,
+      authorizationUrl: DEVICE_URL,
+      userCode: 'NPMX-PNKR',
+      requiresCodeSubmission: false,
+    });
+    // a standalone code line is accepted, an unrelated line is not
+    expect(driver.parseOutput('stdout', '   ABCD-EFGH  ')).toMatchObject({ userCode: 'ABCD-EFGH' });
+    expect(driver.parseOutput('stdout', '◇  Waiting for authorization...')).toBeUndefined();
+  });
+
+  it('forgets a previous attempt on relaunch and rejects unsafe or unexpected URLs', () => {
+    const { driver } = driverWith();
+    driver.launch();
+    driver.parseOutput('stdout', `●  ${DEVICE_URL}`);
+    driver.launch();
+    expect(driver.parseOutput('stdout', 'Enter code: ABCD-EFGH')).toBeUndefined();
+    for (const bad of [
+      'https://evil.example.test/console/device?user_code=ABCD-EFGH',
+      'https://opencode.ai.evil.test/console/device?user_code=ABCD-EFGH',
+      'http://opencode.ai/console/device?user_code=ABCD-EFGH',
+      'https://opencode.ai/console/other?user_code=ABCD-EFGH',
+      'https://opencode.ai/console/device?user_code=ABCD-EFGH&access_token=synthetic',
+      'https://opencode.ai/console/device?user_code=ABCD-EFGH&redirect=https://evil.test',
+      'https://opencode.ai/console/device?user_code=lowercase&client_id=opencode-cli',
+      'https://opencode.ai/console/device?client_id=opencode-cli',
+      'https://opencode.ai/console/device?user_code=ABCD-EFGH&client_id=other',
+    ]) {
+      expect(driver.parseOutput('stdout', bad)).toBeUndefined();
+    }
+  });
+
+  it('checks existing sign-in through a fresh usage read and never replaces a login', async () => {
+    const signal = new AbortController().signal;
+    await expect(driverWith('AUTH_REQUIRED').driver.isAlreadyAuthenticated(signal)).resolves.toBe(
+      false,
+    );
+    await expect(driverWith('UP').driver.isAlreadyAuthenticated(signal)).resolves.toBe(true);
+    // signed in without a Go subscription is still an existing login
+    await expect(driverWith('DEGRADED').driver.isAlreadyAuthenticated(signal)).resolves.toBe(true);
+    await expect(driverWith('UNAVAILABLE').driver.isAlreadyAuthenticated(signal)).resolves.toBe(
+      undefined,
+    );
+  });
+
+  it('verifies only through the normalized adapter observation', async () => {
+    const signal = new AbortController().signal;
+    await expect(driverWith('UP').driver.verify(signal)).resolves.toBe(true);
+    await expect(driverWith('DEGRADED').driver.verify(signal)).resolves.toBe(true);
+    await expect(driverWith('AUTH_REQUIRED').driver.verify(signal)).resolves.toBe(false);
+    await expect(driverWith('UNAVAILABLE').driver.verify(signal)).resolves.toBe(false);
+  });
+
+  it('uses the shared inspection coordinator when one is provided', async () => {
+    const adapter = provider('opencode_go', 'UP');
+    const inspectFresh = vi.fn<
+      (adapter: unknown, context: unknown, purpose: string) => Promise<never>
+    >(() => Promise.resolve({ health: 'UP', windows: [] } as never));
+    const driver = createProviderAuthDrivers(
+      options({
+        adapters: new Map([['opencode_go', adapter]]),
+        inspections: { inspectFresh } as never,
+      }),
+    ).get('opencode_go')!;
+    const signal = new AbortController().signal;
+    await driver.isAlreadyAuthenticated(signal);
+    await driver.verify(signal);
+    expect(inspectFresh.mock.calls.map((call) => call[2])).toEqual(['auth_check', 'auth_verify']);
+    expect(adapter.inspectionCount()).toBe(0);
+  });
+
+  it('moves a managed sign-in session to the browser step and then verifies it', async () => {
+    const process = managedProcess();
+    let health: 'AUTH_REQUIRED' | 'UP' = 'AUTH_REQUIRED';
+    const adapter = {
+      ...provider('opencode_go', 'AUTH_REQUIRED'),
+      inspect: () =>
+        Promise.resolve({
+          providerId: 'opencode_go',
+          health,
+          observedAt: '2026-11-21T12:00:00.000Z',
+          staleAfterSeconds: 300,
+          windows: [],
+        }),
+    } as unknown as ProviderAdapter;
+    const driver = createProviderAuthDrivers(
+      options({ adapters: new Map([['opencode_go', adapter]]), spawnProcess: () => process }),
+    ).get('opencode_go')!;
+    const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+    process.onExit = (listener) => {
+      exitListeners.push(listener);
+      return () => {};
+    };
+
+    const manager = new AuthSessionManager({
+      clock: { now: () => new Date('2026-11-21T12:00:00.000Z'), monotonicMs: () => 0 },
+      drivers: new Map([['opencode_go', driver]]),
+      startupTimeoutMs: 1_000,
+      sessionTimeoutMs: 10_000,
+      processStopGraceMs: 1,
+    });
+    manager.start('opencode_go');
+    for (let tick = 0; tick < 5; tick += 1) await Promise.resolve();
+
+    process.output('stdout', `${TRANSCRIPT.join('\r\n')}\r\n`);
+    expect(manager.status('opencode_go')).toMatchObject({
+      state: 'AWAITING_USER_ACTION',
+      authorizationUrl: DEVICE_URL,
+      userCode: 'NPMX-PNKR',
+      requiresCodeSubmission: false,
+    });
+    // The operator approves in the browser; the CLI exits and the usage read now succeeds.
+    health = 'UP';
+    for (const listener of exitListeners) listener(0, null);
+    for (let tick = 0; tick < 20; tick += 1) await Promise.resolve();
+    expect(manager.status('opencode_go').state).toBe('SUCCEEDED');
+    expect(process.written).toEqual([]);
+    await manager.shutdown();
   });
 });

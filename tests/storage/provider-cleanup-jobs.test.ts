@@ -66,6 +66,43 @@ function job(
 }
 
 describe('provider cleanup job repository', () => {
+  it('stores OpenCode session obligations only for the OpenCode Go provider', () => {
+    const { repositories } = openFixture();
+    repositories.providers.upsert({
+      id: 'opencode_go',
+      kind: 'opencode_go',
+      enabled: true,
+      mode: 'automation',
+      pollIntervalSeconds: 120,
+      config: {},
+      configVersion: 1,
+      createdAtMs: 1_000,
+      updatedAtMs: 1_000,
+    });
+    const opencode = job({
+      id: 'cleanup-opencode',
+      providerId: 'opencode_go',
+      artifactKind: 'opencode_session',
+      externalId: 'ses_0123456789abABCDEFGHIJKLMN',
+    });
+    expect(repositories.providerCleanupJobs.createIfAbsent(opencode)).toMatchObject({
+      created: true,
+    });
+    expect(repositories.providerCleanupJobs.hasOpenForProvider('opencode_go')).toBe(true);
+    expect(() =>
+      repositories.providerCleanupJobs.createIfAbsent({
+        ...opencode,
+        providerId: 'codex',
+        id: 'x',
+      }),
+    ).toThrow(/invalid/);
+    expect(() =>
+      repositories.providerCleanupJobs.createIfAbsent(
+        job({ id: 'y', artifactKind: 'opencode_session', externalId: 'ses_x' }),
+      ),
+    ).toThrow(/invalid/);
+  });
+
   it('persists a bounded provider artifact obligation and deduplicates its identifier', () => {
     const { repositories } = openFixture();
     const first = repositories.providerCleanupJobs.createIfAbsent(job());

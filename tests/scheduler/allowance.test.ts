@@ -247,6 +247,41 @@ describe('findExhaustedAllowance', () => {
     });
   });
 
+  describe('OpenCode Go shared allowance', () => {
+    it('blocks a 5-hour start when the weekly or monthly share is used up', () => {
+      const session = window('opencode_go', 'opencode_go_five_hour', { usage: 0.1 });
+      const weekly = window('opencode_go', 'opencode_go_weekly', {
+        phase: 'EXHAUSTED',
+        usage: 1,
+        resetAt: future,
+      });
+      const monthly = window('opencode_go', 'opencode_go_monthly', {
+        phase: 'EXHAUSTED',
+        usage: 1,
+        resetAt: future,
+      });
+
+      expect(check('opencode_go', 'opencode_go_five_hour', [session, weekly])).toEqual({
+        windowKind: 'opencode_go_weekly',
+        resetAt: future,
+      });
+      expect(check('opencode_go', 'opencode_go_five_hour', [session, monthly])).toEqual({
+        windowKind: 'opencode_go_monthly',
+        resetAt: future,
+      });
+    });
+
+    it('does not block when only unrelated windows are exhausted', () => {
+      const session = window('opencode_go', 'opencode_go_five_hour', { usage: 0.1 });
+      const unrelated = window('opencode_go', 'opencode_go_other', {
+        phase: 'EXHAUSTED',
+        usage: 1,
+        resetAt: future,
+      });
+      expect(check('opencode_go', 'opencode_go_five_hour', [session, unrelated])).toBeUndefined();
+    });
+  });
+
   it('fails closed for providers without a documented sharing model', () => {
     const target = window('fake', 'five_hour', { usage: 0 });
     const other = window('fake', 'weekly', { phase: 'EXHAUSTED', usage: 1 });

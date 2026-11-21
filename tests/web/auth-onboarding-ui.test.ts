@@ -58,7 +58,9 @@ function createAuthUiHarness(options: AuthUiHarnessOptions) {
     options.authorizationUrl ??
     (providerId === 'claude_code'
       ? 'https://claude.com/oauth/authorize?state=synthetic'
-      : 'https://auth.openai.com/device');
+      : providerId === 'opencode_go'
+        ? 'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli'
+        : 'https://auth.openai.com/device');
   const selectors = [
     '[data-auth-status-detail]',
     '[data-auth-error]',
@@ -318,6 +320,26 @@ describe('auth onboarding UI', () => {
     expect(html).toContain('Enter the code shown by the provider.');
     expect(html).toContain('data-auth-submit');
     expect(html).toMatch(/data-auth-device-code hidden/);
+  });
+
+  it('renders the OpenCode Go device code without a code-entry form', () => {
+    const html = renderAuthOnboarding({
+      providerId: 'opencode_go',
+      status: status({
+        providerId: 'opencode_go',
+        state: 'AWAITING_USER_ACTION',
+        authorizationUrl:
+          'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli',
+        userCode: 'NPMX-PNKR',
+        requiresCodeSubmission: false,
+      }),
+    });
+
+    expect(html).toContain('Connect OpenCode Go');
+    expect(html).toContain('An API key is not enough.');
+    expect(html).toContain('NPMX-PNKR');
+    expect(html).toContain('https://opencode.ai/console/device?user_code=NPMX-PNKR');
+    expect(html).toMatch(/data-auth-code-section hidden/);
   });
 
   it('explains Claude Code browser and transient code handoff in the shared panel', () => {
@@ -634,6 +656,31 @@ describe('auth onboarding UI', () => {
     await harness.nodes.get('[data-auth-copy-url]')?.click();
 
     expect(harness.clipboardWrites).toEqual([url]);
+  });
+
+  it('allows the exact OpenCode device page, and no other host, through shared link handling', async () => {
+    const url = 'https://opencode.ai/console/device?user_code=NPMX-PNKR&client_id=opencode-cli';
+    const allowed = createAuthUiHarness({
+      providerId: 'opencode_go',
+      initialCode: 'NPMX-PNKR',
+      refreshedCode: 'NPMX-PNKR',
+      authorizationUrl: url,
+      clipboard: { writeText: () => Promise.resolve() },
+    });
+    await waitForAuthRefresh();
+    await allowed.nodes.get('[data-auth-copy-url]')?.click();
+    expect(allowed.clipboardWrites).toEqual([url]);
+
+    const foreign = createAuthUiHarness({
+      providerId: 'opencode_go',
+      initialCode: 'NPMX-PNKR',
+      refreshedCode: 'NPMX-PNKR',
+      authorizationUrl: 'https://auth.openai.com/console/device?user_code=NPMX-PNKR',
+      clipboard: { writeText: () => Promise.resolve() },
+    });
+    await waitForAuthRefresh();
+    await foreign.nodes.get('[data-auth-copy-url]')?.click();
+    expect(foreign.clipboardWrites).toEqual([]);
   });
 
   it('renders the provider code unchanged in a selectable semantic output', () => {

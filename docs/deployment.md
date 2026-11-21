@@ -204,6 +204,30 @@ honor the original HTTPS scheme and set `Secure` cookies. Do not set broad
 entries such as `0.0.0.0/0` or `::/0`; do not trust headers from arbitrary LAN
 clients.
 
+## OpenCode Go setup
+
+1. Set `AWM_OPENCODE_GO_ENABLED=true` and restart. Window starts are allowed by
+   default (see [ADR-011](adr/011-opencode-go-provider.md)). Set
+   `AWM_OPENCODE_GO_TRIGGER_ENABLED=false`, or choose monitoring only in
+   Settings, to opt out. The image bundles the pinned official client at
+   `/opt/opencode/bin/opencode`; its state lives in the `awm-opencode-go-state`
+   volume (`/opencode-go-state`).
+2. In Settings, select OpenCode Go and choose **Connect OpenCode Go**. AWM runs
+   the unmodified official `opencode auth login opencode --method device` in that
+   state directory and shows a one-time code and the
+   `opencode.ai/console/device` link. Approve it in your browser with the
+   OpenCode Console account that has the Go subscription. Nothing is typed back
+   into AWM, and AWM never reads or stores the credential; the client keeps it in
+   its own state volume. A Go-only API key cannot be used: the usage report needs
+   a Console login.
+3. AWM verifies the sign-in with a fresh usage read (no model request). Until the
+   login is complete the provider reports `OPENCODE_GO_AUTH_REQUIRED`.
+
+The weekly (Monday 00:00 UTC) and monthly windows start by themselves; only the
+5-hour window is ever started, with one ordinary `Hi!` that AWM deletes by exact
+session ID. Choose the exact 5-hour target in the schedule before actions can be
+planned.
+
 ## Claude Code setup
 
 1. Set `AWM_CLAUDE_CODE_ENABLED=true` and restart. Window starts are allowed by
@@ -256,7 +280,7 @@ client in Settings and report the change; last-known-good readings are kept.
 ## Provider homes/secrets
 
 Do not mount `$HOME`. Each provider gets only the exact official-client state
-it needs. Codex, Antigravity and Claude Code runtime state volumes are isolated
+it needs. Codex, Antigravity, Claude Code and OpenCode Go runtime state volumes are isolated
 from the SQLite volume. Do not mount a workstation `~/.claude`. With `AWM_ANTIGRAVITY_ENABLED` unset, the base Compose default is
 disabled; the checked-in `.env.example` explicitly enables Antigravity for its
 local `awm` profile. The same distinction applies to Codex. Review the
@@ -375,6 +399,23 @@ docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 \
 The command must report the Codex version pinned in
 `provider-clients.lock.json` and a successful app-server `initialize`. It
 deliberately does not log in or call `account/rateLimits/read`.
+
+The OpenCode Go image check, without credentials or a model request, runs the
+pinned client and the usage read under the Compose hardening. A signed-out home
+reports `"data":null`:
+
+```bash
+docker run --rm --read-only --tmpfs /tmp:size=32m,mode=1777 --cap-drop ALL \
+  --security-opt no-new-privileges:true --user 10001:10001 \
+  -v awm-smoke-opencode:/opencode-go-state -w /tmp --entrypoint /bin/sh \
+  ai-window-manager:dev -c 'export HOME=/opencode-go-state \
+    XDG_DATA_HOME=/opencode-go-state/.local/share XDG_CONFIG_HOME=/opencode-go-state/.config \
+    XDG_STATE_HOME=/opencode-go-state/.local/state XDG_CACHE_HOME=/opencode-go-state/.cache \
+    OPENCODE_DISABLE_AUTOUPDATE=1
+  /opt/opencode/bin/opencode --version                                        # "opencode v2.3.2"
+  /opt/opencode/bin/opencode --standalone api GET /api/experimental/usage/limits  # data:null'
+docker volume rm awm-smoke-opencode
+```
 
 The Claude Code image check, without credentials or a model request, is:
 

@@ -133,7 +133,7 @@ describe('openDatabase', () => {
     });
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 14,
+        version: 15,
       },
     );
     upgraded.close();
@@ -181,7 +181,7 @@ describe('openDatabase', () => {
   it('opens an in-memory database without creating a filesystem directory', () => {
     const db = openDatabase(':memory:');
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
-      version: 14,
+      version: 15,
     });
     db.close();
   });
@@ -200,7 +200,7 @@ describe('openDatabase', () => {
     openDatabase(file, { migrationsDir }).close();
     const upgraded = openDatabase(file);
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
-      { version: 14 },
+      { version: 15 },
     );
     expect(
       upgraded
@@ -342,7 +342,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 14,
+        version: 15,
       },
     );
     expect(readPreservedRows(upgraded)).toEqual(before);
@@ -436,6 +436,7 @@ describe('openDatabase', () => {
       { version: 12, applied_at_ms: appliedAtMs },
       { version: 13, applied_at_ms: appliedAtMs },
       { version: 14, applied_at_ms: appliedAtMs },
+      { version: 15, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -455,8 +456,51 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(14);
+    ).toBe(15);
     reopened.close();
+  });
+
+  it('upgrades schema 14 cleanup jobs to accept OpenCode sessions without losing existing jobs', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awm-opencode-cleanup-migration-'));
+    dirs.push(dir);
+    const migrationsDir = path.join(dir, 'v14');
+    fs.mkdirSync(migrationsDir);
+    for (const name of fs
+      .readdirSync('migrations')
+      .filter((name) => Number(name.split('_')[0]) <= 14))
+      fs.copyFileSync(path.join('migrations', name), path.join(migrationsDir, name));
+    const file = path.join(dir, 'awm.db');
+    const old = openDatabase(file, { migrationsDir });
+    old.exec(`INSERT INTO providers (id, kind, enabled, mode, poll_interval_seconds, config_json, config_version, created_at_ms, updated_at_ms)
+      VALUES ('codex', 'codex', 1, 'automation', 30, '{}', 1, 1, 1),
+             ('opencode_go', 'opencode_go', 1, 'automation', 120, '{}', 1, 1, 1);
+      INSERT INTO provider_cleanup_jobs (id, provider_id, artifact_kind, external_id, state, attempt_count, not_before_ms, last_error_code, created_at_ms, updated_at_ms)
+      VALUES ('cleanup', 'codex', 'codex_thread', 'synthetic-thread', 'retryable', 2, 5, 'CLEANUP_FAILED', 1, 3);`);
+    expect(() =>
+      old.exec(`INSERT INTO provider_cleanup_jobs (id, provider_id, artifact_kind, external_id, state, not_before_ms, created_at_ms, updated_at_ms)
+        VALUES ('x', 'opencode_go', 'opencode_session', 'ses_x', 'pending', 1, 1, 1)`),
+    ).toThrow(/CHECK/);
+    const existing = old.prepare('SELECT * FROM provider_cleanup_jobs').get();
+    old.close();
+
+    const upgraded = openDatabase(file);
+    expect(upgraded.prepare('SELECT * FROM provider_cleanup_jobs').get()).toEqual(existing);
+    upgraded.exec(`INSERT INTO provider_cleanup_jobs (id, provider_id, artifact_kind, external_id, state, not_before_ms, created_at_ms, updated_at_ms)
+      VALUES ('oc', 'opencode_go', 'opencode_session', 'ses_synthetic', 'pending', 1, 1, 1)`);
+    // The (provider, kind, external id) dedupe key still holds after the rebuild.
+    expect(() =>
+      upgraded.exec(`INSERT INTO provider_cleanup_jobs (id, provider_id, artifact_kind, external_id, state, not_before_ms, created_at_ms, updated_at_ms)
+        VALUES ('oc2', 'opencode_go', 'opencode_session', 'ses_synthetic', 'pending', 1, 1, 1)`),
+    ).toThrow(/UNIQUE/);
+    expect(
+      upgraded
+        .prepare(
+          "SELECT 1 FROM pragma_index_list('provider_cleanup_jobs') WHERE name = 'idx_provider_cleanup_due'",
+        )
+        .get(),
+    ).toEqual({ 1: 1 });
+    expect(upgraded.pragma('foreign_key_check')).toEqual([]);
+    upgraded.close();
   });
 
   it('supports an explicitly empty migration directory', () => {
@@ -602,6 +646,7 @@ describe('openDatabase', () => {
       { version: 12 },
       { version: 13 },
       { version: 14 },
+      { version: 15 },
     ]);
     expect(
       upgraded
@@ -642,7 +687,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toHaveLength(14);
+    ).toHaveLength(15);
     expect(
       upgraded
         .prepare(

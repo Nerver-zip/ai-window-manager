@@ -41,6 +41,12 @@ services:
       AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: ${AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS:-60}
       AWM_CLAUDE_CODE_HOME: ${AWM_CLAUDE_CODE_HOME:-/claude-state}
       AWM_CLAUDE_CODE_EXECUTABLE: ${AWM_CLAUDE_CODE_EXECUTABLE:-/provider-clients/claude_code/current}
+      AWM_OPENCODE_GO_ENABLED: ${AWM_OPENCODE_GO_ENABLED:-false}
+      AWM_OPENCODE_GO_TRIGGER_ENABLED: ${AWM_OPENCODE_GO_TRIGGER_ENABLED:-true}
+      AWM_OPENCODE_GO_TRIGGER_MODEL: ${AWM_OPENCODE_GO_TRIGGER_MODEL:-opencode-go/deepseek-v4.1-flash}
+      AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS: ${AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS:-90}
+      AWM_OPENCODE_GO_HOME: ${AWM_OPENCODE_GO_HOME:-/opencode-go-state}
+      AWM_OPENCODE_GO_EXECUTABLE: ${AWM_OPENCODE_GO_EXECUTABLE:-/opt/opencode/bin/opencode}
       AWM_RECONCILE_INTERVAL_SECONDS: ${AWM_RECONCILE_INTERVAL_SECONDS:-30}
       AWM_EXECUTOR_INTERVAL_SECONDS: ${AWM_EXECUTOR_INTERVAL_SECONDS:-5}
       AWM_RETENTION_INTERVAL_SECONDS: ${AWM_RETENTION_INTERVAL_SECONDS:-86400}
@@ -52,6 +58,7 @@ services:
       - awm-antigravity-state:/antigravity-state
       - awm-antigravity-keyring:/antigravity-keyring
       - awm-claude-code-state:/claude-state
+      - awm-opencode-go-state:/opencode-go-state
       - awm-provider-clients:/provider-clients
     read_only: true
     tmpfs:
@@ -81,4 +88,5 @@ volumes:
   awm-antigravity-state:
   awm-antigravity-keyring:
   awm-claude-code-state:
+  awm-opencode-go-state:
   awm-provider-clients:

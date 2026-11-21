@@ -4,6 +4,7 @@ import type { ProviderAdapter } from '../providers/provider.js';
 import type { ProviderInspectionCoordinator } from '../providers/inspection-coordinator.js';
 import type { ClaudeAuthState } from '../providers/claude-code/protocol.js';
 import { claudeProcessEnvironment } from '../providers/claude-code/transport.js';
+import { openCodeProcessEnvironment } from '../providers/opencode/transport.js';
 import type { AuthCommandRunner, AuthProcessFactory } from './process.js';
 import { captureAuthCommand, providerProcessEnvironment, spawnAuthProcess } from './process.js';
 import type {
@@ -23,6 +24,8 @@ export interface ProviderAuthDriverOptions {
   antigravityExecutable: string;
   claudeCodeHome: string;
   claudeCodeExecutable: string;
+  openCodeGoHome: string;
+  openCodeGoExecutable: string;
   spawnProcess?: AuthProcessFactory;
   runCommand?: AuthCommandRunner;
 }
@@ -395,6 +398,81 @@ class ClaudeCodeAuthDriver implements ProviderAuthDriver {
   }
 }
 
+/**
+ * OpenCode Console sign-in. `opencode auth login opencode --method device`
+ * runs an OAuth device flow in `auto` mode: the official CLI prints a one-time
+ * code and a `console/device` URL, then polls until the operator approves in
+ * the browser. Nothing is typed back into the CLI, so AWM relays no code. The
+ * method is passed explicitly so the CLI never shows its login-method menu
+ * (whose second entry is an API-key prompt, which would not carry a Console
+ * workspace). The run uses plain pipes, not a PTY: that is the shape observed
+ * in SPIKE-008, and a TTY could surface optional form prompts.
+ */
+class OpenCodeGoAuthDriver implements ProviderAuthDriver {
+  readonly providerId = 'opencode_go' as const;
+  private authorizationUrl: string | undefined;
+  private userCode: string | undefined;
+
+  constructor(
+    private readonly options: ProviderAuthDriverOptions,
+    private readonly adapter: ProviderAdapter,
+  ) {}
+
+  async isAlreadyAuthenticated(signal: AbortSignal): Promise<boolean | undefined> {
+    const observation = await (this.options.inspections
+      ? this.options.inspections.inspectFresh(this.adapter, { signal }, 'auth_check')
+      : this.adapter.inspect({ signal }));
+    if (observation.health === 'AUTH_REQUIRED') return false;
+    if (observation.health === 'UP' || observation.health === 'DEGRADED') return true;
+    return undefined;
+  }
+
+  launch(): AuthManagedProcess {
+    this.authorizationUrl = undefined;
+    this.userCode = undefined;
+    const home = resolve(this.options.openCodeGoHome);
+    return (this.options.spawnProcess ?? spawnAuthProcess)(
+      this.options.openCodeGoExecutable,
+      ['--standalone', 'auth', 'login', 'opencode', '--method', 'device'],
+      { cwd: home, env: openCodeProcessEnvironment(home) },
+    );
+  }
+
+  parseOutput(_stream: AuthOutputStream, line: string): AuthOutputUpdate | undefined {
+    const url = extractUrl(line, 'opencode_go');
+    if (url) {
+      this.authorizationUrl = url;
+      // The URL carries the same public one-time code; use it when the labeled
+      // line was not seen first.
+      this.userCode ??= extractOpenCodeDeviceCode(new URL(url).searchParams.get('user_code') ?? '');
+    }
+    const labeled = extractOpenCodeDeviceCode(line);
+    if (labeled) this.userCode = labeled;
+    if (!this.authorizationUrl || (!url && !labeled)) return undefined;
+    return {
+      awaitingUserAction: true,
+      authorizationUrl: this.authorizationUrl,
+      ...(this.userCode ? { userCode: this.userCode } : {}),
+      requiresCodeSubmission: false,
+    };
+  }
+
+  submitCode(): void {
+    throw new Error('OpenCode device code is approved on the official website');
+  }
+
+  async verify(signal: AbortSignal): Promise<boolean> {
+    const observation = await (this.options.inspections
+      ? this.options.inspections.inspectFresh(this.adapter, { signal }, 'auth_verify')
+      : this.adapter.inspect({ signal }));
+    return observation.health === 'UP' || observation.health === 'DEGRADED';
+  }
+}
+
+function extractOpenCodeDeviceCode(text: string): string | undefined {
+  return /(?:\bcode\s*[:：]\s*|^\s*)([A-Z0-9]{4}-[A-Z0-9]{4})\s*$/.exec(text)?.[1];
+}
+
 const CLAUDE_CODE_ENTRY_PROMPT =
   /\b(?:paste\s+code\s+here(?:\s+if\s+prompted)?|enter\s+(?:the\s+)?(?:(?:auth(?:entication)?|login|verification)\s+)?code)\b/i;
 
@@ -414,6 +492,8 @@ export function createProviderAuthDrivers(
   if (claudeCode && hasClaudeCodeAuthStatus(claudeCode)) {
     drivers.set('claude_code', new ClaudeCodeAuthDriver(options, claudeCode));
   }
+  const openCodeGo = options.adapters.get('opencode_go');
+  if (openCodeGo) drivers.set('opencode_go', new OpenCodeGoAuthDriver(options, openCodeGo));
   return drivers;
 }
 

@@ -135,6 +135,26 @@ const envSchema = z.object({
   AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(120).default(60),
   AWM_CLAUDE_CODE_HOME: z.string().default('./data/claude-code'),
   AWM_CLAUDE_CODE_EXECUTABLE: z.string().default('claude'),
+  AWM_OPENCODE_GO_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  // Enabled by default like the other configured providers (owner decision,
+  // ADR-011); operators opt out with false or monitoring-only/manual settings.
+  AWM_OPENCODE_GO_TRIGGER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  AWM_OPENCODE_GO_TRIGGER_MODEL: z
+    .string()
+    .trim()
+    .regex(/^opencode-go\/[a-z0-9][a-z0-9._-]{0,95}$/, {
+      message: 'AWM_OPENCODE_GO_TRIGGER_MODEL must be an opencode-go/<model> ID',
+    })
+    .default('opencode-go/deepseek-v4.1-flash'),
+  AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(180).default(90),
+  AWM_OPENCODE_GO_HOME: z.string().default('./data/opencode-go'),
+  AWM_OPENCODE_GO_EXECUTABLE: z.string().default('opencode'),
   AWM_RECONCILE_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
   AWM_EXECUTOR_INTERVAL_SECONDS: z.coerce.number().int().min(1).max(3600).default(5),
   AWM_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(60).max(604800).default(86400),

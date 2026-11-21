@@ -11,7 +11,7 @@ export const AUTH_SESSION_STATES = [
   'CANCELED',
 ] as const;
 
-export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code';
+export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code' | 'opencode_go';
 export type AuthSessionState = (typeof AUTH_SESSION_STATES)[number];
 
 export interface AuthOnboardingStatus {
@@ -36,6 +36,7 @@ const PROVIDER_LABELS: Readonly<Record<AuthProviderId, string>> = {
   codex: 'Codex',
   antigravity: 'Antigravity',
   claude_code: 'Claude Code',
+  opencode_go: 'OpenCode Go',
 };
 
 const STATE_DETAILS: Readonly<Record<AuthSessionState, string>> = {
@@ -68,6 +69,8 @@ const PROVIDER_SIGN_IN_COPY: Readonly<Record<AuthProviderId, string>> = {
   codex: 'Sign in with OpenAI to start tracking your usage windows.',
   antigravity: 'Sign in with Google to start tracking your usage windows.',
   claude_code: 'Sign in with your Anthropic account to start tracking Claude Code usage.',
+  opencode_go:
+    'Sign in to your OpenCode Console account to start tracking OpenCode Go usage. An API key is not enough.',
 };
 
 const ACTIVE_STATES = new Set<AuthSessionState>(['STARTING', 'AWAITING_USER_ACTION', 'VERIFYING']);

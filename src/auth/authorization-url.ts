@@ -4,8 +4,10 @@ const ALLOWED_AUTH_HOSTS: Readonly<Record<AuthProviderId, ReadonlySet<string>>> 
   codex: new Set(['auth.openai.com']),
   antigravity: new Set(['accounts.google.com']),
   claude_code: new Set(['claude.com']),
+  opencode_go: new Set(['opencode.ai']),
 };
 
+const OPENCODE_DEVICE_CODE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const SENSITIVE_QUERY_PARAMETER =
   /^(access_token|refresh_token|id_token|token|authorization|code)$/i;
 const CLAUDE_CODE_BOOTSTRAP_PARAMETER_LIMITS = new Map([
@@ -43,10 +45,31 @@ export function validateAuthorizationUrl(
       SENSITIVE_QUERY_PARAMETER.test(name),
     );
     if (hasSensitiveParameter && !isClaudeCodeBootstrapUrl(url)) return undefined;
+    if (providerId === 'opencode_go' && !isOpenCodeDeviceUrl(url)) return undefined;
     return url.toString();
   } catch {
     return undefined;
   }
+}
+
+/**
+ * OpenCode's Console device-authorization page. The one-time user code is
+ * public (it is shown to the operator), but nothing else may ride along: only
+ * the exact path and the two observed query parameters are accepted.
+ */
+function isOpenCodeDeviceUrl(url: URL): boolean {
+  if (url.pathname !== '/console/device' || url.hash !== '' || url.port !== '') return false;
+  const parameters = [...url.searchParams.entries()];
+  if (parameters.length < 1 || parameters.length > 2) return false;
+  const names = new Set(parameters.map(([name]) => name));
+  if (names.size !== parameters.length) return false;
+  const userCode = url.searchParams.get('user_code');
+  if (userCode === null || !OPENCODE_DEVICE_CODE.test(userCode)) return false;
+  const clientId = url.searchParams.get('client_id');
+  return (
+    [...names].every((name) => name === 'user_code' || name === 'client_id') &&
+    (clientId === null || clientId === 'opencode-cli')
+  );
 }
 
 /** Claude Code's CLI embeds a short-lived login challenge in its OAuth URL. */

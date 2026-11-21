@@ -13,7 +13,7 @@ export const AUTH_SESSION_STATES = [
 ] as const;
 
 export type AuthSessionState = (typeof AUTH_SESSION_STATES)[number];
-export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code';
+export type AuthProviderId = 'codex' | 'antigravity' | 'claude_code' | 'opencode_go';
 export type AuthReasonCode =
   | 'ALREADY_AUTHENTICATED'
   | 'AUTH_STATUS_UNAVAILABLE'

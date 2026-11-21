@@ -6,6 +6,7 @@ const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   antigravity: 'Antigravity',
   agy: 'Antigravity',
   claude_code: 'Claude Code',
+  opencode_go: 'OpenCode Go',
 };
 
 const EVIDENCE_LABELS: Readonly<Record<string, string>> = {
@@ -234,10 +235,27 @@ const ERROR_LABELS: Readonly<Record<string, string>> = {
   CLAUDE_CODE_CONTRACT_CHANGED:
     'The Claude Code usage report changed shape; readings are paused until the app is updated.',
   CLAUDE_CODE_NO_USAGE_WINDOWS: 'The Claude Code usage report contained no usage windows.',
+  OPENCODE_GO_AUTH_REQUIRED:
+    'Connect your OpenCode Console account in Settings to resume usage checks. An API key is not enough.',
+  OPENCODE_GO_NOT_SUBSCRIBED:
+    'OpenCode is signed in, but this workspace member has no OpenCode Go subscription, so no Go usage windows are reported.',
+  OPENCODE_GO_EXECUTABLE_UNAVAILABLE: 'The official OpenCode CLI is not installed.',
+  OPENCODE_GO_PROVIDER_TIMEOUT: 'The OpenCode CLI did not respond in time.',
+  OPENCODE_GO_PROVIDER_UNAVAILABLE: 'The OpenCode CLI is temporarily unavailable.',
+  OPENCODE_GO_OUTPUT_INVALID: 'The OpenCode CLI returned data the app could not verify.',
+  OPENCODE_GO_CONTRACT_CHANGED:
+    'The OpenCode usage report changed shape; readings are paused until the app is updated.',
 };
 
 export function providerDisplayName(id: string, kind?: string): string {
-  const key = kind === 'codex' || id === 'codex' ? 'codex' : kind === 'fake' ? 'fake' : id;
+  const key =
+    kind === 'codex' || id === 'codex'
+      ? 'codex'
+      : kind === 'fake'
+        ? 'fake'
+        : kind !== undefined && Object.hasOwn(PROVIDER_LABELS, kind)
+          ? kind
+          : id;
   return PROVIDER_LABELS[key] ?? humanizeIdentifier(kind ?? id, 'Provider');
 }
 
@@ -245,6 +263,7 @@ export function providerLogoUrl(id: string, kind?: string): string | undefined {
   const normalized = (kind ?? id).trim().toLowerCase();
   if (normalized === 'codex') return '/assets/images/providers/codex.png';
   if (normalized === 'claude_code') return '/assets/images/providers/claude-code.png';
+  if (normalized === 'opencode_go') return '/assets/images/providers/opencode.png';
   if (normalized === 'agy' || normalized === 'antigravity')
     return '/assets/images/providers/agy.png';
   return undefined;
@@ -266,6 +285,7 @@ export function windowDisplayName(
   const cadence = classifyWindowCadence({ windowKind, durationSeconds });
   if (cadence === 'five_hour') return '5-hour window';
   if (cadence === 'weekly') return 'Weekly window';
+  if (windowKind.endsWith('_monthly')) return 'Monthly window';
   return 'Usage window';
 }
 

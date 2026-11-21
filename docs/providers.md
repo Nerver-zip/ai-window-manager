@@ -1,6 +1,6 @@
 # Provider research and adapter policy
 
-Provider research last refreshed: **2026-11-04** (Claude Code); **2026-10-20** (Codex, Antigravity).
+Provider research last refreshed: **2026-11-21** (OpenCode Go); **2026-11-04** (Claude Code); **2026-10-20** (Codex, Antigravity).
 
 ## Normalized adapter contract
 
@@ -407,6 +407,71 @@ windowTrigger         = enabled by default; AWM_CLAUDE_CODE_TRIGGER_ENABLED=fals
 weekly / scoped meters= monitored only, never targets
 confirmation          = fresh independent /usage read; process exit never confirms
 cleanup               = none required (--no-session-persistence)
+```
+
+## OpenCode Go
+
+Details, sources and probe evidence: [SPIKE-008](research/spikes/SPIKE-008-opencode-go.md).
+Decision: [ADR-011](adr/011-opencode-go-provider.md).
+
+### Supported
+
+- Go has a 5-hour limit (20% of the monthly allowance), a weekly limit (50%,
+  "resets on Monday at 00:00 UTC") and a monthly limit that resets "when a new
+  paid period starts". Models share one dollar allowance.
+- "The window starts when you first use your allowance and lasts five hours."
+  Only the 5-hour window therefore needs a start; the weekly and monthly windows
+  start by themselves and are never trigger targets.
+- At a limit, free models keep working, and "Extra Usage" can fall back to
+  Console credits.
+- The official headless `opencode run`, `--format json`, `--session`, `--archived`,
+  `opencode session delete` and `opencode api` commands.
+
+### Observed / internal
+
+- The official client's private server (`opencode --standalone api GET
+/api/experimental/usage/limits`) returns the signed-in Console workspace's Go
+  meters: `percent`, `limited` and `resetsAt` (epoch ms) for `rolling`, `weekly`
+  and `monthly`. It sends no model request. The route is experimental; the client
+  returns `data: null` when no Console workspace is signed in.
+- A documented Bearer endpoint, `GET /inference/go/v1/usage`, returns the same
+  three meters. AWM does not use it because that needs an API key held by AWM.
+
+### Inferred
+
+- Before the 5-hour window starts, the rolling reset is five hours from now (a
+  moving projection). One ordinary request anchors it. The adapter therefore reports
+  zero use with a future reset as `UNKNOWN` and lets the temporal tracker decide.
+- A start counts against the shared allowance, so an exhausted weekly or monthly
+  window blocks a 5-hour start.
+
+### Unknown
+
+- Whether the 5-hour window restarts at the first request after it expires.
+- Whether free models draw Go allowance, and the exact cost of one `Hi!`.
+- Whether a Go-only API key (no Console workspace) can be read through the client.
+- The success-path event stream of `opencode run --format json` and a live start;
+  only the signed-out path and the usage route were run against the real binary.
+
+### Risk / policy
+
+OpenCode's terms prohibit processes that run while the user is logged out and
+automated extraction. AWM uses the unmodified official client in an isolated home,
+never reads credential files, and sends one ordinary `Hi!` that it deletes by exact
+session ID. The owner authorized the start for their own subscription; that is
+project authorization, not provider approval.
+
+**Implemented capability**
+
+```text
+usageRead / resetRead = official_client_internal; opencode api GET /api/experimental/usage/limits
+windowTrigger         = enabled by default; AWM_OPENCODE_GO_TRIGGER_ENABLED=false opts out;
+                        opencode_go_five_hour only; consumesQuota=true
+weekly / monthly      = monitored only, never targets
+confirmation          = fresh independent usage read; process exit never confirms
+cleanup               = exact session ID registered before dispatch; `session delete`
+credentials           = client-owned Console login in AWM's isolated home, guided in AWM Settings
+                        (OAuth device flow, `--method device`); AWM never reads them
 ```
 
 ## Provider contract change detection
