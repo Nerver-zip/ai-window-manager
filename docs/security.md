@@ -98,6 +98,25 @@ auth/keyring material and unrelated IDs are out of scope. This depends on an
 observed local storage layout, not an official API contract. Cleanup is
 separately durable and retries deletion only; it never causes another `Hi!`.
 
+### OpenCode Go
+
+AWM invokes only the official `opencode` binary bundled at
+`/opt/opencode/bin/opencode` (pinned version and SHA-256 in the Dockerfile; see
+[ADR-011](adr/011-opencode-go-provider.md)), in a dedicated state volume
+(`/opencode-go-state`) that is `HOME` and every XDG base directory, from an empty
+private working directory. The environment is an allowlist: the isolated home
+variables, `PATH`, locale and `TZ`, with the updater disabled. Inherited variables,
+including `OPENCODE_*` keys and AWM's own secrets, never reach the client. AWM never
+reads `auth.json` or `opencode.db`, never calls an OpenCode HTTP endpoint, and the
+client keeps the Console credential in its own volume. The start never passes
+`--auto`, so any permission request is rejected, and event text is never parsed or
+stored; only the event type, the session ID and the provider error class are read.
+
+Sign-in exposes only `https://opencode.ai/console/device` with a `user_code`
+(`XXXX-XXXX`) and an optional `client_id=opencode-cli`; the link is held in memory
+and the code is public by design, since it only authorizes the operator's own
+approval in their browser. The trigger session is deleted by exact ID only.
+
 ### Claude Code
 
 AWM invokes only the official Claude Code binary pinned in

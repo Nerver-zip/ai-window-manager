@@ -170,6 +170,8 @@ A start is also blocked by exhaustion of any other window it consumes:
 - **Claude Code**: the five-hour and weekly canonical windows, which the official
   CLI documents as both consumed by a start. Model-scoped meters do not block a
   default-model start.
+- **OpenCode Go**: the 5-hour, weekly and monthly windows, which are shares (20%,
+  50% and 100%) of one dollar allowance, so a start counts against all three.
 - **Antigravity**: only windows of the same model family. Argon has only its
   weekly window, so it is blocked only by its own exhaustion.
 
@@ -250,6 +252,19 @@ for the existing rolling-projection inference. No other adapter emits
 medium-confidence `INACTIVE`. Only `claude_code_five_hour` is a trigger target.
 The weekly window is never started, because one request always counts against
 both allowances.
+
+### OpenCode Go phase evidence
+
+OpenCode Go's usage report always carries a reset for each meter. Before the first
+request of a 5-hour window the server reports the rolling reset five hours from
+now, which looks like an anchored window in a single snapshot. The adapter
+therefore emits zero use with a future reset as `UNKNOWN` and lets the shared cycle
+tracker decide; consumption with a future reset is `ACTIVE`, `limited` or 100% is
+`EXHAUSTED`, and an elapsed reset is `RESET_DUE`, never a new allowance. Only
+`opencode_go_five_hour` is a trigger target: the weekly window resets on Monday
+00:00 UTC and the monthly window with the paid period, so neither is ever started.
+Whether the 5-hour window restarts at the first request after it expires is not
+documented (SPIKE-008).
 
 ### Mid-cycle forced-reset recovery
 

@@ -303,7 +303,7 @@ enhancement hooks. This table is the parity checklist for UI work.
 
 `scripts/ui-checks/` holds optional developer tooling for verifying the UI in a real browser. It is not part of `pnpm validate` or CI.
 
-- `pnpm ui:demo` starts the real web server on `127.0.0.1` (`PORT`, default 4870) with synthetic seed data, stub provider adapters that reject `inspect()`, fake sign-in drivers, a static client-update stub and a fixed clock. Sign in as `demo` / `demo-password`. It never contacts providers or the network. Set `AWM_DEMO_TMP` to choose the temporary directory root and `AWM_DEMO_NO_AUTOSTART=1` to skip the auto-started sign-in session.
+- `pnpm ui:demo` starts the real web server on `127.0.0.1` (`PORT`, default 4870) with synthetic seed data, stub provider adapters that reject `inspect()`, fake sign-in drivers, a static client-update stub and a fixed clock. Sign in as `demo` / `demo-password`. It never contacts providers or the network. Set `AWM_DEMO_TMP` to choose the temporary directory root, `AWM_DEMO_NO_AUTOSTART=1` to skip the auto-started sign-in session and `AWM_DEMO_ALL_CONNECTED=1` to seed every provider as connected (used for the README screenshots). The demo seeds Codex, Antigravity, Claude Code and OpenCode Go.
 - `pnpm ui:a11y <baseUrl>` runs keyboard, focus-ring, progressive-enhancement and JavaScript-disabled checks.
 - `pnpm ui:auth-flow <baseUrl> <outDir> [label]` walks the synthetic Claude Code sign-in onboarding (start the demo with `AWM_DEMO_NO_AUTOSTART=1`).
 - `pnpm ui:shots <baseUrl> <outDir> [label]` captures screenshots and reports horizontal overflow (`SHOOT_ONLY`, `SHOOT_SIZES`, `SHOOT_VIEWPORT` narrow the run).

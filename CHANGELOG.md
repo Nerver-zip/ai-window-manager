@@ -4,6 +4,16 @@
 
 ### Added
 
+- Add an OpenCode Go provider (see ADR-011 and SPIKE-008). Monitor its 5-hour,
+  weekly and monthly windows through the official `opencode` client's private
+  server in an isolated home, so AWM never reads credentials. Only the 5-hour
+  window can be started, with one ordinary `Hi!` (opt out with
+  `AWM_OPENCODE_GO_TRIGGER_ENABLED=false`); the start session is registered for
+  cleanup before dispatch and deleted by exact ID. Sign-in is guided in Settings
+  through the official OAuth device flow. The image bundles the pinned OpenCode
+  v2.3.2 client. Adds migration 015 (`opencode_session` cleanup kind), the
+  `opencode_go` provider logo, and an OpenCode Go entry in the demo and README
+  screenshots.
 - Guide Claude Code's official sign-in through the shared AWM authentication
   session. Validate `claude.com` links, forward an optional one-time code only
   to the active CLI process, verify with `auth status --json`, and keep the

@@ -280,7 +280,7 @@ for troubleshooting and operational details.
 The overview is the main entry point. Expand the other screens to see usage,
 scheduling, and activity details.
 
-![AI Window Manager overview showing connected providers, current usage windows, and selected start policies](assets/images/screenshots/overview.png)
+![AI Window Manager overview showing the connected providers (Antigravity, Claude Code, Codex and OpenCode Go) and OpenCode Go's 5-hour, weekly and monthly usage windows](assets/images/screenshots/overview.png)
 
 <details>
 <summary>More app screens</summary>
@@ -291,7 +291,7 @@ scheduling, and activity details.
 
 **Schedule — provider, model family, target window, and start policy**
 
-![Schedule page showing an activation policy for a selected provider window](assets/images/screenshots/schedule.png)
+![Schedule page showing the start policy for OpenCode Go's 5-hour window](assets/images/screenshots/schedule.png)
 
 **Logs — paginated observations and decisions**
 

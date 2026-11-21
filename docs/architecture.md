@@ -115,6 +115,17 @@ code is not stored. The CLI's read-only
 volume remains separate. See ADR-009 for the security boundary and manual
 terminal fallback.
 
+For OpenCode Go, monitoring runs the official `opencode` client's private
+server (`opencode --standalone api GET /api/experimental/usage/limits`, no model
+request) in a dedicated home, so the client keeps its own Console login and AWM
+never reads credentials. The 5-hour window is the only start target: AWM
+generates the exact session ID, persists an `opencode_session` cleanup job, then
+runs one bounded `opencode run --session <id> ... "Hi!"`. The session is deleted by
+the cleanup worker with `opencode session delete <id>` and a failed deletion never
+repeats the prompt. Sign-in uses the shared `AuthSessionManager` with the official
+OAuth device flow (`--method device`): AWM shows a validated
+`opencode.ai/console/device` link and one-time code and relays nothing back.
+
 For Codex the action is one `turn/start` through the official app-server. For
 Antigravity the experimental action uses the official `agy` stream-JSON
 headless protocol, registers its returned conversation ID durably, then sends

@@ -20,9 +20,11 @@ const pages = [
   ['overview-antigravity', '/?provider=antigravity'],
   ['overview-claude', '/?provider=claude_code'],
   ['overview-codex', '/?provider=codex'],
+  ['overview-opencode', '/?provider=opencode_go'],
   ['usage', '/usage'],
   ['schedule', '/schedule'],
   ['schedule-antigravity', '/schedule?providerId=antigravity'],
+  ['schedule-opencode', '/schedule?providerId=opencode_go'],
   ['logs', '/logs'],
   ['settings', '/settings'],
 ];
