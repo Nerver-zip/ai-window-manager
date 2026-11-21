@@ -74,3 +74,13 @@ Research snapshot: **2026-11-03**. Details in
 - Usage limits: https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work
 - Release bucket and signing key: https://downloads.claude.ai/claude-code-releases/,
   https://downloads.claude.ai/keys/claude-code.asc
+
+## OpenCode Go
+
+Evidence and probe results: [SPIKE-008](spikes/SPIKE-008-opencode-go.md).
+
+- Go plan, limits and window wording: https://opencode.ai/docs/go/
+- Brand assets (logo): https://opencode.ai/brand
+- Client source (usage-limits schema, `run`, `session`, `auth`):
+  https://github.com/anomalyco/opencode
+- Third-party comparison (read-only Bearer polling): https://github.com/akitaonrails/ai-usagebar

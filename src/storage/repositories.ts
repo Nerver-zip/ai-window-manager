@@ -1964,7 +1964,9 @@ function validateCleanupArtifact(
       ? 'codex'
       : artifactKind === 'antigravity_conversation'
         ? 'antigravity'
-        : undefined;
+        : artifactKind === 'opencode_session'
+          ? 'opencode_go'
+          : undefined;
   if (
     !expectedProvider ||
     providerId !== expectedProvider ||

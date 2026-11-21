@@ -125,6 +125,7 @@ const STATIC_IMAGE_ASSETS = [
   ['providers/antigravity.png', 'providers/antigravity.png'],
   ['providers/claude-code.png', 'providers/claude-code.png'],
   ['providers/codex.png', 'providers/codex.png'],
+  ['providers/opencode.png', 'providers/opencode.png'],
 ] as const;
 const DEFAULT_REQUEST_RATE_LIMIT = 300;
 const REQUEST_RATE_LIMIT_WINDOW_MS = 60_000;

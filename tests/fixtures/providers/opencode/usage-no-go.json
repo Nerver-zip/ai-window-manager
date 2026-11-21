@@ -1,0 +1,7 @@
+{
+  "location": { "directory": "/awm-synthetic/workspace" },
+  "data": {
+    "workspace": { "id": "wrk_synthetic", "usageURL": "https://opencode.invalid/console/x" },
+    "budgets": []
+  }
+}

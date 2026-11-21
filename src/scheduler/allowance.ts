@@ -13,10 +13,17 @@ import { policyScopeForWindowKind } from './policy-scope.js';
  * - Claude Code: a start is documented to count against both the five-hour and
  *   the weekly allowance. Per-model meters are not consulted, so a model-scoped
  *   limit does not block a default-model start.
+ * - OpenCode Go: one shared dollar allowance; the 5-hour, weekly and monthly
+ *   limits are shares of it, so a start counts against all three.
  * - Codex and any other provider: every reported window of that provider. The
  *   consumption model is not documented, so this fails closed.
  */
 
+const OPENCODE_GO_CANONICAL_WINDOW_KINDS: ReadonlySet<string> = new Set([
+  'opencode_go_five_hour',
+  'opencode_go_weekly',
+  'opencode_go_monthly',
+]);
 const CLAUDE_CODE_CANONICAL_WINDOW_KINDS: ReadonlySet<string> = new Set([
   'claude_code_five_hour',
   'claude_code_seven_day',
@@ -130,6 +137,14 @@ function consumesSameAllowance(
     return (
       CLAUDE_CODE_CANONICAL_WINDOW_KINDS.has(targetWindowKind) &&
       CLAUDE_CODE_CANONICAL_WINDOW_KINDS.has(candidateWindowKind)
+    );
+  }
+  if (providerId === 'opencode_go') {
+    // The Go plan has one dollar allowance: the 5-hour (20%), weekly (50%) and
+    // monthly (100%) limits are shares of it, so a start counts against all.
+    return (
+      OPENCODE_GO_CANONICAL_WINDOW_KINDS.has(targetWindowKind) &&
+      OPENCODE_GO_CANONICAL_WINDOW_KINDS.has(candidateWindowKind)
     );
   }
   return true;

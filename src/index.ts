@@ -12,6 +12,7 @@ import { FakeProvider } from './providers/fake-provider.js';
 import { CodexProvider } from './providers/codex/index.js';
 import { AntigravityProvider } from './providers/antigravity/index.js';
 import { ClaudeCodeProvider } from './providers/claude-code/index.js';
+import { OpenCodeGoProvider } from './providers/opencode/index.js';
 import { filterVisibleProviders } from './providers/visibility.js';
 import { AuthSessionManager } from './auth/session-manager.js';
 import { OperatorAuthService } from './auth/operator-auth.js';
@@ -58,6 +59,7 @@ import type { ProviderClientUpdateWebControls } from './provider-clients/web-con
 
 const config = loadConfig();
 const CLAUDE_CODE_MIN_POLL_INTERVAL_SECONDS = 120;
+const OPENCODE_GO_MIN_POLL_INTERVAL_SECONDS = 120;
 const providerRuntimeStore = await initializeProviderRuntime();
 const providerExecutables = {
   codex: providerRuntimeStore
@@ -82,6 +84,7 @@ registerFakeProvider();
 registerCodexProvider();
 registerAntigravityProvider();
 registerClaudeCodeProvider();
+registerOpenCodeGoProvider();
 hydrateMetricsFromState();
 const readBackoff = new ProviderReadBackoff({
   db,
@@ -283,6 +286,7 @@ const cleanupBudgetMs =
       config.AWM_CODEX_ACTION_TIMEOUT_SECONDS,
       config.AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS,
       config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS,
+      config.AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS,
     ) *
       1000);
 loopMonitor.register('reconcile', {
@@ -488,6 +492,33 @@ function registerClaudeCodeProvider(): void {
     config.AWM_CLAUDE_CODE_TRIGGER_ENABLED,
     // The official /usage read is a server request; poll it gently.
     CLAUDE_CODE_MIN_POLL_INTERVAL_SECONDS,
+  );
+}
+
+function registerOpenCodeGoProvider(): void {
+  const provider = new OpenCodeGoProvider({
+    homeDirectory: config.AWM_OPENCODE_GO_HOME,
+    executable: config.AWM_OPENCODE_GO_EXECUTABLE,
+    triggerEnabled: config.AWM_OPENCODE_GO_TRIGGER_ENABLED,
+    triggerModel: config.AWM_OPENCODE_GO_TRIGGER_MODEL,
+    actionTimeoutMs: config.AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS * 1000,
+  });
+  // Per-ID cleanup obligations remain actionable even while monitoring is hidden.
+  cleanupAdapters.set(provider.id, provider);
+  if (!config.AWM_OPENCODE_GO_ENABLED) return;
+  adapters.set(provider.id, provider);
+  seedProvider(
+    {
+      id: provider.id,
+      kind: 'opencode_go',
+      config: {
+        home: config.AWM_OPENCODE_GO_HOME,
+        triggerEnabled: config.AWM_OPENCODE_GO_TRIGGER_ENABLED,
+      },
+    },
+    config.AWM_OPENCODE_GO_TRIGGER_ENABLED,
+    // The usage read starts a private client server and a Console request; poll gently.
+    OPENCODE_GO_MIN_POLL_INTERVAL_SECONDS,
   );
 }
 

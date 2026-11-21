@@ -34,6 +34,12 @@ describe('loadConfig', () => {
     expect(config.AWM_CLAUDE_CODE_ACTION_TIMEOUT_SECONDS).toBe(60);
     expect(config.AWM_CLAUDE_CODE_HOME).toBe('./data/claude-code');
     expect(config.AWM_CLAUDE_CODE_EXECUTABLE).toBe('claude');
+    expect(config.AWM_OPENCODE_GO_ENABLED).toBe(false);
+    expect(config.AWM_OPENCODE_GO_TRIGGER_ENABLED).toBe(true);
+    expect(config.AWM_OPENCODE_GO_TRIGGER_MODEL).toBe('opencode-go/deepseek-v4.1-flash');
+    expect(config.AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS).toBe(90);
+    expect(config.AWM_OPENCODE_GO_HOME).toBe('./data/opencode-go');
+    expect(config.AWM_OPENCODE_GO_EXECUTABLE).toBe('opencode');
     expect(config.AWM_RECONCILE_INTERVAL_SECONDS).toBe(30);
     expect(config.AWM_EXECUTOR_INTERVAL_SECONDS).toBe(5);
     expect(config.AWM_RETENTION_INTERVAL_SECONDS).toBe(86400);
@@ -49,6 +55,33 @@ describe('loadConfig', () => {
       AWM_CODEX_TRIGGER_ENABLED: false,
       AWM_ANTIGRAVITY_TRIGGER_ENABLED: false,
     });
+  });
+
+  it('allows the OpenCode Go quota action to be disabled and validates its model', () => {
+    expect(
+      loadTestConfig({
+        AWM_OPENCODE_GO_ENABLED: 'true',
+        AWM_OPENCODE_GO_TRIGGER_ENABLED: 'false',
+        AWM_OPENCODE_GO_TRIGGER_MODEL: 'opencode-go/kimi-k3',
+        AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS: '120',
+      }),
+    ).toMatchObject({
+      AWM_OPENCODE_GO_ENABLED: true,
+      AWM_OPENCODE_GO_TRIGGER_ENABLED: false,
+      AWM_OPENCODE_GO_TRIGGER_MODEL: 'opencode-go/kimi-k3',
+      AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS: 120,
+    });
+    for (const model of [
+      'kimi-k3',
+      'opencode/big-pickle',
+      'opencode-go/x; rm -rf /',
+      'opencode-go/',
+    ]) {
+      expect(() => loadTestConfig({ AWM_OPENCODE_GO_TRIGGER_MODEL: model })).toThrow(
+        /AWM_OPENCODE_GO_TRIGGER_MODEL/,
+      );
+    }
+    expect(() => loadTestConfig({ AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS: '181' })).toThrow();
   });
 
   it('allows the Claude Code quota action to be disabled and validates its approved model', () => {

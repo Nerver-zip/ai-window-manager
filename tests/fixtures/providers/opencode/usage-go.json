@@ -1,0 +1,36 @@
+{
+  "location": {
+    "directory": "/awm-synthetic/workspace"
+  },
+  "data": {
+    "workspace": {
+      "id": "wrk_synthetic",
+      "name": "Synthetic Workspace",
+      "usageURL": "https://opencode.invalid/console/wrk_synthetic/activity/overview"
+    },
+    "go": {
+      "rolling": {
+        "percent": 12.5,
+        "limited": false,
+        "resetsAt": 1795273200000
+      },
+      "weekly": {
+        "percent": 45,
+        "limited": false,
+        "resetsAt": 1795392000000
+      },
+      "monthly": {
+        "percent": 30,
+        "limited": false,
+        "resetsAt": 1796083200000
+      }
+    },
+    "budgets": [
+      {
+        "id": "budget_synthetic",
+        "future": "ignored additive field"
+      }
+    ],
+    "future_field": true
+  }
+}
