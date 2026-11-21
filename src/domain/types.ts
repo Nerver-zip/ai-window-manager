@@ -139,7 +139,6 @@ export type ProviderActionStatus = 'succeeded' | 'failed' | 'uncertain' | 'rejec
 
 export interface TriggerWindowRequest {
   intentId: string;
-  dedupeKey: string;
   reasonCode: string;
   windowKind?: string;
 }
