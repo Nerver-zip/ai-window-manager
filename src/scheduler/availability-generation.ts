@@ -202,19 +202,13 @@ function hasVerifiedGenerationAdvance(
       !['ACTIVE', 'INACTIVE', 'EXHAUSTED'].includes(cycle.phase)
     )
       continue;
-    const priorSample = input.repositories.windowSamples.latestAtOrBefore(
+    const priorSample = input.repositories.windowSamples.latestActionableInRange(
       input.providerId,
       previous.windowKind,
+      previous.cycleAtMs,
       cycle.cycleAtMs - 1,
     );
-    const priorObservedAtMs = priorSample ? Date.parse(priorSample.observedAt) : NaN;
-    if (
-      priorSample &&
-      priorObservedAtMs >= previous.cycleAtMs &&
-      ['exact', 'high'].includes(priorSample.phase.confidence) &&
-      ['ACTIVE', 'EXHAUSTED', 'RESET_DUE'].includes(priorSample.phase.value)
-    )
-      return true;
+    if (priorSample) return true;
   }
   return false;
 }

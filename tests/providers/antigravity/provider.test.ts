@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
   ANTIGRAVITY_TRIGGER_MESSAGE,
   AntigravityProvider as ExportedAntigravityProvider,
   containsAuthenticationMarker,
@@ -600,6 +601,7 @@ describe('AntigravityProvider', () => {
     'dispatches only the configured Argon model %s with durable cleanup',
     async (model) => {
       let sentArgs: string[] = [];
+      let sentPrompt = '';
       let registered = false;
       const provider = providerFor('', {
         triggerEnabled: true,
@@ -608,7 +610,10 @@ describe('AntigravityProvider', () => {
         spawnProcess: (executable, args, options) => {
           sentArgs = args;
           return streamingActionProcessFactory(actionFixture('trigger-success.json'), {
-            onPrompt: () => expect(registered).toBe(true),
+            onPrompt: (input) => {
+              expect(registered).toBe(true);
+              sentPrompt = input;
+            },
             initModel: model,
           })(executable, args, options);
         },
@@ -636,6 +641,10 @@ describe('AntigravityProvider', () => {
         '--model',
         model,
       ]);
+      expect(JSON.parse(sentPrompt.trim())).toEqual({
+        event: 'user',
+        message: { content: ANTIGRAVITY_ARGON_TRIGGER_MESSAGE },
+      });
     },
   );
 

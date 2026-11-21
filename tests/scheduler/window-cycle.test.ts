@@ -109,6 +109,63 @@ describe('observed quota cycle', () => {
     const result = observeWindowCycle(sample(30, 20_000), active.cycle);
     expect(result.window.phase.value).toBe('UNKNOWN');
     expect(result.cycle.anchoredResetAtMs).toBe(active.cycle.anchoredResetAtMs);
+    // Repeated static shifted resets still stay blocked.
+    const repeated = observeWindowCycle(sample(240, 20_000), result.cycle);
+    expect(repeated.window.phase.value).toBe('UNKNOWN');
+    expect(repeated.cycle.anchoredResetAtMs).toBe(active.cycle.anchoredResetAtMs);
+  });
+
+  it('recovers to INACTIVE when a forced reset holds 0% and rolling now+duration for 180s', () => {
+    const active = observeWindowCycle(sample(0, 18_000, 0.25));
+    expect(active.cycle.anchoredResetAtMs).toBe(origin + 18_000_000);
+
+    // First post-reset reading establishes the UNKNOWN rolling baseline.
+    const baseline = observeWindowCycle(sample(30), active.cycle);
+    expect(baseline.window.phase.value).toBe('UNKNOWN');
+    expect(baseline.cycle.lastObservedAtMs).toBe(origin + 30_000);
+    expect(baseline.cycle.anchoredResetAtMs).toBe(origin + 18_000_000);
+
+    // Sustained rolling readings before 180s preserve the baseline and stay UNKNOWN.
+    for (const seconds of [60, 120, 209]) {
+      const pending = observeWindowCycle(sample(seconds), baseline.cycle);
+      expect(pending.window.phase.value).toBe('UNKNOWN');
+      expect(pending.cycle).toEqual(baseline.cycle);
+    }
+
+    // At 180s from the rolling baseline, forced reset is confirmed.
+    const recovered = observeWindowCycle(sample(210), baseline.cycle);
+    expect(recovered.window.phase).toMatchObject({ value: 'INACTIVE', confidence: 'high' });
+    expect(recovered.cycle.cycleAtMs).toBe(origin + 210_000);
+    expect(recovered.cycle.anchoredResetAtMs).toBeNull();
+  });
+
+  it('resets forced-reset confirmation if backend flickers back to ACTIVE or static reset', () => {
+    const active = observeWindowCycle(sample(0, 18_000, 0.25));
+    const firstRolling = observeWindowCycle(sample(30), active.cycle);
+    const midFlicker = observeWindowCycle(sample(120), firstRolling.cycle);
+    expect(midFlicker.window.phase.value).toBe('UNKNOWN');
+
+    // Rollout flickers back to the old active state, invalidating the 30s baseline.
+    const flickeredActive = observeWindowCycle(sample(150, 18_000, 0.25), midFlicker.cycle);
+    expect(flickeredActive.window.phase.value).toBe('ACTIVE');
+    expect(flickeredActive.cycle.anchoredResetAtMs).toBe(origin + 18_000_000);
+
+    const secondBaseline = observeWindowCycle(sample(180), flickeredActive.cycle);
+    expect(secondBaseline.window.phase.value).toBe('UNKNOWN');
+    // 210s is 180s after the first baseline, but only 30s after the post-flicker baseline.
+    expect(observeWindowCycle(sample(210), secondBaseline.cycle).window.phase.value).toBe(
+      'UNKNOWN',
+    );
+    const confirmed = observeWindowCycle(sample(360), secondBaseline.cycle);
+    expect(confirmed.window.phase).toMatchObject({ value: 'INACTIVE', confidence: 'high' });
+    expect(confirmed.cycle.anchoredResetAtMs).toBeNull();
+
+    // A single rolling reading followed by a static (non-rolling) reset does not recover.
+    const active2 = observeWindowCycle(sample(0, 18_000, 0.25));
+    const rollOnce = observeWindowCycle(sample(30), active2.cycle);
+    const staticAfter = observeWindowCycle(sample(240, 18_030), rollOnce.cycle);
+    expect(staticAfter.window.phase.value).toBe('UNKNOWN');
+    expect(staticAfter.cycle.anchoredResetAtMs).toBe(origin + 18_000_000);
   });
 
   it('preserves non-temporal provider facts and does not promote low confidence on repeated reads', () => {

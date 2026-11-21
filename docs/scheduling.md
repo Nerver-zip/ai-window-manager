@@ -251,6 +251,16 @@ medium-confidence `INACTIVE`. Only `claude_code_five_hour` is a trigger target.
 The weekly window is never started, because one request always counts against
 both allowances.
 
+### Mid-cycle forced-reset recovery
+
+When a provider forcibly resets an active window before its previously anchored
+reset time expires, an isolated shifted timestamp or transient rollout flicker
+remains `UNKNOWN`. The shared cycle tracker transitions the window back to
+high-confidence `INACTIVE`, clears the superseded anchor, and advances the
+cycle only after an already-`UNKNOWN` rolling baseline (`usageRatio === 0` and
+`resetAt ≈ observedAt + duration`) persists consistently for at least 180
+seconds without reverting to the old anchor.
+
 ## Reconcile loop
 
 Default every 30s:

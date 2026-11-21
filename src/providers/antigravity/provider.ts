@@ -29,6 +29,8 @@ import {
   type AntigravityUsageGroup,
 } from './protocol.js';
 import {
+  ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
+  ANTIGRAVITY_TRIGGER_MESSAGE,
   AntigravityTransportError,
   AntigravityActionTransportError,
   runAntigravityTriggerCommand,
@@ -86,7 +88,7 @@ const ARGON_TRIGGER_MODELS = new Set([
   'gemini-4-argon-high',
 ]);
 
-export { ANTIGRAVITY_TRIGGER_MESSAGE } from './transport.js';
+export { ANTIGRAVITY_ARGON_TRIGGER_MESSAGE, ANTIGRAVITY_TRIGGER_MESSAGE } from './transport.js';
 
 const TRIGGER_MODEL_GROUP_BY_WINDOW_KIND: Readonly<Record<string, keyof AntigravityTriggerModels>> =
   {
@@ -395,6 +397,8 @@ export class AntigravityProvider implements ProviderAdapter {
       const stdout = await runAntigravityTriggerCommand({
         executable: this.executable,
         model,
+        promptMessage:
+          group === 'argon' ? ANTIGRAVITY_ARGON_TRIGGER_MESSAGE : ANTIGRAVITY_TRIGGER_MESSAGE,
         verifyModelSelection: group === 'argon',
         timeoutMs: this.actionTimeoutSeconds * 1_000,
         registerCleanupArtifact: ctx.registerCleanupArtifact,

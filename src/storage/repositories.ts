@@ -335,6 +335,26 @@ export class WindowSampleRepository {
     return row ? windowSnapshotFromRow(row) : undefined;
   }
 
+  latestActionableInRange(
+    providerId: string,
+    windowKind: string,
+    fromMs: number,
+    toMs: number,
+  ): WindowSnapshot | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM window_samples
+         WHERE provider_id = ? AND window_kind = ?
+           AND observed_at_ms >= ? AND observed_at_ms <= ?
+           AND phase IN ('ACTIVE', 'EXHAUSTED', 'RESET_DUE')
+           AND phase_confidence IN ('exact', 'high')
+         ORDER BY observed_at_ms DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(providerId, windowKind, fromMs, toMs) as WindowSampleRow | undefined;
+    return row ? windowSnapshotFromRow(row) : undefined;
+  }
+
   listForUsageAggregation(afterId: number, limit: number): UsageSampleInput[] {
     return this.db
       .prepare(
