@@ -132,6 +132,38 @@ RUN set -eux; \
     test "$(HOME=/tmp DISABLE_AUTOUPDATER=1 /opt/claude-code/bin/claude --version)" = "${claude_version} (Claude Code)"; \
     chmod -R a-w /opt/claude-code
 
+FROM node:24-trixie-slim AS opencode
+ARG TARGETARCH
+# OpenCode Go client. Pinned to the exact v2.3.2 release that SPIKE-008 probed:
+# the usage route and `opencode api` exist only in the v2 line (the repository's
+# "latest" release is still v1). Digests are the release assets' published
+# SHA-256 values, re-verified here; bump them together (see docs/providers.md).
+ARG OPENCODE_VERSION=2.3.2
+ARG OPENCODE_SHA256_AMD64=563b5d663637226b6e3bb4bb6803281bc39b0d2cd88db06d674b6420aab009b0
+ARG OPENCODE_SHA256_ARM64=9d10185acdb72336e086e699ca363a6065f410fd3c1caed0dc8046e95ac06ccb
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar gzip \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) opencode_asset='opencode-linux-x64.tar.gz'; opencode_sha256="${OPENCODE_SHA256_AMD64}" ;; \
+      arm64) opencode_asset='opencode-linux-arm64.tar.gz'; opencode_sha256="${OPENCODE_SHA256_ARM64}" ;; \
+      *) echo "unsupported Docker architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    printf '%s' "${opencode_sha256}" | grep -Eq '^[a-f0-9]{64}$'; \
+    archive="/tmp/${opencode_asset}"; \
+    curl --fail --silent --show-error --location --proto '=https' --retry 3 \
+      "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${opencode_asset}" \
+      --output "${archive}"; \
+    printf '%s  %s\n' "${opencode_sha256}" "${archive}" | sha256sum --check -; \
+    tar --list --gzip --file "${archive}" | grep -Fxq 'opencode'; \
+    test "$(tar --list --gzip --file "${archive}" | wc -l)" = 1; \
+    install -d -m 0755 /opt/opencode/bin /tmp/opencode-extract; \
+    tar --extract --gzip --file "${archive}" --directory /tmp/opencode-extract; \
+    install -m 0555 /tmp/opencode-extract/opencode /opt/opencode/bin/opencode; \
+    test "$(HOME=/tmp OPENCODE_DISABLE_AUTOUPDATE=1 /opt/opencode/bin/opencode --version)" = "opencode v${OPENCODE_VERSION}"; \
+    chmod -R a-w /opt/opencode
+
 # Use Ubuntu LTS for the security-maintained D-Bus/keyring runtime packages;
 # retain the official Node 24 binary built in the dependency stage.
 FROM ubuntu:24.04 AS runtime
@@ -150,18 +182,21 @@ ENV NODE_ENV=production \
     AWM_ANTIGRAVITY_EXECUTABLE=/provider-clients/antigravity/current \
     AWM_CLAUDE_CODE_ENABLED=false \
     AWM_CLAUDE_CODE_HOME=/claude-state \
-    AWM_CLAUDE_CODE_EXECUTABLE=/provider-clients/claude_code/current
+    AWM_CLAUDE_CODE_EXECUTABLE=/provider-clients/claude_code/current \
+    AWM_OPENCODE_GO_ENABLED=false \
+    AWM_OPENCODE_GO_HOME=/opencode-go-state \
+    AWM_OPENCODE_GO_EXECUTABLE=/opt/opencode/bin/opencode
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates dbus-daemon gnome-keyring gpgv libsecret-1-0 tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --create-home --home-dir /home/awm awm \
-    && mkdir -p /data /codex-state /antigravity-state /antigravity-keyring /claude-state /provider-clients /home/awm \
+    && mkdir -p /data /codex-state /antigravity-state /antigravity-keyring /claude-state /opencode-go-state /provider-clients /home/awm \
       /antigravity-state/.local/share/keyrings \
-    && chown -R awm:awm /data /codex-state /antigravity-state /antigravity-keyring /claude-state /provider-clients /home/awm \
+    && chown -R awm:awm /data /codex-state /antigravity-state /antigravity-keyring /claude-state /opencode-go-state /provider-clients /home/awm \
     && chmod 0755 /data \
-    && chmod 0700 /codex-state /antigravity-state /antigravity-keyring /claude-state /provider-clients /home/awm
+    && chmod 0700 /codex-state /antigravity-state /antigravity-keyring /claude-state /opencode-go-state /provider-clients /home/awm
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
@@ -172,6 +207,7 @@ RUN chmod -R a+rX /app/assets
 COPY --from=codex /opt/codex /opt/codex
 COPY --from=antigravity /opt/antigravity /opt/antigravity
 COPY --from=claude-code /opt/claude-code /opt/claude-code
+COPY --from=opencode /opt/opencode /opt/opencode
 COPY provider-keys ./provider-keys
 COPY --chmod=0555 scripts/claude-code-cli.sh /usr/local/bin/claude-code-cli
 COPY provider-clients.lock.json ./provider-clients.lock.json

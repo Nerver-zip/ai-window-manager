@@ -108,6 +108,16 @@ device` over plain pipes in the dedicated home. Naming the method skips the
       confirms sign-in.
     - Provider reads pause while a sign-in is active, as for the other providers.
 
+11. **Packaging.** The image bundles the official `opencode` v2.3.2 Linux release
+    (`opencode-linux-x64.tar.gz` / `opencode-linux-arm64.tar.gz`) at
+    `/opt/opencode/bin/opencode`, owned by root and read-only. The Dockerfile pins
+    the version and per-architecture SHA-256 (the release assets' published
+    digests), re-verifies the digest during the build, requires the archive to
+    hold exactly one `opencode` file, and asserts `opencode --version`. v2.3.2
+    is the version SPIKE-008 probed: the usage route and `opencode api` exist
+    only in the v2 line, while the repository's "latest" release is still v1.
+    State lives in the dedicated `/opencode-go-state` volume.
+
 ## Consequences
 
 - Monitoring needs only a Console sign-in in AWM's isolated home, done from AWM Settings. A Go-only API
@@ -124,10 +134,9 @@ device` over plain pipes in the dedicated home. Naming the method skips the
 
 ## Deferred
 
-- A pinned, checksum-verified OpenCode release in the container image and the
-  provider-client updater integration. Until then `AWM_OPENCODE_GO_EXECUTABLE`
-  points at an operator-supplied official binary (the Settings sign-in works with
-  it).
+- Provider-client updater integration for OpenCode (check, update and rollback
+  from Settings). The image ships a pinned binary only; updating it means
+  changing the Dockerfile pin and rebuilding.
 - What the CLI prints after the operator approves (for example a workspace
   choice or a success line) has not been observed; it was never approved against
   a real account. The driver sends no input and relies on the independent usage

@@ -204,6 +204,30 @@ honor the original HTTPS scheme and set `Secure` cookies. Do not set broad
 entries such as `0.0.0.0/0` or `::/0`; do not trust headers from arbitrary LAN
 clients.
 
+## OpenCode Go setup
+
+1. Set `AWM_OPENCODE_GO_ENABLED=true` and restart. Window starts are allowed by
+   default (see [ADR-011](adr/011-opencode-go-provider.md)). Set
+   `AWM_OPENCODE_GO_TRIGGER_ENABLED=false`, or choose monitoring only in
+   Settings, to opt out. The image bundles the pinned official client at
+   `/opt/opencode/bin/opencode`; its state lives in the `awm-opencode-go-state`
+   volume (`/opencode-go-state`).
+2. In Settings, select OpenCode Go and choose **Connect OpenCode Go**. AWM runs
+   the unmodified official `opencode auth login opencode --method device` in that
+   state directory and shows a one-time code and the
+   `opencode.ai/console/device` link. Approve it in your browser with the
+   OpenCode Console account that has the Go subscription. Nothing is typed back
+   into AWM, and AWM never reads or stores the credential; the client keeps it in
+   its own state volume. A Go-only API key cannot be used: the usage report needs
+   a Console login.
+3. AWM verifies the sign-in with a fresh usage read (no model request). Until the
+   login is complete the provider reports `OPENCODE_GO_AUTH_REQUIRED`.
+
+The weekly (Monday 00:00 UTC) and monthly windows start by themselves; only the
+5-hour window is ever started, with one ordinary `Hi!` that AWM deletes by exact
+session ID. Choose the exact 5-hour target in the schedule before actions can be
+planned.
+
 ## Claude Code setup
 
 1. Set `AWM_CLAUDE_CODE_ENABLED=true` and restart. Window starts are allowed by

@@ -95,8 +95,8 @@ which reports the signed-in Console workspace's Go meters without a model reques
 The client keeps its own credentials in an isolated home; AWM never reads them, and sign-in is guided in Settings with a one-time code approved in your browser. A
 Go-only API key is not enough, because the usage report needs a Console login. Only
 the 5-hour window is started; the weekly (Monday 00:00 UTC) and monthly windows start
-by themselves. The start session is deleted by exact ID. The container image does not
-yet bundle OpenCode, so point `AWM_OPENCODE_GO_EXECUTABLE` at an official binary. See
+by themselves. The start session is deleted by exact ID. The image bundles a pinned official
+OpenCode client (v2.3.2). See
 [ADR-011](docs/adr/011-opencode-go-provider.md) and
 [SPIKE-008](docs/research/spikes/SPIKE-008-opencode-go.md).
 
@@ -318,6 +318,7 @@ Named volumes preserve state across container rebuilds and ordinary `down`:
 | `awm-antigravity-state`   | Antigravity CLI state and authentication.                   |
 | `awm-antigravity-keyring` | Dedicated Antigravity keyring data.                         |
 | `awm-claude-code-state`   | Claude Code CLI state and authentication.                   |
+| `awm-opencode-go-state`   | OpenCode CLI state and Console sign-in.                     |
 | `awm-provider-clients`    | Validated active provider-client versions.                  |
 
 Do not use `docker compose down -v` unless you intend to delete these volumes,

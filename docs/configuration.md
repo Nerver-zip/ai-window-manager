@@ -114,8 +114,8 @@ ambiguous after possible dispatch stays uncertain.
 | `AWM_OPENCODE_GO_TRIGGER_ENABLED`        | `true`                                                    | Allow the quota-consuming 5-hour start; `false` opts out.                     |
 | `AWM_OPENCODE_GO_TRIGGER_MODEL`          | `opencode-go/deepseek-v4.1-flash`                         | Start model; must be `opencode-go/<model>`.                                   |
 | `AWM_OPENCODE_GO_ACTION_TIMEOUT_SECONDS` | `90`                                                      | Start timeout (5–180); a timeout after dispatch stays uncertain.              |
-| `AWM_OPENCODE_GO_HOME`                   | `./data/opencode-go`                                      | Dedicated HOME and XDG base for the client; client-owned credentials.         |
-| `AWM_OPENCODE_GO_EXECUTABLE`             | `opencode`                                                | Official binary (not yet bundled in the image).                               |
+| `AWM_OPENCODE_GO_HOME`                   | `./data/opencode-go` (image: `/opencode-go-state`)        | Dedicated HOME and XDG base for the client; client-owned credentials.         |
+| `AWM_OPENCODE_GO_EXECUTABLE`             | `opencode` (image: `/opt/opencode/bin/opencode`)          | Pinned official binary (v2.3.2 in the image).                                 |
 
 Claude Code is seeded with a 120-second minimum poll interval.
 
