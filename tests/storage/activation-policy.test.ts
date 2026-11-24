@@ -81,26 +81,18 @@ function policies(): SchedulePolicyRecord[] {
 }
 
 describe('persisted activation policies', () => {
-  it('round-trips the Argon family scope without changing its manual review defaults', () => {
+  it('rejects the retired Argon policy scope at the SQLite boundary', () => {
     const context = openFixture();
-    const argonPolicy: SchedulePolicyRecord = {
-      id: 'activation-antigravity-argon',
-      providerId: 'fake',
-      scope: 'argon',
-      requiresReview: true,
-      kind: 'manual',
-      kindExplicit: false,
-      enabled: true,
-      timezone: 'America/Sao_Paulo',
-      config: { windowKind: 'antigravity_argon_weekly' },
-      createdAtMs,
-      updatedAtMs: createdAtMs,
-    };
-
-    context.repositories.schedulePolicies.upsert(argonPolicy);
-
-    expect(context.repositories.schedulePolicies.get(argonPolicy.id)).toEqual(argonPolicy);
-    expect(context.repositories.schedulePolicies.list('fake')).toEqual([argonPolicy]);
+    expect(() =>
+      context.db
+        .prepare(
+          `INSERT INTO schedule_policies (
+            id, provider_id, scope, requires_review, kind, kind_explicit, enabled,
+            timezone, config_json, created_at_ms, updated_at_ms
+          ) VALUES ('retired', 'fake', 'argon', 0, 'manual', 0, 1, 'UTC', '{}', ?, ?)`,
+        )
+        .run(createdAtMs, createdAtMs),
+    ).toThrow(/CHECK constraint failed/);
   });
 
   it('round-trips all five modes through SQLite and reopens them unchanged', () => {

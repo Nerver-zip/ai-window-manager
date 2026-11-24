@@ -49,21 +49,36 @@ deployment remains operator acceptance; no quota-consuming action was run.
   D-Bus/Secret Service, non-root execution and optional mounted unlock-file
   secret. For configured providers, automatic starts are on by default and may
   be explicitly opted out in provider settings or through the environment gate.
-- **AGY-001 / ARGON-001**: official headless `/usage` read-only adapter with
-  strict normalization and independent Gemini, Claude-GPT and Argon weekly
-  quota scopes. Argon recognizes only the exact weekly bucket ID; it does not
-  infer a five-hour target.
+- **AGY-001**: official headless `/usage` read-only adapter with strict
+  normalization for the shared Gemini and Claude/GPT quota families. Gemini 4
+  Argon is a selectable Gemini model, not an independent quota scope.
 - **WEB-004 / TEST-004**: Settings onboarding UI and offline lifecycle/runtime
   test coverage.
 
-The existing Gemini and Claude/GPT quota actions are separate,
-owner-confirmed, `observed_undocumented` quota-consuming capabilities. Their
-global Antigravity environment gate defaults on for configured providers and
-can be explicitly set to false. Argon is separately gated off by default and
-starts in manual, review-required mode with no target. Any action also requires
-provider automation mode, the exact saved target, configured model and normal
-preflight checks. There is no live AWM Argon trigger acceptance, and the CLI
-wrapper is not represented as Google-approved for consumer plans.
+The Gemini and Claude/GPT quota actions are separate, owner-confirmed,
+`observed_undocumented` quota-consuming capabilities. Their global Antigravity
+environment gate defaults on for configured providers and can be explicitly
+set to false. A Gemini 4 Argon model selection uses the Gemini family target
+and the same gate; no independent Argon scope or gate exists. Any action also
+requires provider automation mode, the exact saved target, configured model
+and normal preflight checks. The historical 2026-11-14 Argon-model run is
+account/client evidence, not a current bucket-ID check or provider approval.
+
+## ARGON-002 — Retire the independent Antigravity Argon quota scope
+
+**Status: implementation complete; schema, UI/API, configuration, provider behavior, tests and documentation updated.**
+
+Treat Gemini 4 Argon as a selectable model inside the shared Gemini quota
+family, consistent with Google's public [CLI usage documentation](https://antigravity.google/docs/cli/commands/usage/)
+and [plans documentation](https://antigravity.google/docs/plans). Do not map or
+target a separate Argon bucket. Keep historic samples, usage intervals, cycle
+evidence and events readable and label the old usage series as retired. Migration
+016 archives the previous Argon policy, preserves cleanup obligations and
+dedupe/history, skips unsent intents, terminalizes retryable failures, and
+resolves potentially dispatched actions as unknown without retry. Old Argon
+environment keys and API scopes are not migrated to Gemini. Current quota
+bucket identifiers and the nested CLI usage JSON remain unverified as stable
+public contracts.
 
 ## Native operator access milestone — complete
 
@@ -284,14 +299,18 @@ family's five-hour reset. See
 supports the implemented integration, but does not establish a
 dedicated start API or generalize to all accounts/versions. The capability is
 `observed_undocumented` and quota-consuming; the global gate defaults on for
-configured providers and can be explicitly disabled. Argon has no live trigger
-acceptance and retains its additional default-off gate.
+configured providers and can be explicitly disabled. The historical
+2026-11-14 Argon-model run used the then-separate weekly row; current scheduling
+uses the Gemini quota target and has no Argon-specific gate.
 
 **Dependencies**: ANT-001. No undocumented provider endpoint or token handling.
 
-## ARGON-001 — Add weekly-only Gemini 4 Argon support
+## ARGON-001 — Add weekly-only Gemini 4 Argon support (superseded)
 
-**Status: ARGON_MONITORING_AND_POLICY_READY (2026-10-20). Offline validation and browser acceptance passed; PR/operator review remains required. No live Argon prompt has been sent.**
+**Historical status only: this implementation was superseded by ARGON-002.**
+
+The remaining text records the proposal and validation status at the time. It
+does not describe current runtime behavior or supported policy configuration.
 
 Normalize only the exact provider bucket ID `gemini-argon-wtu-weekly` with
 `window: weekly` to `antigravity_argon_weekly`, independent of group order or

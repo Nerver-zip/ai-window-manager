@@ -1,13 +1,12 @@
 import type { SchedulePolicyScope } from '../storage/repositories.js';
 
-export type ActivationPolicyScope = 'default' | 'gemini' | 'claude_gpt' | 'argon';
+export type ActivationPolicyScope = 'default' | 'gemini' | 'claude_gpt';
 
-export const ANTIGRAVITY_POLICY_SCOPES = ['gemini', 'claude_gpt', 'argon'] as const;
+export const ANTIGRAVITY_POLICY_SCOPES = ['gemini', 'claude_gpt'] as const;
 
 const ANTIGRAVITY_POLICY_IDS: Record<Exclude<ActivationPolicyScope, 'default'>, string> = {
   gemini: 'activation-antigravity-gemini',
   claude_gpt: 'activation-antigravity-claude-gpt',
-  argon: 'activation-antigravity-argon',
 };
 
 export function activationPolicyId(
@@ -26,7 +25,6 @@ export function activationPolicyScopes(providerKind: string): readonly Activatio
 export function policyScopeForWindowKind(windowKind: string): ActivationPolicyScope | undefined {
   if (windowKind.startsWith('antigravity_gemini_')) return 'gemini';
   if (windowKind.startsWith('antigravity_claude_gpt_')) return 'claude_gpt';
-  if (windowKind === 'antigravity_argon_weekly') return 'argon';
   return undefined;
 }
 
@@ -46,5 +44,5 @@ export function windowKindBelongsToPolicyScope(
       windowKind === 'antigravity_claude_gpt_weekly'
     );
   }
-  return windowKind === 'antigravity_argon_weekly';
+  return false;
 }

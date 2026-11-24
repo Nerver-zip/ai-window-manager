@@ -167,9 +167,7 @@ export class Reconciler {
         if (policy.scope === 'legacy') continue;
         if (
           provider.kind === 'antigravity' &&
-          ((policy.scope !== 'gemini' &&
-            policy.scope !== 'claude_gpt' &&
-            policy.scope !== 'argon') ||
+          ((policy.scope !== 'gemini' && policy.scope !== 'claude_gpt') ||
             policy.id !== activationPolicyId(provider.id, policy.scope))
         ) {
           this.appendEventIfChanged({
@@ -230,7 +228,7 @@ export class Reconciler {
         if (
           provider.kind === 'antigravity' &&
           requestedWindowKind &&
-          (policy.scope !== 'gemini' && policy.scope !== 'claude_gpt' && policy.scope !== 'argon'
+          (policy.scope !== 'gemini' && policy.scope !== 'claude_gpt'
             ? true
             : !windowKindBelongsToPolicyScope(requestedWindowKind, policy.scope))
         ) {

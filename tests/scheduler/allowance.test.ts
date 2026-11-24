@@ -135,7 +135,7 @@ describe('findExhaustedAllowance', () => {
   });
 
   describe('Antigravity model families', () => {
-    it('blocks a family start when the family other window is exhausted', () => {
+    it('blocks a Gemini five-hour start when the Gemini weekly allowance is exhausted', () => {
       const fiveHour = window('antigravity', 'antigravity_gemini_five_hour', { usage: 0 });
       const weekly = window('antigravity', 'antigravity_gemini_weekly', {
         phase: 'EXHAUSTED',
@@ -164,31 +164,25 @@ describe('findExhaustedAllowance', () => {
       ).toBeUndefined();
     });
 
-    it('lets Argon, which has only a weekly allowance, stand alone', () => {
-      const gemini = window('antigravity', 'antigravity_gemini_weekly', {
-        phase: 'EXHAUSTED',
-        usage: 1,
-        resetAt: future,
-      });
-      const argon = window('antigravity', 'antigravity_argon_weekly', {
+    it('ignores a retired Argon bucket when checking an active Gemini target', () => {
+      const fiveHour = window('antigravity', 'antigravity_gemini_five_hour', {
         phase: 'ACTIVE',
         usage: 0.3,
       });
-
-      expect(check('antigravity', 'antigravity_argon_weekly', [gemini, argon])).toBeUndefined();
-    });
-
-    it('blocks an Argon start when its own weekly allowance is used up', () => {
+      const weekly = window('antigravity', 'antigravity_gemini_weekly', {
+        phase: 'ACTIVE',
+        usage: 0.4,
+      });
       const argon = window('antigravity', 'antigravity_argon_weekly', {
         phase: 'EXHAUSTED',
         usage: 1,
         resetAt: future,
       });
 
-      expect(check('antigravity', 'antigravity_argon_weekly', [argon])).toEqual({
-        windowKind: 'antigravity_argon_weekly',
-        resetAt: future,
-      });
+      expect(
+        check('antigravity', 'antigravity_gemini_five_hour', [fiveHour, weekly, argon]),
+      ).toBeUndefined();
+      expect(check('antigravity', 'antigravity_argon_weekly', [argon])).toBeUndefined();
     });
 
     it('checks only the target when an Antigravity window is outside every known family', () => {
@@ -201,9 +195,9 @@ describe('findExhaustedAllowance', () => {
         usage: 1,
       });
 
-      expect(check('antigravity', 'antigravity_future_family_weekly', [unknown, other])).toEqual({
-        windowKind: 'antigravity_future_family_weekly',
-      });
+      expect(check('antigravity', 'antigravity_future_family_weekly', [unknown, other])).toBe(
+        undefined,
+      );
     });
   });
 
@@ -321,7 +315,7 @@ describe('buildAvailabilityGeneration', () => {
     );
   });
 
-  it('keeps Antigravity Gemini, Claude/GPT and Argon generations in their own family', () => {
+  it('keeps only the two current Antigravity families in availability generations', () => {
     const gemini = window('antigravity', 'antigravity_gemini_five_hour');
     const geminiWeekly = window('antigravity', 'antigravity_gemini_weekly');
     const claude = window('antigravity', 'antigravity_claude_gpt_weekly');
@@ -335,7 +329,7 @@ describe('buildAvailabilityGeneration', () => {
       ]),
     );
     expect(generation('antigravity', argon.windowKind, [gemini, geminiWeekly, claude, argon])).toBe(
-      JSON.stringify([{ windowKind: argon.windowKind, cycleAtMs: Date.parse(observedAt) - 3000 }]),
+      undefined,
     );
   });
 

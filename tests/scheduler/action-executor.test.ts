@@ -140,8 +140,9 @@ function setup(
 
 const ANTIGRAVITY_TEST_WINDOWS = [
   { windowKind: 'antigravity_gemini_five_hour', durationSeconds: 18_000 },
+  { windowKind: 'antigravity_gemini_weekly', durationSeconds: 604_800 },
   { windowKind: 'antigravity_claude_gpt_five_hour', durationSeconds: 18_000 },
-  { windowKind: 'antigravity_argon_weekly', durationSeconds: 604_800 },
+  { windowKind: 'antigravity_claude_gpt_weekly', durationSeconds: 604_800 },
 ] as const;
 
 type TriggerWindow = NonNullable<ProviderAdapter['triggerWindow']>;
@@ -244,7 +245,7 @@ function upsertAntigravityPolicy(context: ReturnType<typeof setup>, windowKind: 
     id: policyId,
     providerId: 'antigravity',
     scope,
-    requiresReview: scope === 'argon',
+    requiresReview: false,
     kind: 'manual',
     kindExplicit: false,
     enabled: true,
@@ -1230,9 +1231,9 @@ describe('ActionExecutor', () => {
     );
   });
 
-  it('confirms an Argon weekly start only from a fresh exact Argon window observation', async () => {
+  it('confirms a Gemini weekly start only from a fresh exact Gemini window observation', async () => {
     const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
-    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    configureAntigravityIntent(context, 'antigravity_gemini_weekly');
     let dispatches = 0;
     let inspections = 0;
     let dispatchedWindowKind: string | undefined;
@@ -1250,7 +1251,7 @@ describe('ActionExecutor', () => {
         inspections += 1;
         return withAntigravityWindows(
           await context.fake.inspect(ctx),
-          dispatches > 0 ? 'antigravity_argon_weekly' : undefined,
+          dispatches > 0 ? 'antigravity_gemini_weekly' : undefined,
         );
       },
     };
@@ -1261,14 +1262,14 @@ describe('ActionExecutor', () => {
 
     expect(report.confirmedIntentIds).toEqual(['intent-1']);
     expect(context.repositories.actionIntents.get('intent-1')?.state).toBe('confirmed');
-    expect(dispatchedWindowKind).toBe('antigravity_argon_weekly');
+    expect(dispatchedWindowKind).toBe('antigravity_gemini_weekly');
     expect(inspections).toBe(2);
     expect(dispatches).toBe(1);
   });
 
-  it('does not repeat an ambiguous Argon dispatch after restarting the executor', async () => {
+  it('does not repeat an ambiguous Gemini dispatch after restarting the executor', async () => {
     const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
-    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    configureAntigravityIntent(context, 'antigravity_gemini_weekly');
     let dispatches = 0;
     let dispatchedWindowKind: string | undefined;
     const adapter = antigravityAdapter(context, (_ctx, request) => {
@@ -1284,7 +1285,7 @@ describe('ActionExecutor', () => {
       state: 'uncertain',
       lastErrorCode: 'ETIMEDOUT',
     });
-    expect(dispatchedWindowKind).toBe('antigravity_argon_weekly');
+    expect(dispatchedWindowKind).toBe('antigravity_gemini_weekly');
     expect(dispatches).toBe(1);
 
     context.db.close();
@@ -1306,13 +1307,13 @@ describe('ActionExecutor', () => {
     expect(dispatches).toBe(1);
   });
 
-  it('keeps Gemini and Claude starts planned while an Argon start is unresolved', async () => {
+  it('keeps cross-family starts planned while a Gemini start is unresolved', async () => {
     const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
-    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    configureAntigravityIntent(context, 'antigravity_gemini_weekly');
     const nowMs = context.clock.now().getTime();
     addAntigravityIntent(context, {
       id: 'intent-gemini',
-      windowKind: 'antigravity_gemini_five_hour',
+      windowKind: 'antigravity_gemini_weekly',
       scheduledForMs: nowMs,
     });
     addAntigravityIntent(context, {
@@ -1469,16 +1470,16 @@ describe('ActionExecutor', () => {
     expect(cleanupAttempts).toBe(2);
   });
 
-  it('retries only Argon artifact deletion after cleanup failure', async () => {
+  it('retries only Antigravity artifact deletion after cleanup failure', async () => {
     const context = setup({ providerId: 'antigravity', windowDurationSeconds: 604_800 });
-    configureAntigravityIntent(context, 'antigravity_argon_weekly');
+    configureAntigravityIntent(context, 'antigravity_gemini_weekly');
     let triggerAttempts = 0;
     let cleanupAttempts = 0;
     const adapter = antigravityAdapter(context, async (ctx) => {
       triggerAttempts += 1;
       await ctx.registerCleanupArtifact?.({
         kind: 'antigravity_conversation',
-        externalId: 'synthetic-argon-conversation-id',
+        externalId: 'synthetic-gemini-conversation-id',
       });
       return {
         status: 'uncertain',

@@ -183,7 +183,7 @@ interface ProviderRead {
   activationPolicyNeedsAttention: boolean;
   activationPolicies?: ProviderPolicyRead[];
   capabilities?: ProviderCapabilities;
-  triggerModels?: { gemini: string; claudeGpt: string; argon?: string };
+  triggerModels?: { gemini: string; claudeGpt: string };
   pendingActions?: Array<{
     id: string;
     state: string;
@@ -810,7 +810,7 @@ export function buildServer(input: BuildServerInput) {
     });
     if (csrf.setCookie) reply.header('Set-Cookie', csrf.setCookie);
     reply.type('text/html; charset=utf-8');
-    const notice = queryMessage(request.query);
+    const queryNotice = queryMessage(request.query);
     const scheduling = readScheduling({
       repositories: input.repositories,
       adapters: input.adapters,
@@ -819,6 +819,10 @@ export function buildServer(input: BuildServerInput) {
     });
     const requestedProviderId = stringValue(asRecord(request.query).providerId);
     const requestedScope = stringValue(asRecord(request.query).scope);
+    const notice =
+      requestedScope === 'argon'
+        ? 'The independent Gemini 4 Argon allowance has been retired. Its saved schedule was not transferred; this page shows the current Gemini policy.'
+        : queryNotice;
     const selected =
       (requestedProviderId
         ? scheduling.providers.find((provider) => provider.providerId === requestedProviderId)
@@ -1567,11 +1571,6 @@ function settingsProviderViews(input: BuildServerInput): SettingsProviderView[] 
             triggerModels: {
               gemini: input.config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
               claudeGpt: input.config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
-              ...(capabilities.windowTrigger.supportedWindowKinds?.includes(
-                'antigravity_argon_weekly',
-              )
-                ? { argon: input.config.AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL }
-                : {}),
             },
           }
         : {}),
@@ -1703,11 +1702,6 @@ function readProviders(input: BuildServerInput): ProviderRead[] {
             triggerModels: {
               gemini: input.config.AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL,
               claudeGpt: input.config.AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL,
-              ...(capabilities.windowTrigger.supportedWindowKinds?.includes(
-                'antigravity_argon_weekly',
-              )
-                ? { argon: input.config.AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL }
-                : {}),
             },
           }
         : {}),
@@ -1799,13 +1793,6 @@ function resolveUsageView(input: BuildServerInput, query: Record<string, unknown
     repositories: input.repositories,
     now,
     timezone,
-    observedWindows: providers.flatMap((provider) => {
-      if (provider.kind !== 'antigravity') return [];
-      const argonWindow = input.repositories.providerState
-        .get(provider.id)
-        ?.observation?.windows.find((window) => window.windowKind === 'antigravity_argon_weekly');
-      return argonWindow ? [{ providerId: provider.id, windowKind: argonWindow.windowKind }] : [];
-    }),
     ...(requestedProvider ? { providerId: requestedProvider } : {}),
     ...(requestedWindow && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(requestedWindow)
       ? { windowKind: requestedWindow }
@@ -2387,7 +2374,6 @@ function triggerModelForWindow(provider: ProviderRead, window: WindowSnapshot): 
   if (window.windowKind.startsWith('antigravity_gemini_')) return provider.triggerModels.gemini;
   if (window.windowKind.startsWith('antigravity_claude_gpt_'))
     return provider.triggerModels.claudeGpt;
-  if (window.windowKind === 'antigravity_argon_weekly') return provider.triggerModels.argon ?? null;
   return null;
 }
 

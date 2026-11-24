@@ -13,7 +13,7 @@ const MAX_ACTION_STDOUT_BYTES = 128 * 1024;
 const MAX_ACTION_TIMEOUT_MS = 120_000;
 const TERMINATION_GRACE_MS = 250;
 export const ANTIGRAVITY_TRIGGER_MESSAGE = 'Hi!';
-export const ANTIGRAVITY_ARGON_TRIGGER_MESSAGE =
+export const ANTIGRAVITY_ARGON_MODEL_TRIGGER_MESSAGE =
   'Without using any tools, reply with two short sentences explaining why the sky appears blue during the day.';
 
 export type AntigravityTransportErrorCode =

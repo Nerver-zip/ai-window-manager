@@ -45,25 +45,19 @@ provider-wide claim serialization, and provider-client archive digest/version/
 compatibility/rollback paths. No provider account or quota is used by these
 tests.
 
-Argon regression coverage uses the synthetic weekly usage fixture. It checks
-that only `gemini-argon-wtu-weekly` with `window: weekly` maps to
-`antigravity_argon_weekly`, independent of group order/name. Unknown Argon-like
-buckets keep a stable opaque observed-only identity with unknown phase while
-known Gemini and Claude/GPT windows remain fresh; opaque identities are not
-trigger targets. Colliding normalized identities still fail closed. No
-five-hour Argon target is created. Configuration and provider tests cover the
-default-off Argon gate,
-the three accepted model slugs and blank-model disablement, and prevent a
-pre-dispatch model mismatch from sending a prompt. If the selected model
-mismatch appears after possible dispatch, the result remains uncertain without
-retry. Bootstrap and migration tests cover Argon's manual, review-required,
-targetless initial policy and preservation of existing saved policies under
-migration 014.
-
-These tests establish offline implementation behavior only. They do not
-establish a live Argon trigger effect or provider approval of a third-party
-CLI wrapper. No normal test should send an Argon prompt or spend provider
-quota.
+Antigravity regression coverage checks that transitional Argon-like quota rows
+are ignored without masking current Gemini or Claude/GPT observations. Gemini
+4 Argon remains a valid Gemini trigger model, with the model-specific `init`
+verification and pre-dispatch mismatch protection; if a mismatch appears after
+possible dispatch, the result stays uncertain without retry. There is no active
+Argon target, scope, gate, or model-specific quota bucket. The migration test
+starts from schema 015 with Gemini and Claude/GPT policies, historical Argon
+samples/cycles/events, pending exact-ID cleanup, and representative old action
+states. It verifies policy archival, safe intent resolution, current-observation
+filtering, retained historical evidence/cleanup, foreign-key integrity and
+idempotence on reopen. These are offline implementation checks; they do not
+establish a current provider bucket ID or provider approval of an AWM trigger.
+No normal test contacts Antigravity or spends provider quota.
 
 ## Secret scanning
 

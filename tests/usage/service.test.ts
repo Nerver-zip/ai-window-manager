@@ -187,7 +187,7 @@ describe('usage aggregation persistence', () => {
     expect(data.providers.map((item) => item.id)).toEqual(['codex']);
   });
 
-  it('projects Argon weekly usage separately from Gemini weekly usage in daily history', () => {
+  it('keeps retained Argon usage separate from Gemini in historical daily usage', () => {
     const { db, repositories } = database();
     repositories.providers.upsert({ ...provider(), id: 'antigravity', kind: 'antigravity' });
     const base = Date.parse('2026-09-22T10:00:00.000Z');
@@ -226,7 +226,7 @@ describe('usage aggregation persistence', () => {
     expect(gemini.selectedDay?.usagePercentagePoints).toBeCloseTo(31);
   });
 
-  it('includes currently observed windows before their first history sample is aggregated', () => {
+  it('includes currently reported Gemini windows before their first history sample is aggregated', () => {
     const { repositories } = database();
     repositories.providers.upsert({ ...provider(), id: 'antigravity', kind: 'antigravity' });
     const data = readUsagePageData({
@@ -237,17 +237,13 @@ describe('usage aggregation persistence', () => {
       windowKind: 'antigravity_argon_weekly',
       visibleProviderIds: new Set(['antigravity']),
       providers: [{ id: 'antigravity', label: 'Antigravity', kind: 'antigravity' }],
-      observedWindows: [
-        { providerId: 'antigravity', windowKind: 'antigravity_gemini_weekly' },
-        { providerId: 'antigravity', windowKind: 'antigravity_argon_weekly' },
-      ],
+      observedWindows: [{ providerId: 'antigravity', windowKind: 'antigravity_gemini_weekly' }],
     });
 
     expect(data.windows).toEqual([
       { providerId: 'antigravity', windowKind: 'antigravity_gemini_weekly' },
-      { providerId: 'antigravity', windowKind: 'antigravity_argon_weekly' },
     ]);
-    expect(data.selectedWindowKind).toBe('antigravity_argon_weekly');
+    expect(data.selectedWindowKind).toBe('antigravity_gemini_weekly');
     expect(data.selectedDay?.usagePercentagePoints).toBeNull();
   });
 

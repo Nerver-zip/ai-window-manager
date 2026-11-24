@@ -93,7 +93,6 @@ export AWM_CODEX_ENABLED='false'
 export AWM_CODEX_TRIGGER_ENABLED='false'
 export AWM_ANTIGRAVITY_ENABLED='false'
 export AWM_ANTIGRAVITY_TRIGGER_ENABLED='false'
-export AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED='false'
 export AWM_ANTIGRAVITY_KEYRING_SECRET_FILE=''
 export AWM_LOG_LEVEL='info'
 export AWM_RECONCILE_INTERVAL_SECONDS='30'
@@ -227,7 +226,7 @@ const db = new Database('/data/window-manager.db');
 db.pragma('busy_timeout = 5000');
 const mode = process.argv[2];
 const now = Date.now();
-assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 14);
+assert.equal(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 16);
 assert.equal(db.pragma('integrity_check', { simple: true }), 'ok');
 assert.deepEqual(db.pragma('foreign_key_check'), []);
 if (mode === 'before-hint') {

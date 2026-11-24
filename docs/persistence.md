@@ -48,13 +48,12 @@ SQLite fits because there is one owning daemon, low write concurrency, modest hi
   cleanup succeeds; it is not exposed in ordinary history, metrics or read APIs.
 - `settings`/`providers`/`schedule_policies`: current runtime config.
 
-Codex retains the canonical `activation-codex` policy. Antigravity stores three
-independent policies: `activation-antigravity-gemini`,
-`activation-antigravity-claude-gpt`, and `activation-antigravity-argon`. Each row
-records a family scope, an exact normalized `windowKind`, and whether an operator
-review is required. Argon currently has the single canonical weekly target
-`antigravity_argon_weekly`. Its policy starts in manual mode with review
-required, so automatic starts are off.
+Codex retains the canonical `activation-codex` policy. Antigravity stores two
+independent policies: `activation-antigravity-gemini` and
+`activation-antigravity-claude-gpt`. Each row records a family scope, an exact
+normalized `windowKind`, and whether operator review is required. Gemini 4
+Argon is a model that can be selected under the Gemini policy; it has no
+independent quota scope or policy.
 Manual action requests persist their exact target in the action intent. Changing
 a saved policy changes future planning only and does not rewrite previous
 intents or history.
@@ -221,13 +220,20 @@ The forward-only schema currently consists of:
   existing intent is rewritten or automatically closed. Back up before upgrade;
   restoring a compatible backup is the schema rollback path.
 - `migrations/014_argon_policy_scope.sql` widens the policy scope constraint to
-  include Argon. It copies all existing policy IDs and values, preserving
-  action-intent foreign-key references, dedupe keys, history and cleanup jobs;
-  it creates no Argon policy and no action intent. The migration runner disables
-  foreign-key enforcement outside the transaction for this table rebuild, checks
-  every foreign key before recording the migration, and restores the prior
-  enforcement setting. Back up before upgrade; restoring a compatible backup is
-  the schema rollback path.
+  include Argon. It is retained as a historical migration; migration 016 removes
+  that scope from the active schema.
+- `migrations/016_retire_antigravity_argon.sql` removes the independent Argon
+  quota scope. Gemini and Claude/GPT policy rows keep their IDs and values;
+  retired policy settings are recorded in `schedule_policy_retired` history
+  and are never copied to Gemini. Unsent Argon intents are skipped, retryable
+  failures become terminal, and intents that may have dispatched become
+  `resolved_unknown` so they cannot be retried or counted as successful. The
+  migration detaches those intents from deleted policy rows and preserves their
+  explanation, dedupe identity and action history. It removes old Argon windows
+  from current Antigravity state while retaining historical samples, usage
+  intervals, cycles, events and exact cleanup jobs. The rebuilt SQLite CHECK
+  constraint prevents new `argon` policies. Back up before upgrade; rollback
+  requires restoring a compatible backup.
 
 `src/storage/database.ts` applies numbered migrations transactionally, records the
 applied version and timestamp in `schema_migrations`, enables WAL, foreign keys

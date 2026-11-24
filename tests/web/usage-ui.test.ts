@@ -251,7 +251,7 @@ describe('Usage page', () => {
     expect(topControls).not.toContain('<select name="window"');
   });
 
-  it('adds an Argon weekly chart only when Argon is observed or has saved history', () => {
+  it('labels retained Argon usage as a retired historical chart', () => {
     const argonSeries: HistoryUsageSeries = {
       providerId: 'antigravity',
       windowKind: 'antigravity_argon_weekly',
@@ -275,8 +275,10 @@ describe('Usage page', () => {
     const observedCards = chartCards(observedHtml);
 
     expect(observedCards).toHaveLength(5);
-    expect(observedCards[4]).toContain('Gemini 4 Argon · Weekly window');
-    expect(observedCards[4]).toContain('aria-label="Gemini 4 Argon · Weekly window over time"');
+    expect(observedCards[4]).toContain('Gemini 4 Argon (retired allowance) · Weekly window');
+    expect(observedCards[4]).toContain(
+      'aria-label="Gemini 4 Argon (retired allowance) · Weekly window over time"',
+    );
     expect(observedCards[4]).toContain('value="antigravity|antigravity_argon_weekly|7d" selected');
     expect(observedCards[4]).toContain('name="window" value="antigravity_argon_weekly"');
     expectSoftNavigationContract(observedHtml);
@@ -291,7 +293,9 @@ describe('Usage page', () => {
       series: [argonSeries],
     });
     expect(chartCards(retainedHistoryHtml)).toHaveLength(5);
-    expect(chartCards(retainedHistoryHtml)[4]).toContain('Gemini 4 Argon · Weekly window');
+    expect(chartCards(retainedHistoryHtml)[4]).toContain(
+      'Gemini 4 Argon (retired allowance) · Weekly window',
+    );
 
     const unavailableHtml = renderUsagePage({ data: antigravityData(), series: [] });
     expect(chartCards(unavailableHtml)).toHaveLength(4);
@@ -361,10 +365,10 @@ describe('Usage page', () => {
       /<section class="usage-calendar-section"[\s\S]*?<\/section>/,
     )?.[0];
     expect(argonSection).toContain(
-      '<h2 id="daily-usage-heading">Gemini 4 Argon · Weekly window</h2>',
+      '<h2 id="daily-usage-heading">Gemini 4 Argon (retired allowance) · Weekly window</h2>',
     );
     expect(argonSection).toContain(
-      '<option value="antigravity_argon_weekly" selected>Gemini 4 Argon</option>',
+      '<option value="antigravity_argon_weekly" selected>Gemini 4 Argon (retired allowance)</option>',
     );
     expect(argonSection).not.toMatch(/<option value="[^"]*argon_five_hour/);
     expect(argonSection).toContain('aria-label="Daily usage family"');

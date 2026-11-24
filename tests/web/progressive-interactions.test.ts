@@ -1026,17 +1026,21 @@ describe('progressive SSR interaction runtime', () => {
     expect(runtime.history.pushed).toEqual(['http://awm.test/schedule?scope=claude_gpt']);
   });
 
-  it('soft-navigates to the Argon policy region and keeps the selected family in browser history', async () => {
+  it('soft-navigates to the Claude/GPT policy region and keeps the selected family in browser history', async () => {
     const runtime = createRuntime({
       target: 'schedule-workspace',
-      pages: new Map([['argon', { target: 'schedule-workspace', text: 'Gemini 4 Argon' }]]),
+      pages: new Map([
+        ['claude_gpt', { target: 'schedule-workspace', text: 'Claude and GPT Models' }],
+      ]),
       fetch: () =>
-        Promise.resolve(response({ token: 'argon', url: 'http://awm.test/schedule?scope=argon' })),
+        Promise.resolve(
+          response({ token: 'claude_gpt', url: 'http://awm.test/schedule?scope=claude_gpt' }),
+        ),
     });
     const link = new FakeElement('a', runtime.document);
     link.dataset.awmSoftNav = '';
     link.dataset.awmTarget = 'schedule-workspace';
-    link.href = 'http://awm.test/schedule?scope=argon';
+    link.href = 'http://awm.test/schedule?scope=claude_gpt';
     const event = {
       type: 'click',
       target: link,
@@ -1051,8 +1055,8 @@ describe('progressive SSR interaction runtime', () => {
     await flushPromises();
 
     expect(event.defaultPrevented).toBe(true);
-    expect(runtime.document.regions[0]?.textContent).toBe('Gemini 4 Argon');
-    expect(runtime.history.pushed).toEqual(['http://awm.test/schedule?scope=argon']);
+    expect(runtime.document.regions[0]?.textContent).toBe('Claude and GPT Models');
+    expect(runtime.history.pushed).toEqual(['http://awm.test/schedule?scope=claude_gpt']);
   });
 
   it('restores the server-rendered page region on browser back/forward without adding history entries', async () => {

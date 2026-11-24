@@ -1,5 +1,10 @@
 # SPIKE-006 — Gemini 4 Argon quota identity and CLI compatibility
 
+> Historical research, superseded for current runtime behavior by ARGON-002.
+> The independent weekly target described below is retired. Keep this report
+> and its fixtures as evidence of what earlier official-client output showed;
+> do not use its bucket ID or policy model for current scheduling.
+
 **Research checked:** 2026-10-20
 
 **Status:** Argon weekly quota identity is observed from operator-provided Pro account output and independently matches the official CLI 1.4.3 bucket shape. Argon trigger effect remains unverified. The operator authorized continued official-CLI wrapper implementation on 2026-10-20; that authorization does not establish Google approval under the applicable terms.

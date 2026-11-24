@@ -78,7 +78,6 @@ const config = loadConfig({
   AWM_CODEX_TRIGGER_ENABLED: 'true',
   AWM_ANTIGRAVITY_ENABLED: 'true',
   AWM_ANTIGRAVITY_TRIGGER_ENABLED: 'true',
-  AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED: 'true',
   AWM_CLAUDE_CODE_ENABLED: 'true',
   AWM_CLAUDE_CODE_TRIGGER_ENABLED: 'true',
   AWM_OPENCODE_GO_ENABLED: 'true',
@@ -94,11 +93,9 @@ const real = [
   new AntigravityProvider({
     executable: 'agy-not-run',
     triggerEnabled: true,
-    argonTriggerEnabled: true,
     triggerModels: {
       gemini: 'gemini-3.8-flash-low',
       claudeGpt: 'claude-sonnet-4-6',
-      argon: 'gemini-4-argon-low',
     },
   }),
   new ClaudeCodeProvider({
@@ -230,7 +227,6 @@ state('antigravity', 'UP', agObs, [
   win('antigravity', 'antigravity_gemini_weekly', 0.34, NOW_MS - 2 * DAY, WEEK, agObs),
   win('antigravity', 'antigravity_claude_gpt_five_hour', 0.08, NOW_MS - 20 * MIN, FIVE, agObs),
   win('antigravity', 'antigravity_claude_gpt_weekly', 0.71, NOW_MS - 5 * DAY, WEEK, agObs),
-  win('antigravity', 'antigravity_argon_weekly', 0.12, NOW_MS - 1 * DAY, WEEK, agObs, 'ACTIVE'),
 ]);
 const ccObs = NOW_MS - 9 * HOUR;
 state(
@@ -296,14 +292,6 @@ policy('activation-antigravity-claude-gpt', 'antigravity', 'claude_gpt', 'active
     { start: '20:00', end: '23:00' },
   ],
 });
-policy(
-  'activation-antigravity-argon',
-  'antigravity',
-  'argon',
-  'manual',
-  { windowKind: 'antigravity_argon_weekly' },
-  { requiresReview: true, kindExplicit: false },
-);
 policy('activation-opencode_go', 'opencode_go', 'default', 'auto', {
   windowKind: 'opencode_go_five_hour',
 });
@@ -426,6 +414,7 @@ const kinds: Array<[string, string]> = [
   ['antigravity', 'antigravity_gemini_weekly'],
   ['antigravity', 'antigravity_claude_gpt_five_hour'],
   ['antigravity', 'antigravity_claude_gpt_weekly'],
+  // Retained synthetic history shows how the retired allowance remains archived.
   ['antigravity', 'antigravity_argon_weekly'],
   ['opencode_go', 'opencode_go_five_hour'],
   ['opencode_go', 'opencode_go_weekly'],

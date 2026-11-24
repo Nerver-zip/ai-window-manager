@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   ProviderActionResultSchema,
   ProviderIdSchema,
@@ -29,7 +28,7 @@ import {
   type AntigravityUsageGroup,
 } from './protocol.js';
 import {
-  ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
+  ANTIGRAVITY_ARGON_MODEL_TRIGGER_MESSAGE,
   ANTIGRAVITY_TRIGGER_MESSAGE,
   AntigravityTransportError,
   AntigravityActionTransportError,
@@ -50,8 +49,7 @@ const MAX_RESET_DISTANCE_MS = 366 * 24 * 60 * 60 * 1000;
 // Normalize only tiny endpoint residuals; the observed 99.95% remaining stays active.
 const REMAINING_FRACTION_EPSILON = 0.00001;
 const AMBIGUOUS_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS';
-const UNSUPPORTED_WINDOW_IDENTITY_SUMMARY = 'PROVIDER_WINDOW_IDENTITY_UNSUPPORTED';
-const ARGON_WEEKLY_BUCKET_ID = 'gemini-argon-wtu-weekly';
+const RETIRED_ARGON_BUCKET_ID = 'gemini-argon-wtu-weekly';
 
 class AntigravityWindowIdentityAmbiguousError extends Error {
   constructor() {
@@ -69,7 +67,6 @@ export interface AntigravityProviderOptions {
   actionTimeoutSeconds?: number;
   antigravityHome?: string;
   triggerEnabled?: boolean;
-  argonTriggerEnabled?: boolean;
   triggerModels?: AntigravityTriggerModels;
   cwd?: string;
   now?: () => Date;
@@ -79,16 +76,18 @@ export interface AntigravityProviderOptions {
 export interface AntigravityTriggerModels {
   gemini?: string;
   claudeGpt?: string;
-  argon?: string;
 }
 
-const ARGON_TRIGGER_MODELS = new Set([
+const GEMINI_ARGON_MODELS = new Set([
   'gemini-4-argon-low',
   'gemini-4-argon-medium',
   'gemini-4-argon-high',
 ]);
 
-export { ANTIGRAVITY_ARGON_TRIGGER_MESSAGE, ANTIGRAVITY_TRIGGER_MESSAGE } from './transport.js';
+export {
+  ANTIGRAVITY_ARGON_MODEL_TRIGGER_MESSAGE,
+  ANTIGRAVITY_TRIGGER_MESSAGE,
+} from './transport.js';
 
 const TRIGGER_MODEL_GROUP_BY_WINDOW_KIND: Readonly<Record<string, keyof AntigravityTriggerModels>> =
   {
@@ -96,7 +95,6 @@ const TRIGGER_MODEL_GROUP_BY_WINDOW_KIND: Readonly<Record<string, keyof Antigrav
     antigravity_gemini_weekly: 'gemini',
     antigravity_claude_gpt_five_hour: 'claudeGpt',
     antigravity_claude_gpt_weekly: 'claudeGpt',
-    antigravity_argon_weekly: 'argon',
   };
 
 const WINDOW_DURATION_SECONDS = {
@@ -113,16 +111,7 @@ function fact<T>(
   return { value, source, confidence, observedAt };
 }
 
-function groupKey(
-  group: AntigravityUsageGroup,
-  bucket: AntigravityUsageBucket,
-  index: number,
-): string {
-  // The verified provider-issued bucket ID is independent of group order and labels.
-  if (isVerifiedArgonBucket(bucket)) return 'argon';
-  if (isUnverifiedArgonBucket(group, bucket)) {
-    return `argon_unverified_${unverifiedArgonBucketKey(bucket)}`;
-  }
+function groupKey(group: AntigravityUsageGroup, index: number): string {
   const normalized = group.name.trim().toLowerCase().replace(/\s+/g, ' ');
   const knownGroups: Readonly<Record<string, string>> = {
     'gemini models': 'gemini',
@@ -132,33 +121,15 @@ function groupKey(
   return `group_${index + 1}`;
 }
 
-function isVerifiedArgonBucket(bucket: AntigravityUsageBucket): boolean {
-  return bucket.id === ARGON_WEEKLY_BUCKET_ID && bucket.window === 'weekly';
-}
-
-function isUnverifiedArgonBucket(
+/** Ignore the retired independent allowance, including transitional renamed rows. */
+function isRetiredArgonBucket(
   group: AntigravityUsageGroup,
   bucket: AntigravityUsageBucket,
 ): boolean {
-  return !isVerifiedArgonBucket(bucket) && hasUnverifiedArgonIdentityHint(group, bucket);
-}
-
-function unverifiedArgonBucketKey(bucket: AntigravityUsageBucket): string {
-  // The hash keeps the observed key stable without exposing provider-supplied IDs.
-  // Its 24 hex characters keep WindowKind under the domain's 64-character limit.
-  return createHash('sha256')
-    .update(bucket.id, 'utf8')
-    .update('\0')
-    .update(bucket.window, 'utf8')
-    .digest('hex')
-    .slice(0, 24);
-}
-
-function hasUnverifiedArgonIdentityHint(
-  group: AntigravityUsageGroup,
-  bucket: AntigravityUsageBucket,
-): boolean {
-  return [group.name, group.description, bucket.id, bucket.name, bucket.description].some(
+  if (bucket.id === RETIRED_ARGON_BUCKET_ID) return true;
+  const isCanonicalGeminiGroup =
+    group.name.trim().toLowerCase().replace(/\s+/g, ' ') === 'gemini models';
+  const bucketLooksArgon = [bucket.id, bucket.name, bucket.description].some(
     (value) =>
       typeof value === 'string' &&
       value
@@ -166,6 +137,17 @@ function hasUnverifiedArgonIdentityHint(
         .split(/[^a-z0-9]+/)
         .includes('argon'),
   );
+  const groupLooksLikeRetiredArgon =
+    !isCanonicalGeminiGroup &&
+    [group.name, group.description].some(
+      (value) =>
+        typeof value === 'string' &&
+        value
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .includes('argon'),
+    );
+  return bucketLooksArgon || groupLooksLikeRetiredArgon;
 }
 
 function windowKey(
@@ -174,7 +156,7 @@ function windowKey(
   bucket: AntigravityUsageBucket,
 ): string {
   const durationKey = bucket.window === '5h' ? 'five_hour' : 'weekly';
-  return `antigravity_${groupKey(group, bucket, index)}_${durationKey}`;
+  return `antigravity_${groupKey(group, index)}_${durationKey}`;
 }
 
 function reasonableResetAt(
@@ -200,21 +182,14 @@ function normalizeBucket(
 ): WindowSnapshot {
   const resetAt = reasonableResetAt(bucket.reset_time, observedAt);
   const windowKind = windowKey(group, groupIndex, bucket);
-  const unverifiedArgon = isUnverifiedArgonBucket(group, bucket);
-  const argonTimingUnknown =
-    windowKind === 'antigravity_argon_weekly' &&
-    bucket.remaining_fraction >= 1 - REMAINING_FRACTION_EPSILON &&
-    (!resetAt || Date.parse(resetAt) <= Date.parse(observedAt));
   const phase = fact<WindowPhase>(
-    unverifiedArgon || argonTimingUnknown
-      ? 'UNKNOWN'
-      : bucket.remaining_fraction >= 1 - REMAINING_FRACTION_EPSILON
-        ? 'INACTIVE'
-        : bucket.remaining_fraction <= REMAINING_FRACTION_EPSILON
-          ? 'EXHAUSTED'
-          : 'ACTIVE',
-    unverifiedArgon ? 'unknown' : 'inferred',
-    unverifiedArgon || argonTimingUnknown ? 'unknown' : 'high',
+    bucket.remaining_fraction >= 1 - REMAINING_FRACTION_EPSILON
+      ? 'INACTIVE'
+      : bucket.remaining_fraction <= REMAINING_FRACTION_EPSILON
+        ? 'EXHAUSTED'
+        : 'ACTIVE',
+    'inferred',
+    'high',
     observedAt,
   );
   return {
@@ -316,13 +291,9 @@ export class AntigravityProvider implements ProviderAdapter {
     this.triggerEnabled = options.triggerEnabled ?? false;
     const geminiModel = normalizeTriggerModel(options.triggerModels?.gemini);
     const claudeGptModel = normalizeTriggerModel(options.triggerModels?.claudeGpt);
-    const argonModel = normalizeTriggerModel(options.triggerModels?.argon);
     this.triggerModels = {
       ...(geminiModel ? { gemini: geminiModel } : {}),
       ...(claudeGptModel ? { claudeGpt: claudeGptModel } : {}),
-      ...(options.argonTriggerEnabled && argonModel && ARGON_TRIGGER_MODELS.has(argonModel)
-        ? { argon: argonModel }
-        : {}),
     };
     this.cwd = options.cwd;
     this.now = options.now ?? (() => new Date());
@@ -354,7 +325,7 @@ export class AntigravityProvider implements ProviderAdapter {
           ? 'Quota-consuming prompt action is disabled by the injected trigger gate'
           : triggerSupported
             ? 'Official agy headless prompt mode; window-positioning effect is experimental and account/CLI-specific'
-            : 'A trigger model must be configured for at least one Antigravity quota family',
+            : 'A trigger model must be configured for Gemini or Claude/GPT',
       },
     };
   }
@@ -392,14 +363,16 @@ export class AntigravityProvider implements ProviderAdapter {
     if (!group) return actionResult('rejected', 'AGY_TRIGGER_TARGET_UNSUPPORTED', occurredAt);
     const model = this.triggerModels[group];
     if (!model) return actionResult('rejected', 'AGY_TRIGGER_MODEL_UNAVAILABLE', occurredAt);
+    const isArgonModel = group === 'gemini' && GEMINI_ARGON_MODELS.has(model);
 
     try {
       const stdout = await runAntigravityTriggerCommand({
         executable: this.executable,
         model,
-        promptMessage:
-          group === 'argon' ? ANTIGRAVITY_ARGON_TRIGGER_MESSAGE : ANTIGRAVITY_TRIGGER_MESSAGE,
-        verifyModelSelection: group === 'argon',
+        promptMessage: isArgonModel
+          ? ANTIGRAVITY_ARGON_MODEL_TRIGGER_MESSAGE
+          : ANTIGRAVITY_TRIGGER_MESSAGE,
+        verifyModelSelection: isArgonModel,
         timeoutMs: this.actionTimeoutSeconds * 1_000,
         registerCleanupArtifact: ctx.registerCleanupArtifact,
         ...(ctx.assertDispatchAllowed ? { assertDispatchAllowed: ctx.assertDispatchAllowed } : {}),
@@ -424,7 +397,7 @@ export class AntigravityProvider implements ProviderAdapter {
       }
 
       if (envelope.status === 'SUCCESS' && envelope.num_turns === 1 && envelope.response?.trim()) {
-        if (group === 'argon' && envelope.model !== undefined && envelope.model !== model) {
+        if (isArgonModel && envelope.model !== undefined && envelope.model !== model) {
           return actionResult('uncertain', 'AGY_TRIGGER_MODEL_MISMATCH', occurredAt);
         }
         return actionResult('succeeded', undefined, occurredAt);
@@ -512,10 +485,9 @@ export class AntigravityProvider implements ProviderAdapter {
 
       const windows: WindowSnapshot[] = [];
       const seenWindowKinds = new Set<string>();
-      let hasUnverifiedArgonIdentity = false;
       envelope.command.data.groups.forEach((group, groupIndex) => {
         group.buckets.forEach((bucket) => {
-          if (isUnverifiedArgonBucket(group, bucket)) hasUnverifiedArgonIdentity = true;
+          if (isRetiredArgonBucket(group, bucket)) return;
           const window = normalizeBucket(this.id, group, groupIndex, bucket, observedAt);
           if (seenWindowKinds.has(window.windowKind)) {
             throw new AntigravityWindowIdentityAmbiguousError();
@@ -530,11 +502,7 @@ export class AntigravityProvider implements ProviderAdapter {
         observedAt,
         staleAfterSeconds: this.staleAfterSeconds,
         windows,
-        ...(windows.length === 0
-          ? { summary: 'AGY_NO_SUPPORTED_WINDOWS' }
-          : hasUnverifiedArgonIdentity
-            ? { summary: UNSUPPORTED_WINDOW_IDENTITY_SUMMARY }
-            : {}),
+        ...(windows.length === 0 ? { summary: 'AGY_NO_SUPPORTED_WINDOWS' } : {}),
       });
       this.currentHealth = observation.health;
       return observation;

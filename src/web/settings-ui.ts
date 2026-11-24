@@ -113,7 +113,7 @@ export interface SettingsProviderView {
   configured?: boolean | undefined;
   connectionLabel?: string | undefined;
   connectionTone?: 'ok' | 'attention' | 'muted' | undefined;
-  triggerModels?: { gemini: string; claudeGpt: string; argon?: string } | undefined;
+  triggerModels?: { gemini: string; claudeGpt: string } | undefined;
   providerClientUpdate?: {
     packagedVersion: string | null;
     activeVersion: string | null;
@@ -287,7 +287,7 @@ export function renderActivationSchedulePage(input: ActivationSchedulePageInput)
         <section class="current-window-summary schedule-outlook-section" aria-labelledby="current-window-title"><h3 id="current-window-title">Current window</h3><p class="field-help">The latest saved usage information from your provider.</p>${renderCurrentWindowSummary(currentWindow, selectedProvider, timezone)}</section>
         <section class="schedule-details schedule-outlook-section" aria-label="Next decision">${scheduleExplanation}</section>
         <section class="schedule-horizon-card schedule-outlook-section" aria-labelledby="horizon-title"><h3 id="horizon-title">Next 24 hours</h3><p class="muted">Times are shown in ${escapeHtml(timezone ? timeZoneDisplayName(timezone) : 'your saved time zone')}. Start markers are opportunities, not guaranteed actions.</p><div data-schedule-horizon>${renderScheduleHorizon({ policy: previewPolicy, provider: selectedProvider, currentWindow, referenceInstant: input.referenceInstant ?? DEFAULT_REFERENCE_INSTANT, timezone })}</div><p class="visually-hidden" data-preview-status role="status" aria-live="polite"></p></section>
-        ${policyScope === 'argon' || selectedProvider?.kind === 'claude_code' || selectedProvider?.kind === 'opencode_go' ? `<section class="schedule-outlook-section" aria-label="Safety notes">${renderScheduleSafety(selectedProvider, policyScope)}</section>` : ''}
+        ${selectedProvider?.kind === 'claude_code' || selectedProvider?.kind === 'opencode_go' ? `<section class="schedule-outlook-section" aria-label="Safety notes">${renderScheduleSafety(selectedProvider)}</section>` : ''}
       </aside>
       </div>
     </div>`,
@@ -638,8 +638,8 @@ function renderWindowTargetField(
   const triggerModelNote = triggerModel
     ? `<p class="managed-window-model"><span class="field-label">Trigger model</span><code>${escapeHtml(triggerModel)}</code></p>`
     : '';
-  const resolutionNote = renderWindowTargetResolutionNote(resolution, targets.length, policyScope);
-  const sideEffectWarning = crossWindowSideEffectWarning(provider, selectedTarget);
+  const resolutionNote = renderWindowTargetResolutionNote(resolution, targets.length);
+  const sideEffectWarning = crossWindowSideEffectWarning(provider);
   const sideEffectNote = sideEffectWarning
     ? `<p class="policy-guidance" role="note">${escapeHtml(sideEffectWarning)}</p>`
     : '';
@@ -660,19 +660,14 @@ function triggerModelForTarget(
   }
   if (target?.groupLabel === 'Gemini Models') return provider.triggerModels.gemini;
   if (target?.groupLabel === 'Claude and GPT Models') return provider.triggerModels.claudeGpt;
-  if (target?.windowKind === 'antigravity_argon_weekly') return provider.triggerModels.argon;
   return undefined;
 }
 
 function renderWindowTargetResolutionNote(
   resolution: WindowTargetResolution,
   targetCount: number,
-  policyScope: ActivationPolicyScope,
 ): string {
   if (targetCount === 0) {
-    if (policyScope === 'argon') {
-      return '<p class="field-help" role="status">No Gemini 4 Argon weekly window is currently reported. No other quota family or cadence will be substituted.</p>';
-    }
     return '<p class="field-help" role="status">Waiting for a provider-reported usage window. No target has been invented; automatic schedules are unavailable until an exact window is reported.</p>';
   }
   if (resolution.status === 'resolved' && resolution.source === 'legacy') {
@@ -729,14 +724,8 @@ function cadenceLabel(cadence: 'five_hour' | 'weekly'): string {
   return cadence === 'five_hour' ? '5-hour window' : 'Weekly window';
 }
 
-function crossWindowSideEffectWarning(
-  provider: SettingsProviderView | undefined,
-  target: WindowTargetDescriptor | undefined,
-): string {
+function crossWindowSideEffectWarning(provider: SettingsProviderView | undefined): string {
   const kind = `${provider?.kind ?? ''} ${provider?.id ?? ''}`.toLowerCase();
-  if (target?.windowKind === 'antigravity_argon_weekly') {
-    return 'The provider reports Gemini 4 Argon as a weekly-only allowance. Its trigger effect has not been live-validated, and Argon triggering is disabled by default.';
-  }
   if (kind.includes('antigravity') || kind.includes('agy')) {
     return 'A start may use quota in both the 5-hour and weekly windows in this group. The selected group chooses the model family; it does not limit which of that family’s quotas the provider charges.';
   }
@@ -1330,28 +1319,9 @@ function renderCapabilityRow(
   return `<div><dt>${escapeHtml(capabilityLabel(capabilityName))}</dt><dd><span class="badge ${capability.supported ? 'badge-success' : 'badge-warning'}">${status}</span><br><small>${escapeHtml(extra)}</small></dd></div>`;
 }
 
-function renderScheduleSafety(
-  provider: SettingsProviderView | undefined,
-  scope: ActivationPolicyScope = 'default',
-): string {
+function renderScheduleSafety(provider: SettingsProviderView | undefined): string {
   if (!provider)
     return '<p class="notice"><span class="badge">Waiting for a provider</span> Select a provider to see whether automatic actions are available.</p>';
-  if (provider.kind === 'antigravity' && scope === 'argon') {
-    const argonReported = provider.windows?.some(
-      (window) => window.windowKind === 'antigravity_argon_weekly',
-    );
-    if (!argonReported) {
-      return '<p class="notice"><span class="badge">Monitoring only</span> No Argon weekly target is currently reported; this schedule cannot dispatch against another quota family.</p>';
-    }
-    const exactArgonTriggerSupported =
-      provider.capabilities?.windowTrigger.supported === true &&
-      provider.capabilities.windowTrigger.supportedWindowKinds?.includes(
-        'antigravity_argon_weekly',
-      ) === true;
-    if (!exactArgonTriggerSupported) {
-      return '<p class="notice"><span class="badge">Monitoring only</span> Argon is reported as a weekly-only target, but its trigger is disabled or unavailable for this exact window. Other Antigravity trigger families do not enable Argon starts.</p>';
-    }
-  }
   if (provider.kind === 'claude_code' && provider.capabilities?.windowTrigger.supported !== true)
     return '<p class="notice"><span class="badge">Monitoring only</span> Claude Code window starts are disabled (<code>AWM_CLAUDE_CODE_TRIGGER_ENABLED</code>). The schedule can be evaluated but nothing will be sent.</p>';
   if (provider.capabilities?.windowTrigger.supported !== true)
