@@ -133,7 +133,7 @@ describe('openDatabase', () => {
     });
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 15,
+        version: 16,
       },
     );
     upgraded.close();
@@ -181,7 +181,7 @@ describe('openDatabase', () => {
   it('opens an in-memory database without creating a filesystem directory', () => {
     const db = openDatabase(':memory:');
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({
-      version: 15,
+      version: 16,
     });
     db.close();
   });
@@ -200,7 +200,7 @@ describe('openDatabase', () => {
     openDatabase(file, { migrationsDir }).close();
     const upgraded = openDatabase(file);
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
-      { version: 15 },
+      { version: 16 },
     );
     expect(
       upgraded
@@ -342,7 +342,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual(
       {
-        version: 15,
+        version: 16,
       },
     );
     expect(readPreservedRows(upgraded)).toEqual(before);
@@ -437,6 +437,7 @@ describe('openDatabase', () => {
       { version: 13, applied_at_ms: appliedAtMs },
       { version: 14, applied_at_ms: appliedAtMs },
       { version: 15, applied_at_ms: appliedAtMs },
+      { version: 16, applied_at_ms: appliedAtMs },
     ]);
     expect(db.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
@@ -456,7 +457,7 @@ describe('openDatabase', () => {
     ).toBe(0);
     expect(
       (reopened.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number }).n,
-    ).toBe(15);
+    ).toBe(16);
     reopened.close();
   });
 
@@ -647,6 +648,7 @@ describe('openDatabase', () => {
       { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
     expect(
       upgraded
@@ -687,7 +689,7 @@ describe('openDatabase', () => {
     const upgraded = openDatabase(file);
     expect(
       upgraded.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
-    ).toHaveLength(15);
+    ).toHaveLength(16);
     expect(
       upgraded
         .prepare(

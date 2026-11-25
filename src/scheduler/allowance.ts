@@ -7,9 +7,9 @@ import { policyScopeForWindowKind } from './policy-scope.js';
  * consumes, is already exhausted with a reset that has not yet passed.
  *
  * Consumption scope (explicit, conservative):
- * - Antigravity: only windows of the same model family (Gemini, Claude/GPT or
- *   Argon's weekly-only allowance). The provider may account a start against the
- *   family's other window, so both of its windows are checked.
+ * - Antigravity: only windows of the same model family (Gemini or Claude/GPT).
+ *   The provider may account a start against the family's other window, so both
+ *   of its windows are checked.
  * - Claude Code: a start is documented to count against both the five-hour and
  *   the weekly allowance. Per-model meters are not consulted, so a model-scoped
  *   limit does not block a default-model start.
@@ -128,11 +128,11 @@ function consumesSameAllowance(
   targetWindowKind: string,
   candidateWindowKind: string,
 ): boolean {
-  if (candidateWindowKind === targetWindowKind) return true;
   if (providerId === 'antigravity') {
     const scope = policyScopeForWindowKind(targetWindowKind);
     return scope !== undefined && policyScopeForWindowKind(candidateWindowKind) === scope;
   }
+  if (candidateWindowKind === targetWindowKind) return true;
   if (providerId === 'claude_code') {
     return (
       CLAUDE_CODE_CANONICAL_WINDOW_KINDS.has(targetWindowKind) &&

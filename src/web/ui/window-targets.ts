@@ -36,6 +36,7 @@ export function observedWindowTargets(
 
   for (const window of windows ?? []) {
     const windowKind = window.windowKind.trim();
+    if (providerId === 'antigravity' && windowKind.startsWith('antigravity_argon_')) continue;
     if (!windowKind || seen.has(windowKind)) continue;
     seen.add(windowKind);
 

@@ -308,9 +308,9 @@ Terms of Service and Privacy Policy. Review the CLI's settings for its opt-out;
 AWM does not configure or override that preference. Trigger prompts are normal
 provider interactions and may consume quota.
 
-## Stability upgrade to schema 14 (operator-run; not automatic deployment)
+## Stability upgrade to schema 16 (operator-run; not automatic deployment)
 
-1. Review the source diff, especially migrations 010–014 and
+1. Review the source diff, especially migrations 010–016 and
    [unknown-outcome semantics](adr/008-unknown-action-resolution.md). Run
    `pnpm validate`, `pnpm audit --audit-level moderate`, Compose config/build
    and the disposable smoke below before scheduling production downtime.
@@ -323,6 +323,11 @@ provider interactions and may consume quota.
    and verify `integrity_check`, `foreign_key_check` and the backup's schema
    version. If WAL/SHM remains after graceful stop, stop here and investigate;
    do not copy only the main file or run a destructive reset.
+   Migration 016 retires the former independent Antigravity Argon quota scope.
+   It preserves Gemini and Claude/GPT policies, archives the old Argon policy
+   without transferring its settings, retains historical usage and cleanup
+   obligations, skips unattempted old intents, and prevents retry of intents
+   that may have dispatched.
 3. With the backup verified, start the reviewed image using
    `docker compose up -d --wait --wait-timeout 180`. Index creation and the
    transactional intent/policy-table rebuilds may take longer with a large history;
@@ -336,7 +341,7 @@ provider interactions and may consume quota.
      import Database from "better-sqlite3";
      const db = new Database("/data/window-manager.db", { readonly: true });
      const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version;
-     if (version !== 14 || db.pragma("integrity_check", { simple: true }) !== "ok"
+     if (version !== 16 || db.pragma("integrity_check", { simple: true }) !== "ok"
          || db.pragma("foreign_key_check").length !== 0) process.exitCode = 1;
      console.log({ schemaVersion: version, valid: process.exitCode !== 1 });
      db.close();
@@ -348,6 +353,8 @@ provider interactions and may consume quota.
    updates or backoff. Review open intents: recovered `executing` becomes
    `uncertain`, never a new prompt. A legacy intent without an identifiable
    cycle remains blocked; do not fabricate identity or edit SQL to release it.
+   If upgrading from the former Argon policy, verify the retirement event and
+   confirm the saved Argon target was not transferred to the Gemini schedule.
    Request unknown-outcome closure only when the UI shows the exact old target
    and the service can freshly establish exact-cycle closure or repeated rolling
    inactive reset evidence after a full window duration. Cleanup remains durable.
@@ -377,7 +384,7 @@ The smoke test proves health readiness, anonymous redirects/401s, login,
 session/CSRF enforcement, and SQLite persistence after restart and stop/up. For
 the normally deployed service, `/healthz` stays public for Docker healthchecks;
 dashboard/API requests require signing in. Metrics additionally supports the
-optional dedicated technical credential. The smoke also checks schema 14,
+optional dedicated technical credential. The smoke also checks schema 16,
 inspect wakeup/defer, private loop progress, executing recovery without
 redispatch, safe refusal to resolve an unidentified legacy cycle, metrics
 restart/revocation and credential-free logs. Only disposable fixtures are used.

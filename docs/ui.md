@@ -69,8 +69,8 @@ The selected provider is laid out top-down by importance:
 3. usage windows as aligned, hairline-separated rows — name and phase, a large
    used percentage with the remaining share, a meter, the local reset time with
    relative timing, and the time zone/UTC line as secondary text. Antigravity
-   rows are grouped under Gemini Models, Claude and GPT Models and Gemini 4
-   Argon (weekly only);
+   rows are grouped under Gemini Models and Claude and GPT Models; a retained
+   Gemini 4 Argon row is labeled as retired history;
 4. the saved start policies as a compact list with Change/Choose/Review links;
 5. connection details in a disclosure.
 
@@ -108,18 +108,17 @@ inspects a provider while rendering either page.
 - manual `Trigger now` only when capability/automation mode permits.
 
 Codex has one saved activation policy. Antigravity has independent saved
-policies for Gemini Models, Claude and GPT Models, and Gemini 4 Argon; a family
-switch loads the selected policy without saving, and saving it leaves the other
-families intact. Each policy targets one exact observed window from its family.
-Argon has a weekly target only. If the provider does not report it, Schedule
-shows that target as unavailable; it does not substitute a Gemini window or
-invent a five-hour Argon window. The provider reports this as a weekly-only
-allowance; its trigger effect has not been live-validated, so Argon triggering
-is disabled by default. Ambiguous legacy Antigravity schedules require review
-before they can resume. Older manual policies without a target are flagged for
-review when an exact target for that family becomes available. If an
-Antigravity trigger is enabled and the exact target is supported, its model is
-shown as secondary detail.
+policies for Gemini Models and Claude and GPT Models; a family switch loads the
+selected policy without saving, and saving it leaves the other family intact.
+Each policy targets one exact observed window from its family. Gemini 4 Argon
+is available as a Gemini trigger model when the official CLI offers it; it does
+not have its own schedule or quota target. An old `/schedule?scope=argon` link
+shows a retirement notice and the Gemini schedule. Old Argon samples remain
+visible only as retired historical evidence. Ambiguous legacy Antigravity
+schedules require review before they can resume. Older manual policies without
+a target are flagged for review when an exact target for that family becomes
+available. If an Antigravity trigger is enabled and the exact target is
+supported, its model is shown as secondary detail.
 
 The current server-rendered `/schedule` page is one policy form beside a
 "What happens next" column (sticky on wide screens, stacked below on narrow
@@ -202,14 +201,13 @@ periods. Queries cover the selected time domain and downsample while preserving
 endpoints, extrema and outage breaks within a 384-point per-series limit.
 Chart labels use the saved timezone.
 Antigravity renders a weekly-family selector within the daily usage section and
-one chart for each observed or historically saved window. Gemini Models and
-Claude and GPT Models retain their four existing charts; Gemini 4 Argon adds a
-fifth, weekly chart only when an Argon window or its saved history exists. An
-account without Argon keeps the existing four charts and has no phantom Argon
-heatmap option. Codex's sole weekly window is selected automatically. The
-heatmap uses only reported weekly windows, has no alternate day list or
-always-visible zero-usage caveat, and retains keyboard grid navigation and
-per-day accessible names.
+one chart for each observed or historically saved window. The active Gemini
+and Claude/GPT families each have four current charts. A retained historical
+Argon series may add a read-only chart labeled `Gemini 4 Argon (retired
+allowance)`; it cannot be selected as a schedule target. The heatmap uses only
+current reported weekly windows, has no alternate day list or always-visible
+zero-usage caveat, and retains keyboard grid navigation and per-day accessible
+names. Codex's sole weekly window is selected automatically.
 
 ## Logs
 
@@ -290,14 +288,14 @@ large component framework is used.
 Visual changes must keep each page's information, actions, states and
 enhancement hooks. This table is the parity checklist for UI work.
 
-| Page                 | Information                                                                                                                                                                                          | Actions, routes and forms                                                                                                                                                                                                  | Conditional states                                                                                                                        | Enhancement and accessibility hooks                                                                                                                          |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Overview `/`         | Provider and connection, monitoring/automation state, freshness, used/left %, local and UTC reset with relative time, every window family (Argon weekly only), saved policies per Antigravity family | `GET /?provider=` switcher with noscript button; `POST /providers/:id/trigger` (capability- and automation-gated); `POST /actions/:id/resolve-unknown`; Connect/Continue sign-in link; schedule Change/Choose/Review links | No providers, one provider, disconnected, first observation pending, stale, unknown usage or reset, uncertain intent, policy needs review | Regions `overview-workspace` and `overview-provider:<id>`; mutation, pending and uncertain-message attributes; `progress` labels; `role=status`              |
-| Usage `/usage`       | Per-window charts with tooltips and point metadata, gap/reset semantics, daily heatmap (partial, no data, today), weekly-family choice, selected day, saved time zone                                | Provider links; per-chart `GET /usage` period form (noscript Apply, other charts' hidden ranges); family select (noscript); day links                                                                                      | No weekly windows, family not selected, no data, out of range, empty range, aggregation pending, Argon only when observed                 | Regions `usage-heatmap` and `usage-chart:<p>:<w>`; heatmap `role=grid` keyboard; chart `role=img` and focusable points                                       |
-| Schedule `/schedule` | Current observed window, exact target, trigger model, cross-window warning, next decision, next-24-hours preview, time zone, safety notes                                                            | Provider `GET` form (noscript); Antigravity family links; `POST /schedule` (five strategies, times, cycle anchor, active-hour periods, presets, steppers); `GET /schedule/preview`                                         | No providers, no targets, Argon unavailable, ambiguous or unresolved target (`role=alert`), review required, no time zone                 | Region `schedule-workspace`; `data-policy-*` and `data-schedule-*` hooks; preview root two levels above the form; `fieldset`/`legend`                        |
-| Logs `/logs`         | Severity, categories, provider, local time, plain-language title, reason, count                                                                                                                      | Combined provider, range and category filters; routine-checks toggle; Previous/Next (20 per page); `/history` 301                                                                                                          | Empty, provider unavailable, routine checks hidden or shown                                                                               | Region `logs-results`; focus keys; `aria-current` filters; `Log pages` navigation                                                                            |
-| Settings `/settings` | Time zone, connection status, capabilities, active/image/latest client versions, update status, retention                                                                                            | `POST /settings/timezone`; `POST /settings/providers/:id`; sign-in start/submit/cancel APIs with link and code copy; client check/install/rollback/auto-update                                                             | Connected, signing in, sign-in required, controls locked until connected, update running, controls unavailable                            | Regions `settings-timezone`, `settings-provider:<id>` and `provider-client:<id>`; `data-auth-*` hooks inside `.provider-settings`; update polling attributes |
-| Sign-in `/login`     | Invalid-credential, throttled and expired-session errors                                                                                                                                             | `POST /login` (CSRF, safe `next`); `GET`/`POST /logout`                                                                                                                                                                    | Throttled (`429`), expired session                                                                                                        | `role=alert`; autocomplete; no application navigation or provider data                                                                                       |
+| Page                 | Information                                                                                                                                                                                                                      | Actions, routes and forms                                                                                                                                                                                                  | Conditional states                                                                                                                        | Enhancement and accessibility hooks                                                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Overview `/`         | Provider and connection, monitoring/automation state, freshness, used/left %, local and UTC reset with relative time, current window families (archived Argon history is labeled retired), saved policies per Antigravity family | `GET /?provider=` switcher with noscript button; `POST /providers/:id/trigger` (capability- and automation-gated); `POST /actions/:id/resolve-unknown`; Connect/Continue sign-in link; schedule Change/Choose/Review links | No providers, one provider, disconnected, first observation pending, stale, unknown usage or reset, uncertain intent, policy needs review | Regions `overview-workspace` and `overview-provider:<id>`; mutation, pending and uncertain-message attributes; `progress` labels; `role=status`              |
+| Usage `/usage`       | Per-window charts with tooltips and point metadata, gap/reset semantics, daily heatmap (partial, no data, today), weekly-family choice, selected day, saved time zone                                                            | Provider links; per-chart `GET /usage` period form (noscript Apply, other charts' hidden ranges); family select (noscript); day links                                                                                      | No weekly windows, family not selected, no data, out of range, empty range, aggregation pending, retired Argon history labeled read-only  | Regions `usage-heatmap` and `usage-chart:<p>:<w>`; heatmap `role=grid` keyboard; chart `role=img` and focusable points                                       |
+| Schedule `/schedule` | Current observed window, exact target, trigger model, cross-window warning, next decision, next-24-hours preview, time zone, safety notes                                                                                        | Provider `GET` form (noscript); Antigravity family links; `POST /schedule` (five strategies, times, cycle anchor, active-hour periods, presets, steppers); `GET /schedule/preview`                                         | No providers, no targets, stale retired-scope link notice, ambiguous or unresolved target (`role=alert`), review required, no time zone   | Region `schedule-workspace`; `data-policy-*` and `data-schedule-*` hooks; preview root two levels above the form; `fieldset`/`legend`                        |
+| Logs `/logs`         | Severity, categories, provider, local time, plain-language title, reason, count                                                                                                                                                  | Combined provider, range and category filters; routine-checks toggle; Previous/Next (20 per page); `/history` 301                                                                                                          | Empty, provider unavailable, routine checks hidden or shown                                                                               | Region `logs-results`; focus keys; `aria-current` filters; `Log pages` navigation                                                                            |
+| Settings `/settings` | Time zone, connection status, capabilities, active/image/latest client versions, update status, retention                                                                                                                        | `POST /settings/timezone`; `POST /settings/providers/:id`; sign-in start/submit/cancel APIs with link and code copy; client check/install/rollback/auto-update                                                             | Connected, signing in, sign-in required, controls locked until connected, update running, controls unavailable                            | Regions `settings-timezone`, `settings-provider:<id>` and `provider-client:<id>`; `data-auth-*` hooks inside `.provider-settings`; update polling attributes |
+| Sign-in `/login`     | Invalid-credential, throttled and expired-session errors                                                                                                                                                                         | `POST /login` (CSRF, safe `next`); `GET`/`POST /logout`                                                                                                                                                                    | Throttled (`429`), expired session                                                                                                        | `role=alert`; autocomplete; no application navigation or provider data                                                                                       |
 
 ## Browser checks
 
@@ -307,5 +305,8 @@ enhancement hooks. This table is the parity checklist for UI work.
 - `pnpm ui:a11y <baseUrl>` runs keyboard, focus-ring, progressive-enhancement and JavaScript-disabled checks.
 - `pnpm ui:auth-flow <baseUrl> <outDir> [label]` walks the synthetic Claude Code sign-in onboarding (start the demo with `AWM_DEMO_NO_AUTOSTART=1`).
 - `pnpm ui:shots <baseUrl> <outDir> [label]` captures screenshots and reports horizontal overflow (`SHOOT_ONLY`, `SHOOT_SIZES`, `SHOOT_VIEWPORT` narrow the run).
+
+The current shared-Gemini-family screenshots are in
+[`research/evidence/antigravity-shared-gemini`](research/evidence/antigravity-shared-gemini/README.md).
 
 The browser scripts need a local Chromium or Chrome; set `CHROME_BIN` to its path if it is not found automatically.

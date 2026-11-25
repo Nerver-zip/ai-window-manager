@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  ANTIGRAVITY_ARGON_TRIGGER_MESSAGE,
+  ANTIGRAVITY_ARGON_MODEL_TRIGGER_MESSAGE,
   ANTIGRAVITY_TRIGGER_MESSAGE,
   AntigravityProvider as ExportedAntigravityProvider,
   containsAuthenticationMarker,
@@ -313,297 +313,100 @@ describe('AntigravityProvider', () => {
     });
   });
 
-  it('preserves known families when an unverified Argon group is observed', async () => {
+  it('ignores transitional Argon buckets without contaminating any shared Gemini window', async () => {
     const payload = parseAntigravityUsageEnvelope(JSON.parse(fixture('usage-json.success.json')));
-    const argonPayload = parseAntigravityUsageEnvelope(
+    const oldPayload = parseAntigravityUsageEnvelope(
       JSON.parse(fixture('usage-json.argon-weekly.json')),
     );
-    const group = structuredClone(
-      argonPayload.command!.data.groups.find((candidate) => candidate.name === 'Gemini 4 Argon')!,
+    const oldGroup = structuredClone(
+      oldPayload.command!.data.groups.find((candidate) => candidate.name === 'Gemini 4 Argon')!,
     );
-    group.buckets[0]!.id = 'gemini-argon-future-weekly';
-    payload.command!.data.groups.push(group);
+    const oldBucket = structuredClone(oldGroup.buckets[0]!);
+    payload.command!.data.groups.push(oldGroup);
+    payload
+      .command!.data.groups.find((candidate) => candidate.name === 'Gemini Models')!
+      .buckets.push(oldBucket);
+    const renamedLegacyGroup = structuredClone(oldGroup);
+    renamedLegacyGroup.name = 'Argon models';
+    renamedLegacyGroup.buckets[0]!.id = 'gemini-argon-future-weekly';
+    payload.command!.data.groups.push(renamedLegacyGroup);
+
+    const baseline = await providerFor(fixture('usage-json.success.json')).inspect({});
     const observation = await providerFor(JSON.stringify(payload)).inspect({});
 
     expect(observation.health).toBe('UP');
-    expect(observation.summary).toBe('PROVIDER_WINDOW_IDENTITY_UNSUPPORTED');
-    expect(observation.windows.map((window) => window.windowKind).sort()).toEqual(
-      expect.arrayContaining([
-        'antigravity_claude_gpt_five_hour',
-        'antigravity_claude_gpt_weekly',
-        'antigravity_gemini_five_hour',
-        'antigravity_gemini_weekly',
-      ]),
-    );
-    expect(observation.windows).toHaveLength(5);
-    const unknownWindow = observation.windows.find((window) =>
-      window.windowKind.startsWith('antigravity_argon_unverified_'),
-    )!;
-    expect(unknownWindow.windowKind).toMatch(/^antigravity_argon_unverified_[0-9a-f]{24}_weekly$/);
-    expect(unknownWindow.phase).toMatchObject({
-      value: 'UNKNOWN',
-      source: 'unknown',
-      confidence: 'unknown',
-    });
-    expect(
-      observation.windows.some((window) => window.windowKind === 'antigravity_argon_weekly'),
-    ).toBe(false);
-
-    let spawns = 0;
-    const triggerProvider = providerFor('', {
-      triggerEnabled: true,
-      argonTriggerEnabled: true,
-      triggerModels: { argon: 'gemini-4-argon-low' },
-      spawnProcess: () => {
-        spawns++;
-        throw new Error('unknown observed identities must not dispatch');
-      },
-    });
-    expect(triggerProvider.capabilities().windowTrigger.supportedWindowKinds).toEqual([
-      'antigravity_argon_weekly',
+    expect(observation.windows).toEqual(baseline.windows);
+    expect(observation.windows.map((window) => window.windowKind).sort()).toEqual([
+      'antigravity_claude_gpt_five_hour',
+      'antigravity_claude_gpt_weekly',
+      'antigravity_gemini_five_hour',
+      'antigravity_gemini_weekly',
     ]);
-    expect(
-      await triggerProvider.triggerWindow(cleanupContext, {
-        intentId: 'synthetic-unverified-argon-target',
-        reasonCode: 'test',
-        windowKind: unknownWindow.windowKind,
-      }),
-    ).toMatchObject({ status: 'rejected', errorCode: 'AGY_TRIGGER_TARGET_UNSUPPORTED' });
-    expect(spawns).toBe(0);
   });
 
-  it('preserves an unverified Argon bucket without hiding other Gemini or Claude windows', async () => {
-    const output = fixture('usage-json.success.json').replace(
-      '"id": "synthetic-gemini-weekly"',
-      '"id": "synthetic-argon-weekly"',
-    );
-    const observation = await providerFor(output).inspect({});
-
-    expect(observation.health).toBe('UP');
-    expect(observation.summary).toBe('PROVIDER_WINDOW_IDENTITY_UNSUPPORTED');
-    expect(observation.windows.map((window) => window.windowKind).sort()).toEqual(
-      expect.arrayContaining([
-        'antigravity_claude_gpt_five_hour',
-        'antigravity_claude_gpt_weekly',
-        'antigravity_gemini_five_hour',
-      ]),
-    );
-    expect(observation.windows).toHaveLength(4);
-    expect(
-      observation.windows.some((window) => window.windowKind === 'antigravity_gemini_weekly'),
-    ).toBe(false);
-    const unknownWindow = observation.windows.find((window) =>
-      window.windowKind.startsWith('antigravity_argon_unverified_'),
-    )!;
-    expect(unknownWindow.windowKind).toMatch(/^antigravity_argon_unverified_[0-9a-f]{24}_weekly$/);
-    expect(unknownWindow.phase).toMatchObject({ value: 'UNKNOWN', confidence: 'unknown' });
-  });
-
-  it('drops a valid but unreasonable reset instead of inventing timing', async () => {
-    const output = fixture('usage-json.additive.json').replace(
-      '2030-01-03T12:00:00Z',
-      '2032-01-03T12:00:00Z',
-    );
-    const observation = await providerFor(output).inspect({});
-
-    expect(observation.windows[0]?.resetAt).toBeUndefined();
-  });
-
-  it.each([false, true])(
-    'keeps five stable identities when Argon group order is reversed=%s',
-    async (reverse) => {
-      const payload = parseAntigravityUsageEnvelope(
-        JSON.parse(fixture('usage-json.argon-weekly.json')),
-      );
-      if (reverse) payload.command!.data.groups.reverse();
-      const observation = await providerFor(JSON.stringify(payload)).inspect({});
-      expect(observation.health).toBe('UP');
-      expect(observation.windows.map((w) => w.windowKind).sort()).toEqual([
-        'antigravity_argon_weekly',
-        'antigravity_claude_gpt_five_hour',
-        'antigravity_claude_gpt_weekly',
-        'antigravity_gemini_five_hour',
-        'antigravity_gemini_weekly',
-      ]);
-      expect(
-        observation.windows.find((w) => w.windowKind === 'antigravity_argon_weekly'),
-      ).toMatchObject({
-        durationSeconds: { value: 604800, source: 'inferred', confidence: 'exact' },
-        remainingRatio: { source: 'observed' },
-        phase: { source: 'inferred' },
-      });
-    },
-  );
-
-  it.each([
-    [1, 'INACTIVE'],
-    [0.75, 'ACTIVE'],
-    [0, 'EXHAUSTED'],
-  ] as const)(
-    'infers Argon remaining %s as %s without a provider lifecycle claim',
-    async (remaining, phase) => {
-      const payload = parseAntigravityUsageEnvelope(
-        JSON.parse(fixture('usage-json.argon-weekly.json')),
-      );
-      const bucket = payload.command!.data.groups.find((g) => g.name === 'Gemini 4 Argon')!
-        .buckets[0]!;
-      bucket.remaining_fraction = remaining;
-      const observation = await providerFor(JSON.stringify(payload)).inspect({});
-      expect(
-        observation.windows.find((w) => w.windowKind === 'antigravity_argon_weekly'),
-      ).toMatchObject({
-        phase: { value: phase, source: 'inferred' },
-        usageRatio: { value: 1 - remaining },
-        remainingRatio: { value: remaining },
-      });
-    },
-  );
-
-  it.each([undefined, null, '2030-01-01T11:59:00Z', '2030-01-08T12:00:00Z'])(
-    'preserves only supplied reasonable Argon reset evidence %s',
-    async (reset) => {
-      const payload = parseAntigravityUsageEnvelope(
-        JSON.parse(fixture('usage-json.argon-weekly.json')),
-      );
-      const bucket = payload.command!.data.groups.find((g) => g.name === 'Gemini 4 Argon')!
-        .buckets[0]!;
-      bucket.remaining_fraction = 1;
-      if (reset === undefined) delete bucket.reset_time;
-      else bucket.reset_time = reset;
-      const observation = await providerFor(JSON.stringify(payload)).inspect({});
-      const window = observation.windows.find((w) => w.windowKind === 'antigravity_argon_weekly')!;
-      expect(window.startedAt).toBeUndefined();
-      expect(window.resetAt?.value).toBe(reset ? new Date(reset).toISOString() : undefined);
-      expect(window.phase).toMatchObject(
-        reset && Date.parse(reset) > Date.parse(observedAt)
-          ? { value: 'INACTIVE', confidence: 'high' }
-          : { value: 'UNKNOWN', confidence: 'unknown' },
-      );
-    },
-  );
-
-  it('recognizes the observed Argon bucket inside a reordered or renamed group and rejects collisions', async () => {
-    const payload = parseAntigravityUsageEnvelope(
-      JSON.parse(fixture('usage-json.argon-weekly.json')),
-    );
-    const group = payload.command!.data.groups.find((g) => g.name === 'Gemini 4 Argon')!;
-    group.name = 'Gemini Models';
-    expect(
-      (await providerFor(JSON.stringify(payload)).inspect({})).windows.some(
-        (w) => w.windowKind === 'antigravity_argon_weekly',
-      ),
-    ).toBe(true);
-    group.buckets.push({ ...group.buckets[0]! });
-    expect(await providerFor(JSON.stringify(payload)).inspect({})).toMatchObject({
-      health: 'DEGRADED',
-      windows: [],
-      summary: 'PROVIDER_WINDOW_IDENTITY_AMBIGUOUS',
-    });
-    group.buckets = [{ ...group.buckets[0]!, window: '5h' }];
-    const unsupportedCadence = await providerFor(JSON.stringify(payload)).inspect({});
-    expect(unsupportedCadence.health).toBe('UP');
-    expect(unsupportedCadence.summary).toBe('PROVIDER_WINDOW_IDENTITY_UNSUPPORTED');
-    expect(unsupportedCadence.windows).toHaveLength(5);
-    expect(
-      unsupportedCadence.windows.some((window) => window.windowKind === 'antigravity_argon_weekly'),
-    ).toBe(false);
-    expect(
-      unsupportedCadence.windows.find((window) =>
-        window.windowKind.startsWith('antigravity_argon_unverified_'),
-      ),
-    ).toMatchObject({ phase: { value: 'UNKNOWN', confidence: 'unknown' } });
-  });
-
-  it('keeps unverified Argon identity stable across group order and display-name changes', async () => {
-    const read = async (reverse: boolean, groupName: string): Promise<string> => {
-      const payload = parseAntigravityUsageEnvelope(
-        JSON.parse(fixture('usage-json.argon-weekly.json')),
-      );
-      const argonGroup = payload.command!.data.groups.find(
-        (candidate) => candidate.name === 'Gemini 4 Argon',
-      )!;
-      argonGroup.name = groupName;
-      argonGroup.buckets[0]!.id = 'gemini-argon-future-weekly';
-      if (reverse) payload.command!.data.groups.reverse();
-      const observation = await providerFor(JSON.stringify(payload)).inspect({});
-      expect(observation.health).toBe('UP');
-      expect(observation.summary).toBe('PROVIDER_WINDOW_IDENTITY_UNSUPPORTED');
-      expect(observation.windows).toHaveLength(5);
-      expect(
-        observation.windows.some((window) => window.windowKind === 'antigravity_argon_weekly'),
-      ).toBe(false);
-      expect(
-        observation.windows.filter((window) =>
-          window.windowKind.startsWith('antigravity_argon_unverified_'),
-        ),
-      ).toHaveLength(1);
-      const unknownWindow = observation.windows.find((window) =>
-        window.windowKind.startsWith('antigravity_argon_unverified_'),
-      )!;
-      expect(unknownWindow.windowKind).toMatch(
-        /^antigravity_argon_unverified_[0-9a-f]{24}_weekly$/,
-      );
-      expect(unknownWindow.phase).toMatchObject({
-        value: 'UNKNOWN',
-        source: 'unknown',
-        confidence: 'unknown',
-      });
-      expect(observation.windows.map((window) => window.windowKind).sort()).toEqual(
-        expect.arrayContaining([
-          'antigravity_claude_gpt_five_hour',
-          'antigravity_claude_gpt_weekly',
-          'antigravity_gemini_five_hour',
-          'antigravity_gemini_weekly',
-        ]),
-      );
-      return unknownWindow.windowKind;
-    };
-
-    await expect(read(false, 'Future Argon quota')).resolves.toBe(
-      await read(true, 'Provider quota group'),
-    );
-  });
-
-  it.each([
-    { gate: false, global: true, model: 'gemini-4-argon-low' },
-    { gate: true, global: false, model: 'gemini-4-argon-low' },
-    { gate: true, global: true, model: '' },
-    { gate: true, global: true, model: 'gemini-3.8-flash-low' },
-    { gate: true, global: true, model: 'claude-sonnet-4-6' },
-  ])('cannot dispatch Argon with gate/model configuration %j', async ({ gate, global, model }) => {
+  it('advertises only the two shared families and rejects the retired independent target', async () => {
     let spawns = 0;
     const provider = providerFor('', {
-      triggerEnabled: global,
-      argonTriggerEnabled: gate,
-      triggerModels: { argon: model },
+      triggerEnabled: true,
+      triggerModels: { gemini: 'gemini-4-argon-low' },
       spawnProcess: () => {
         spawns++;
-        throw new Error('must not spawn');
+        throw new Error('the retired target must never dispatch');
       },
     });
-    expect(provider.capabilities().windowTrigger.supported).toBe(false);
-    expect(
-      (
-        await provider.triggerWindow(cleanupContext, {
-          intentId: 'synthetic-argon-gated',
-          reasonCode: 'test',
-          windowKind: 'antigravity_argon_weekly',
-        })
-      ).status,
-    ).toBe('rejected');
+    expect(provider.capabilities().windowTrigger.supportedWindowKinds?.sort()).toEqual([
+      'antigravity_gemini_five_hour',
+      'antigravity_gemini_weekly',
+    ]);
+    await expect(
+      provider.triggerWindow(cleanupContext, {
+        intentId: 'synthetic-retired-target',
+        reasonCode: 'test',
+        windowKind: 'antigravity_argon_weekly',
+      }),
+    ).resolves.toMatchObject({ status: 'rejected', errorCode: 'AGY_TRIGGER_TARGET_UNSUPPORTED' });
     expect(spawns).toBe(0);
   });
 
+  it.each([
+    { global: false, model: 'gemini-4-argon-low' },
+    { global: true, model: '' },
+    { global: true, model: 'gemini;unsafe' },
+  ])(
+    'rejects a disabled trigger or invalid Gemini model configuration %j',
+    async ({ global, model }) => {
+      let spawns = 0;
+      const provider = providerFor('', {
+        triggerEnabled: global,
+        triggerModels: { gemini: model },
+        spawnProcess: () => {
+          spawns++;
+          throw new Error('must not spawn');
+        },
+      });
+      expect(provider.capabilities().windowTrigger.supported).toBe(false);
+      expect(
+        (
+          await provider.triggerWindow(cleanupContext, {
+            intentId: 'synthetic-gemini-gated',
+            reasonCode: 'test',
+            windowKind: 'antigravity_gemini_weekly',
+          })
+        ).status,
+      ).toBe('rejected');
+      expect(spawns).toBe(0);
+    },
+  );
+
   it.each(['gemini-4-argon-low', 'gemini-4-argon-medium', 'gemini-4-argon-high'])(
-    'dispatches only the configured Argon model %s with durable cleanup',
+    'dispatches Gemini with the configured Argon model %s and durable cleanup',
     async (model) => {
       let sentArgs: string[] = [];
       let sentPrompt = '';
       let registered = false;
       const provider = providerFor('', {
         triggerEnabled: true,
-        argonTriggerEnabled: true,
-        triggerModels: { argon: model },
+        triggerModels: { gemini: model },
         spawnProcess: (executable, args, options) => {
           sentArgs = args;
           return streamingActionProcessFactory(actionFixture('trigger-success.json'), {
@@ -616,7 +419,8 @@ describe('AntigravityProvider', () => {
         },
       });
       expect(provider.capabilities().windowTrigger.supportedWindowKinds).toEqual([
-        'antigravity_argon_weekly',
+        'antigravity_gemini_five_hour',
+        'antigravity_gemini_weekly',
       ]);
       expect(
         await provider.triggerWindow(
@@ -629,7 +433,7 @@ describe('AntigravityProvider', () => {
           {
             intentId: 'synthetic-argon-model',
             reasonCode: 'test',
-            windowKind: 'antigravity_argon_weekly',
+            windowKind: 'antigravity_gemini_weekly',
           },
         ),
       ).toMatchObject({ status: 'succeeded' });
@@ -639,38 +443,36 @@ describe('AntigravityProvider', () => {
       ]);
       expect(JSON.parse(sentPrompt.trim())).toEqual({
         event: 'user',
-        message: { content: ANTIGRAVITY_ARGON_TRIGGER_MESSAGE },
+        message: { content: ANTIGRAVITY_ARGON_MODEL_TRIGGER_MESSAGE },
       });
     },
   );
 
-  it('records an explicit post-dispatch Argon model mismatch as uncertain', async () => {
+  it('records a post-dispatch Argon model mismatch as uncertain on Gemini', async () => {
     const output = JSON.stringify({
       ...JSON.parse(actionFixture('trigger-success.json')),
       model: 'gemini-3.8-flash-low',
     });
     const provider = providerFor('', {
       triggerEnabled: true,
-      argonTriggerEnabled: true,
-      triggerModels: { argon: 'gemini-4-argon-low' },
+      triggerModels: { gemini: 'gemini-4-argon-low' },
       spawnProcess: streamingActionProcessFactory(output, { initModel: 'gemini-4-argon-low' }),
     });
     expect(
       await provider.triggerWindow(cleanupContext, {
         intentId: 'synthetic-argon-mismatch',
         reasonCode: 'test',
-        windowKind: 'antigravity_argon_weekly',
+        windowKind: 'antigravity_gemini_weekly',
       }),
     ).toMatchObject({ status: 'uncertain', errorCode: 'AGY_TRIGGER_MODEL_MISMATCH' });
   });
 
-  it('registers cleanup and refuses an explicit init model mismatch before sending a prompt', async () => {
+  it('registers cleanup and refuses an Argon model mismatch before dispatch on Gemini', async () => {
     let prompts = 0,
       registrations = 0;
     const provider = providerFor('', {
       triggerEnabled: true,
-      argonTriggerEnabled: true,
-      triggerModels: { argon: 'gemini-4-argon-low' },
+      triggerModels: { gemini: 'gemini-4-argon-low' },
       spawnProcess: scriptedProcessFactory((process) => {
         process.stdin.on('data', () => prompts++);
         process.start();
@@ -696,7 +498,7 @@ describe('AntigravityProvider', () => {
         {
           intentId: 'synthetic-argon-init-mismatch',
           reasonCode: 'test',
-          windowKind: 'antigravity_argon_weekly',
+          windowKind: 'antigravity_gemini_weekly',
         },
       ),
     ).toMatchObject({
@@ -707,13 +509,12 @@ describe('AntigravityProvider', () => {
     expect(prompts).toBe(0);
   });
 
-  it('does not trust a top-level model field when Argon init.model is missing', async () => {
+  it('does not trust a top-level model field when Gemini init.model is missing', async () => {
     let prompts = 0;
     let registrations = 0;
     const provider = providerFor('', {
       triggerEnabled: true,
-      argonTriggerEnabled: true,
-      triggerModels: { argon: 'gemini-4-argon-low' },
+      triggerModels: { gemini: 'gemini-4-argon-low' },
       spawnProcess: scriptedProcessFactory((process) => {
         process.stdin.on('data', () => prompts++);
         process.start();
@@ -740,7 +541,7 @@ describe('AntigravityProvider', () => {
         {
           intentId: 'synthetic-argon-undocumented-model-location',
           reasonCode: 'test',
-          windowKind: 'antigravity_argon_weekly',
+          windowKind: 'antigravity_gemini_weekly',
         },
       ),
     ).resolves.toMatchObject({
@@ -751,13 +552,12 @@ describe('AntigravityProvider', () => {
     expect(prompts).toBe(0);
   });
 
-  it('registers cleanup and refuses a missing init model before sending a prompt', async () => {
+  it('registers cleanup and refuses a missing Gemini init model before dispatch', async () => {
     let prompts = 0,
       registrations = 0;
     const provider = providerFor('', {
       triggerEnabled: true,
-      argonTriggerEnabled: true,
-      triggerModels: { argon: 'gemini-4-argon-low' },
+      triggerModels: { gemini: 'gemini-4-argon-low' },
       spawnProcess: streamingActionProcessFactory(actionFixture('trigger-success.json'), {
         onPrompt: () => {
           prompts++;
@@ -775,7 +575,7 @@ describe('AntigravityProvider', () => {
         {
           intentId: 'synthetic-argon-init-model-missing',
           reasonCode: 'test',
-          windowKind: 'antigravity_argon_weekly',
+          windowKind: 'antigravity_gemini_weekly',
         },
       ),
     ).toMatchObject({

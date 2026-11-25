@@ -38,13 +38,15 @@ starts with your schedule instead of checking providers manually.
 
 ## Features
 
-- Monitor reported five-hour and weekly usage windows for Codex, Antigravity and Claude Code, and the 5-hour, weekly and monthly windows for OpenCode Go.
-  Argon is currently supported as a separate weekly window only.
+- Monitor reported five-hour and weekly usage windows for Codex and Antigravity,
+  Claude Code's usage windows, and OpenCode Go's 5-hour, weekly and monthly
+  windows. Antigravity's Gemini models share one Gemini quota family.
 - Schedule starts by local times, a repeating cycle, active hours, or whenever
   a window is eligible; alternatively, keep automatic starts off and start a
   supported window yourself.
-- Configure separate schedules for Antigravity's Gemini, Claude/GPT, and
-  Argon model families. A fresh Argon policy starts manual and targetless.
+- Configure separate schedules for Antigravity's Gemini and Claude/GPT quota
+  families. Gemini 4 Argon remains a selectable Gemini trigger model while it
+  is available; it does not have a separate quota policy.
 - Review status, usage charts, a daily usage heatmap, and paginated activity in
   the Overview, Usage, Schedule, and Logs pages.
 - Connect provider accounts through guided flows in the web UI.
@@ -101,17 +103,21 @@ OpenCode client (v2.3.2). See
 [SPIKE-008](docs/research/spikes/SPIKE-008-opencode-go.md).
 
 Codex policies target one exact reported window at a time. Antigravity has
-independent policies for **Gemini Models**, **Claude and GPT Models**, and
-**Gemini 4 Argon**. The observed Argon target is weekly only; no five-hour
-Argon window is exposed. Review the [provider notes](docs/providers.md) for the
-current support boundary and operator-specific evidence before connecting or
-enabling actions.
+independent policies for **Gemini Models** and **Claude and GPT Models**.
+Gemini 4 Argon is one Gemini model, not a separate quota family. Google's
+current public documentation places it within the shared Gemini quota; the
+model page currently lists it as leaving on November 30, 2026. See the
+[provider notes](docs/providers.md) for evidence, migration behavior and
+limitations. The CLI's nested machine-readable quota identifiers are not a
+published stable API, so AWM does not claim live verification of any current
+bucket ID.
 
-The Gemini and Claude/GPT trigger flows have account-specific operator-confirmed
-evidence. One live Argon weekly start was also confirmed on 2026-11-14 with the
-pinned CLI 1.5.3 and `gemini-4-argon-low`; that single account, model, and client
-result does not generalize. Argon has a separate trigger gate that defaults off
-and accepts only the supported Argon slugs. Any normal prompt can consume quota.
+The Gemini and Claude/GPT trigger flows have account-specific
+operator-confirmed evidence. A historical November 14, 2026 Argon-model run
+used the then-observed independent Argon row; it is retained as historical
+evidence only and does not establish a current quota identity. The current
+configuration allows an Argon model under the Gemini target and checks the
+selected model before prompt dispatch. Any normal prompt can consume quota.
 AWM persists an intent before dispatch and does not blindly retry uncertain
 outcomes.
 
@@ -202,8 +208,6 @@ The checked-in `.env.example` is the full local `awm` profile:
 | `AWM_TIMEZONE`                                                  | `America/Sao_Paulo`               | Initial timezone used for schedules and date displays.                                    |
 | `AWM_CODEX_ENABLED` / `AWM_ANTIGRAVITY_ENABLED`                 | `true`                            | Enable the corresponding provider client.                                                 |
 | `AWM_CODEX_TRIGGER_ENABLED` / `AWM_ANTIGRAVITY_TRIGGER_ENABLED` | `true`                            | Allow that provider's trigger capability. Set `false` to opt out.                         |
-| `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED`                         | `false`                           | Additional Argon-only action gate; the global Antigravity gate must also be enabled.      |
-| `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL`                           | `gemini-4-argon-low`              | Argon model (`low`, `medium`, `high` slug), or blank to disable Argon model selection.    |
 | `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL`                          | `gemini-3.8-flash-low`            | Model used for Gemini-family starts.                                                      |
 | `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL`                      | `claude-sonnet-4-6`               | Model used for Claude/GPT-family starts.                                                  |
 | `AWM_CLAUDE_CODE_ENABLED`                                       | `false`                           | Enable Claude Code monitoring.                                                            |
@@ -215,8 +219,9 @@ The checked-in `.env.example` is the full local `awm` profile:
 
 An enabled trigger gate does not itself send a request. Provider connection,
 automation mode, an enabled schedule, and an exact target are still required.
-An Argon action additionally needs its separate gate and allowlisted model; its
-bootstrapped policy is manual, review-required, and targetless.
+To select Gemini 4 Argon, set it as the Gemini trigger model while the official
+CLI offers that model. Legacy `AWM_ANTIGRAVITY_ARGON_*` variables are ignored;
+they are not transferred to the Gemini configuration.
 After initialization, saved provider settings in SQLite are authoritative;
 changing bootstrap environment values does not silently overwrite explicit
 choices. See [Configuration](docs/configuration.md) for all options.
@@ -255,10 +260,10 @@ starts.
 On **Schedule**:
 
 1. Select Codex or Antigravity.
-2. For Antigravity, select **Gemini Models**, **Claude and GPT Models**, or
-   **Gemini 4 Argon**.
-3. Choose the exact reported target. Argon currently has only the weekly
-   target; it is not inferred when absent.
+2. For Antigravity, select **Gemini Models** or **Claude and GPT Models**.
+3. Choose the exact reported target. Gemini 4 Argon is configured as a model
+   within the Gemini family; the target must still be a current Gemini quota
+   window reported by the official client.
 4. Choose a schedule option, configure its times if needed, and save.
 
 No target is guessed. Monitoring can be checked without sending a

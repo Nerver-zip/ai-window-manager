@@ -216,9 +216,7 @@ function seedActivationPolicy(
       ? 'default'
       : typeof windowKind === 'string' && windowKind.startsWith('antigravity_claude_gpt_')
         ? 'claude_gpt'
-        : typeof windowKind === 'string' && windowKind.startsWith('antigravity_argon_')
-          ? 'argon'
-          : 'gemini';
+        : 'gemini';
   repositories.schedulePolicies.upsert({
     id:
       providerId === 'antigravity'
@@ -835,7 +833,7 @@ describe('web server persisted overview', () => {
     expect(page.body).toContain('Claude and GPT Models · Only when I ask');
     expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=gemini"');
     expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=claude_gpt"');
-    expect(page.body).toContain('href="/schedule?providerId=antigravity&amp;scope=argon"');
+    expect(page.body).not.toContain('scope=argon');
     expect(page.body).toContain('<h5>Weekly window</h5>');
     expect(page.body).toContain('<h5>5-hour window</h5>');
     expect(page.body).not.toContain('>Usage window<');
@@ -853,92 +851,121 @@ describe('web server persisted overview', () => {
     expect(schedule.body).toContain('Claude and GPT Models · Weekly window');
     expect(schedule.body).toContain('Expected reset');
 
-    const unavailableArgon = await app.inject('/schedule?providerId=antigravity&scope=argon');
-    expect(unavailableArgon.body).toContain(
-      'No Gemini 4 Argon weekly window is currently reported. No other quota family or cadence will be substituted.',
+    const retiredArgon = await app.inject('/schedule?providerId=antigravity&scope=argon');
+    expect(retiredArgon.body).toContain(
+      'The independent Gemini 4 Argon allowance has been retired. Its saved schedule was not transferred; this page shows the current Gemini policy.',
     );
-    expect(unavailableArgon.body).not.toContain('antigravity_argon_five_hour');
-    expect(unavailableArgon.body).not.toContain('value="antigravity_gemini_weekly"');
+    expect(retiredArgon.body).toContain('name="scope" value="gemini"');
+    expect(retiredArgon.body).not.toContain('antigravity_argon_');
   });
 
-  it('shows Argon as a distinct weekly-only Overview family when reported', async () => {
-    const { app } = createApp((repositories) => {
+  it('keeps Overview, scheduling, and manual requests within the two active families', async () => {
+    let triggerCalls = 0;
+    const supportedTargets = [
+      'antigravity_gemini_five_hour',
+      'antigravity_gemini_weekly',
+      'antigravity_claude_gpt_five_hour',
+      'antigravity_claude_gpt_weekly',
+    ];
+    const adapter: ProviderAdapter = {
+      ...inspectionSpy('antigravity'),
+      capabilities: () => ({
+        ...capabilities,
+        windowTrigger: {
+          supported: true,
+          supportedWindowKinds: supportedTargets,
+          contract: 'observed_undocumented',
+          consumesQuota: true,
+        },
+      }),
+      triggerWindow: () => {
+        triggerCalls++;
+        return Promise.reject(new Error('HTTP handlers must not execute provider actions'));
+      },
+    };
+    const { app, repositories } = createApp((repositories) => {
       seedObservedProvider(repositories, 'antigravity', NOW, 'antigravity');
-      setObservedWindows(repositories, 'antigravity', [
-        { windowKind: 'antigravity_gemini_weekly', durationSeconds: 604_800 },
-        { windowKind: 'antigravity_gemini_five_hour', durationSeconds: 18_000 },
-        { windowKind: 'antigravity_claude_gpt_weekly', durationSeconds: 604_800 },
-        { windowKind: 'antigravity_claude_gpt_five_hour', durationSeconds: 18_000 },
-        { windowKind: 'antigravity_argon_weekly', durationSeconds: 604_800 },
-      ]);
+      const provider = repositories.providers.get('antigravity');
+      if (!provider) throw new Error('Antigravity provider missing');
+      repositories.providers.upsert({ ...provider, mode: 'automation' });
+      setObservedWindows(
+        repositories,
+        'antigravity',
+        supportedTargets.map((windowKind) => ({
+          windowKind,
+          durationSeconds: windowKind.endsWith('_weekly') ? 604_800 : 18_000,
+        })),
+      );
       seedActivationPolicy(
         repositories,
         'manual',
-        { windowKind: 'antigravity_argon_weekly' },
+        { windowKind: 'antigravity_gemini_weekly' },
         true,
         'antigravity',
       );
-    });
+      seedActivationPolicy(
+        repositories,
+        'manual',
+        { windowKind: 'antigravity_claude_gpt_weekly' },
+        true,
+        'antigravity',
+      );
+    }, adapter);
 
     const overview = await app.inject('/');
     expect(overview.statusCode).toBe(200);
-    expect(overview.body).toContain('aria-label="Gemini 4 Argon"');
-    expect(overview.body).toContain('Gemini 4 Argon · Only when I ask');
-    expect(overview.body).toContain('<h5>Weekly window</h5>');
-    expect(overview.body).not.toContain('antigravity_argon_five_hour');
+    expect(overview.body).toContain('aria-label="Gemini Models"');
+    expect(overview.body).toContain('aria-label="Claude and GPT Models"');
+    expect(overview.body).not.toContain('Gemini 4 Argon');
+    expect(overview.body.match(/action="\/providers\/antigravity\/trigger"/g)).toHaveLength(4);
 
     const scheduling = await app.inject('/api/v1/scheduling');
     const antigravitySchedule = scheduling
       .json<{
         providers: Array<{
           providerId: string;
-          policyScopes?: Array<{ scope: string; policy: unknown }>;
+          policyScopes?: Array<{ scope: string }>;
         }>;
       }>()
       .providers.find((provider) => provider.providerId === 'antigravity');
     expect(antigravitySchedule?.policyScopes?.map((item) => item.scope)).toEqual([
       'gemini',
       'claude_gpt',
-      'argon',
     ]);
-    expect(
-      antigravitySchedule?.policyScopes?.find((item) => item.scope === 'argon')?.policy,
-    ).toMatchObject({
-      id: 'activation-antigravity-argon',
-      windowKind: 'antigravity_argon_weekly',
-    });
+    expect(repositories.schedulePolicies.list('antigravity')).toHaveLength(2);
 
-    const usage = await app.inject(
-      '/api/v1/usage?provider=antigravity&window=antigravity_argon_weekly',
+    const retiredSchedule = await app.inject('/schedule?providerId=antigravity&scope=argon');
+    expect(retiredSchedule.body).toContain(
+      'The independent Gemini 4 Argon allowance has been retired. Its saved schedule was not transferred; this page shows the current Gemini policy.',
     );
-    expect(usage.statusCode).toBe(200);
-    const usageBody = usage.json<{
-      selectedProviderId: string;
-      selectedWindowKind: string;
-      windows: Array<{ windowKind: string }>;
-    }>();
-    expect(usageBody.selectedProviderId).toBe('antigravity');
-    expect(usageBody.selectedWindowKind).toBe('antigravity_argon_weekly');
-    expect(usageBody.windows.map((window) => window.windowKind)).toContain(
-      'antigravity_argon_weekly',
-    );
-
-    const schedule = await app.inject('/schedule?providerId=antigravity&scope=argon');
-    expect(schedule.body).toContain('Gemini 4 Argon · Weekly window');
-    expect(schedule.body).toContain('value="antigravity_argon_weekly" selected');
-    expect(schedule.body).not.toContain('antigravity_argon_five_hour');
-
-    const preview = await app.inject(
+    expect(retiredSchedule.body).not.toContain('antigravity_argon_weekly');
+    const stalePreview = await app.inject(
       '/schedule/preview?policyKind=auto&providerId=antigravity&scope=argon&windowKind=antigravity_argon_weekly&timezone=UTC',
     );
-    expect(preview.statusCode).toBe(200);
-    expect(preview.body).not.toContain('Choose a usage window from the selected quota family.');
-    const wrongFamilyPreview = await app.inject(
-      '/schedule/preview?policyKind=auto&providerId=antigravity&scope=argon&windowKind=antigravity_gemini_weekly&timezone=UTC',
-    );
-    expect(wrongFamilyPreview.body).toContain(
-      'Choose a usage window from the selected quota family.',
-    );
+    expect(stalePreview.body).toContain('Complete the selected schedule to preview it.');
+
+    const cookieHeader = overview.headers['set-cookie'];
+    const cookie = (Array.isArray(cookieHeader) ? cookieHeader[0] : cookieHeader)?.split(';')[0];
+    const csrfToken = overview.body.match(/name="csrfToken" value="([^"]+)"/)?.[1];
+    const staleTrigger = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/antigravity/trigger',
+      headers: {
+        host: 'localhost:8787',
+        origin: 'http://localhost:8787',
+        cookie,
+        'x-csrf-token': csrfToken ?? '',
+        'content-type': 'application/json',
+      },
+      payload: { windowKind: 'antigravity_argon_weekly' },
+    });
+    expect(staleTrigger.statusCode).toBe(400);
+    expect(staleTrigger.json()).toMatchObject({
+      accepted: false,
+      error: { code: 'BAD_REQUEST' },
+    });
+    expect(triggerCalls).toBe(0);
+    expect(repositories.actionIntents.listOpen('antigravity')).toEqual([]);
   });
 
   it('shows the configured Antigravity model and exact target on manual start controls', async () => {
@@ -947,7 +974,6 @@ describe('web server persisted overview', () => {
       'antigravity_gemini_weekly',
       'antigravity_claude_gpt_five_hour',
       'antigravity_claude_gpt_weekly',
-      'antigravity_argon_weekly',
     ];
     const adapter: ProviderAdapter = {
       ...inspectionSpy('antigravity'),
@@ -972,7 +998,6 @@ describe('web server persisted overview', () => {
         { windowKind: supportedTargets[1]!, durationSeconds: 604_800 },
         { windowKind: supportedTargets[2]!, durationSeconds: 18_000 },
         { windowKind: supportedTargets[3]!, durationSeconds: 604_800 },
-        { windowKind: supportedTargets[4]!, durationSeconds: 604_800 },
       ]);
     }, adapter);
 
@@ -980,7 +1005,7 @@ describe('web server persisted overview', () => {
 
     expect(page.body).toContain('Start model: <strong>Gemini 3.8 Flash Low</strong>');
     expect(page.body).toContain('Start model: <strong>Claude Sonnet 4.6</strong>');
-    expect(page.body).toContain('Start model: <strong>Gemini 4 Argon Low</strong>');
+    expect(page.body).not.toContain('Start model: <strong>Gemini 4 Argon Low</strong>');
     expect(page.body).toContain('aria-label="Start Gemini Models, 5-hour window now"');
     expect(page.body).not.toContain('data-quota-confirm');
     expect(page.body).not.toContain('normal provider quota');
@@ -989,7 +1014,7 @@ describe('web server persisted overview', () => {
     expect(page.body).not.toContain('A fresh safety check runs before sending');
     expect(page.body).not.toContain('provider-action-notice');
     expect(page.body).not.toContain('aria-describedby="provider-action-note-antigravity"');
-    expect(page.body.match(/action="\/providers\/antigravity\/trigger"/g)).toHaveLength(5);
+    expect(page.body.match(/action="\/providers\/antigravity\/trigger"/g)).toHaveLength(4);
     expect(page.body).toContain('name="windowKind" value="antigravity_gemini_five_hour"');
     expect(page.body).toContain('name="windowKind" value="antigravity_claude_gpt_weekly"');
   });

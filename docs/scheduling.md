@@ -78,8 +78,7 @@ timezone:
 - `auto`: start when the selected provider window is inactive, fresh and safely
   triggerable; Codex has one canonical `activation-codex` policy, while
   Antigravity has independent `activation-antigravity-gemini` and
-  `activation-antigravity-claude-gpt` policies plus
-  `activation-antigravity-argon`;
+  `activation-antigravity-claude-gpt` policies;
 - `fixed`: repeat one local anchor using the observed window duration;
 - `custom_schedule`: evaluate a bounded list of local times;
 - `active_hours`: start only inside a configured local period with at least
@@ -101,28 +100,24 @@ older manual policy may omit its target while no window has ever been observed;
 after observations exist, it is flagged for review and the form requires one
 exact reported window.
 
-The Argon policy targets only `antigravity_argon_weekly`, which is derived from
-the exact provider-issued weekly bucket identity. Bootstrap creates this policy
-as manual and requiring review, even when the general Antigravity trigger gate
-is enabled. After review, automatic Argon starts still require an explicitly
-saved `auto` policy, `AWM_ANTIGRAVITY_TRIGGER_ENABLED=true`, and the separate
-experimental `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED=true` gate with a supported
-Argon model configured. Gemini, Claude/GPT, and Argon policies remain serialized
-provider-wide; separate family policies do not authorize concurrent starts.
-
-For a full Argon allowance, an absent, expired, or otherwise non-future reset
-timestamp leaves the phase `UNKNOWN`, so the planner waits for fresh timing
-evidence instead of treating a full quota as proof that a new cycle is ready.
-Partial or exhausted allowances may retain their known consumed phase without a
-reset timestamp. Other Antigravity families keep their existing phase inference.
+Gemini 4 Argon is selected as a trigger model under the Gemini policy. It does
+not have its own quota target, policy, or action gate. A full reported Gemini
+allowance with an absent, expired, or otherwise non-future reset timestamp
+leaves the phase `UNKNOWN`, so the planner waits for fresh timing evidence
+instead of treating a full quota as proof that a new cycle is ready. Partial or
+exhausted allowances may retain their known consumed phase without a reset
+timestamp. Separate Antigravity family policies remain serialized provider-wide;
+they do not authorize concurrent starts.
 
 Migration from the former single Antigravity policy never guesses whether an
 ambiguous `five_hour` or `weekly` target meant Gemini or Claude/GPT. The migrated
 Gemini and Claude/GPT policies are disabled and marked for review; a
-family-specific exact target is copied only to its matching family. Argon is
-created separately as a manual, review-gated policy. The legacy row remains as
-an inert tombstone for historical action-intent references. No migrated policy
-may schedule an action until the operator reviews and saves it.
+family-specific exact target is copied only to its matching family. Migration
+016 retires the independent Argon policy, archives its configuration in an
+event, and never transfers its target or settings into Gemini. It terminalizes
+unsent/retryable old intents and resolves potentially dispatched ones as
+unknown, preserving dedupe, evidence and cleanup. Gemini and Claude/GPT policy
+rows are preserved unchanged by this retirement migration.
 
 Legacy `target_reset` and `work_window` records remain readable and are handled
 by the compatibility path in the reconciler. The activation schedule API only
@@ -172,8 +167,9 @@ A start is also blocked by exhaustion of any other window it consumes:
   default-model start.
 - **OpenCode Go**: the 5-hour, weekly and monthly windows, which are shares (20%,
   50% and 100%) of one dollar allowance, so a start counts against all three.
-- **Antigravity**: only windows of the same model family. Argon has only its
-  weekly window, so it is blocked only by its own exhaustion.
+- **Antigravity**: only windows of the same model family. Gemini 4 Argon is a
+  Gemini model, so a Gemini start is blocked by the shared Gemini family
+  allowance. Archived Argon windows are not used for current scheduling.
 
 Enforcement happens in four places, from cheapest to authoritative:
 

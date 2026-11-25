@@ -312,7 +312,7 @@ describe('readScheduling', () => {
     });
   });
 
-  it('returns independent Antigravity family policies and withholds a review-gated decision', () => {
+  it('returns exactly the two Antigravity family policies and withholds a review-gated decision', () => {
     const context = setup();
     const nowMs = context.clock.now().getTime();
     const antigravity = provider({ id: 'antigravity', kind: 'antigravity' });
@@ -365,19 +365,6 @@ describe('readScheduling', () => {
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
     });
-    context.repositories.schedulePolicies.upsert({
-      id: 'activation-antigravity-argon',
-      providerId: 'antigravity',
-      scope: 'argon',
-      requiresReview: false,
-      kind: 'manual',
-      enabled: true,
-      timezone: 'UTC',
-      config: {},
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-    });
-
     const result = readScheduling({
       repositories: context.repositories,
       adapters: new Map([['antigravity', context.fake]]),
@@ -387,8 +374,10 @@ describe('readScheduling', () => {
     const antigravityRead = result.providers.find((item) => item.providerId === 'antigravity');
     const geminiPolicy = antigravityRead?.policyScopes?.find((item) => item.scope === 'gemini');
     const claudePolicy = antigravityRead?.policyScopes?.find((item) => item.scope === 'claude_gpt');
-    const argonPolicy = antigravityRead?.policyScopes?.find((item) => item.scope === 'argon');
-    expect(antigravityRead?.policyScopes).toHaveLength(3);
+    expect(antigravityRead?.policyScopes?.map((item) => item.scope)).toEqual([
+      'gemini',
+      'claude_gpt',
+    ]);
     expect(geminiPolicy?.policy?.id).toBe('activation-antigravity-gemini');
     expect(geminiPolicy?.policy?.windowKind).toBe('antigravity_gemini_five_hour');
     expect(geminiPolicy?.requiresReview).toBe(false);
@@ -396,37 +385,5 @@ describe('readScheduling', () => {
     expect(claudePolicy?.policy?.kind).toBe('manual');
     expect(claudePolicy?.decision).toBeNull();
     expect(claudePolicy?.requiresReview).toBe(true);
-    expect(argonPolicy?.policy?.id).toBe('activation-antigravity-argon');
-    expect(argonPolicy?.policy?.kind).toBe('manual');
-    expect(argonPolicy?.policy?.windowKind).toBeUndefined();
-    expect(argonPolicy?.currentWindow).toMatchObject({
-      status: 'UNKNOWN',
-      reason: 'WINDOW_TARGET_NOT_SELECTED',
-    });
-    expect(argonPolicy?.requiresReview).toBe(false);
-
-    const current = context.repositories.providerState.get('antigravity');
-    const argonBase = current?.observation?.windows[0];
-    if (!current?.observation || !argonBase) throw new Error('missing Antigravity observation');
-    context.repositories.providerState.upsert({
-      ...current,
-      observation: {
-        ...current.observation,
-        windows: [
-          ...current.observation.windows,
-          { ...argonBase, windowKind: 'antigravity_argon_weekly' },
-        ],
-      },
-    });
-    const afterArgonReport = readScheduling({
-      repositories: context.repositories,
-      adapters: new Map([['antigravity', context.fake]]),
-      clock: context.clock,
-    });
-    expect(
-      afterArgonReport.providers
-        .find((item) => item.providerId === 'antigravity')
-        ?.policyScopes?.find((item) => item.scope === 'argon')?.requiresReview,
-    ).toBe(true);
   });
 });

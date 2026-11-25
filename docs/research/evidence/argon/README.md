@@ -1,4 +1,9 @@
-# Argon browser acceptance
+# Archived Argon browser acceptance
+
+> These October 2026 captures show the former independent Argon policy and are
+> retained as historical evidence. That scope has since been retired. Current
+> screenshots and runtime behavior use the Gemini quota family; these captures
+> do not describe current scheduling or target selection.
 
 Captured on 2026-10-20 using synthetic usage data, an isolated SQLite database,
 and native operator authentication. No provider prompt or production deployment

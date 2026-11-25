@@ -51,7 +51,7 @@ export const ScheduleSettingsSchema = z
 const ActivationPolicyBaseSchema = z.object({
   enabled: z.boolean().default(true),
   providerId: ID,
-  scope: z.enum(['default', 'gemini', 'claude_gpt', 'argon']).optional(),
+  scope: z.enum(['default', 'gemini', 'claude_gpt']).optional(),
   timezone: z.string().min(1).max(128).optional(),
 });
 
@@ -187,7 +187,7 @@ export function updateActivationPolicy(
       ? policyScopeForWindowKind(requestedWindowKind)
       : undefined;
     const selectedScope = parsed.data.scope ?? inferredScope;
-    if (selectedScope !== 'gemini' && selectedScope !== 'claude_gpt' && selectedScope !== 'argon') {
+    if (selectedScope !== 'gemini' && selectedScope !== 'claude_gpt') {
       return failure(400, 'POLICY_SCOPE_REQUIRED', 'choose an Antigravity quota family');
     }
     scope = selectedScope;

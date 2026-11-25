@@ -319,42 +319,11 @@ describe('activation policy settings persistence', () => {
     expect(context.repositories.schedulePolicies.get('activation-fake')).toBeUndefined();
   });
 
-  it('allows an untargeted manual Argon policy when only other families are observed', async () => {
+  it('rejects stale Argon scopes and targets without transferring them into Gemini', async () => {
     const context = setup();
     await seedAntigravityObservation(context, [
       'antigravity_gemini_weekly',
       'antigravity_claude_gpt_weekly',
-    ]);
-
-    const result = updateActivationPolicy(settingsInput(context), {
-      kind: 'manual',
-      enabled: true,
-      providerId: 'antigravity',
-      scope: 'argon',
-      timezone: 'UTC',
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        scope: 'argon',
-        policy: { id: 'activation-antigravity-argon', kind: 'manual' },
-      },
-    });
-    expect(context.repositories.schedulePolicies.get('activation-antigravity-argon')).toMatchObject(
-      {
-        scope: 'argon',
-        kind: 'manual',
-        requiresReview: false,
-        config: {},
-      },
-    );
-  });
-
-  it('requires the exact Argon weekly target when it is reported and rejects another family', async () => {
-    const context = setup();
-    await seedAntigravityObservation(context, [
-      'antigravity_gemini_weekly',
       'antigravity_argon_weekly',
     ]);
     const input = settingsInput(context);
@@ -366,35 +335,28 @@ describe('activation policy settings persistence', () => {
         providerId: 'antigravity',
         scope: 'argon',
         timezone: 'UTC',
-        windowKind: 'antigravity_gemini_weekly',
       }),
-    ).toMatchObject({ ok: false, code: 'WINDOW_SCOPE_MISMATCH' });
+    ).toMatchObject({ ok: false, statusCode: 400, code: 'BAD_REQUEST' });
     expect(
       updateActivationPolicy(input, {
         kind: 'manual',
         enabled: true,
         providerId: 'antigravity',
-        scope: 'argon',
-        timezone: 'UTC',
-      }),
-    ).toMatchObject({ ok: false, code: 'WINDOW_TARGET_REQUIRED' });
-
-    expect(
-      updateActivationPolicy(input, {
-        kind: 'manual',
-        enabled: true,
-        providerId: 'antigravity',
-        scope: 'argon',
         timezone: 'UTC',
         windowKind: 'antigravity_argon_weekly',
       }),
-    ).toMatchObject({ ok: true, value: { scope: 'argon', policy: { kind: 'manual' } } });
-    expect(context.repositories.schedulePolicies.get('activation-antigravity-argon')).toMatchObject(
-      {
-        scope: 'argon',
-        config: { windowKind: 'antigravity_argon_weekly' },
-      },
-    );
+    ).toMatchObject({ ok: false, statusCode: 400, code: 'POLICY_SCOPE_REQUIRED' });
+    expect(
+      updateActivationPolicy(input, {
+        kind: 'manual',
+        enabled: true,
+        providerId: 'antigravity',
+        scope: 'gemini',
+        timezone: 'UTC',
+        windowKind: 'antigravity_argon_weekly',
+      }),
+    ).toMatchObject({ ok: false, statusCode: 400, code: 'WINDOW_SCOPE_MISMATCH' });
+    expect(context.repositories.schedulePolicies.list('antigravity')).toEqual([]);
   });
 
   it('rejects automatic policies until the selected usage window has been observed', () => {

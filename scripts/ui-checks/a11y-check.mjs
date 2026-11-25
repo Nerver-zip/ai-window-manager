@@ -190,7 +190,7 @@ const normal = await motion();
 await send('Emulation.setEmulatedMedia', {
   features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
 });
-await goto(baseUrl + '/settings');
+await goto(baseUrl + '/settings?connect=claude_code');
 const reduced = await motion();
 const zero = (d) => d.split(',').every((x) => parseFloat(x) <= 0.00001);
 check(

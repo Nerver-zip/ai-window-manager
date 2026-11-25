@@ -32,19 +32,15 @@ Environment/.env/Compose controls process/container concerns:
 - `AWM_CODEX_TRIGGER_ENABLED` (default `true`) as the Codex quota-consuming
   action gate; set it to `false` to disable Codex actions;
 - `AWM_ANTIGRAVITY_TRIGGER_ENABLED` (default `true`) as a separate gate for the
-  experimental quota-consuming actions for Gemini and Claude/GPT; persisted
+  experimental quota-consuming actions for the Gemini and Claude/GPT quota
+  families; persisted
   provider mode must also be `automation`; set it to `false` to disable those
   Antigravity actions;
-- `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED` (default `false`) as an additional
-  Argon-only action gate. The global Antigravity gate must also be enabled;
-  provider mode, policy, exact weekly target, and model checks still apply;
-- `AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL` (default `gemini-4-argon-low`), limited
-  to `gemini-4-argon-low`, `gemini-4-argon-medium`, `gemini-4-argon-high`, or
-  the empty string. Empty disables Argon model selection/action capability;
 - `AWM_ANTIGRAVITY_ACTION_TIMEOUT_SECONDS` (5–120, default `30`);
 - `AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL` (default `gemini-3.8-flash-low`) and
   `AWM_ANTIGRAVITY_CLAUDE_GPT_TRIGGER_MODEL` (default `claude-sonnet-4-6`),
-  each bounded to 128 characters;
+  each bounded to 128 characters. Gemini 4 Argon may be selected in the Gemini
+  model setting while the official CLI makes it available;
 - `AWM_ANTIGRAVITY_KEYRING_SECRET_FILE`, an internal mounted-file path only (not secret contents).
 
 These generally require restart.
@@ -65,26 +61,26 @@ does not change provider authentication or trigger settings.
 The checked-in `.env.example` is an explicit local Compose profile, not the
 unset-variable defaults: it sets project `awm`, publishes on port `8878` on all
 host interfaces, requires the operator to replace the username/hash bootstrap
-placeholder, enables Codex and Antigravity monitoring, enables the existing
-Codex/Antigravity trigger gates, and enables Argon monitoring. Its separate
-Argon trigger gate is `false`, so Argon starts remain unavailable by default;
-the example selects `gemini-4-argon-low` but model selection alone does not
-enable actions. It uses 60-second action timeouts. It contains no usable
-operator credential, provider credentials or keyring unlock secret. The global
-application gates default on; Argon's family gate defaults off. Provider
-monitoring itself remains disabled unless the corresponding provider is
-enabled. Compose refuses to start without the operator settings.
+placeholder, enables Codex and Antigravity monitoring, and enables the Codex
+and Antigravity trigger gates. It uses 60-second action timeouts. It contains
+no usable operator credential, provider credentials or keyring unlock secret.
+Provider monitoring itself remains disabled unless the corresponding provider
+is enabled. Compose refuses to start without the operator settings.
+
+The retired `AWM_ANTIGRAVITY_ARGON_TRIGGER_ENABLED` and
+`AWM_ANTIGRAVITY_ARGON_TRIGGER_MODEL` variables are ignored on upgrade and are
+not copied into the Gemini setting. Set
+`AWM_ANTIGRAVITY_GEMINI_TRIGGER_MODEL=gemini-4-argon-low` if that is the
+operator's intended Gemini model and it remains available in the official CLI.
 
 The environment gates determine which trigger capabilities are available and
 are also the initial automation default for a newly seeded provider. When a
 global gate is enabled (the default), a fresh database seeds the corresponding
 provider in `automation` mode with an enabled `auto` (“Whenever possible”)
 policy. When a gate is explicitly disabled, the initial mode is `monitor_only`
-with a manual policy. Argon is an exception: its policy starts in `manual`
-mode, is marked review-required, and has no selected target even when both
-trigger gates are enabled. Migration 014 adds the Argon scope while preserving
-existing provider and policy choices; it does not opt Argon into automation.
-On upgrade, the
+with a manual policy. Migration 016 retires the former Argon quota scope,
+preserves Gemini and Claude/GPT policy choices, and does not transfer old Argon
+settings or targets to Gemini. On upgrade, the
 migration restores saved provider/policy choices from the configuration audit
 and marks them explicit. A legacy `monitor_only`/manual pair that has no saved
 operator choice is upgraded to the automatic defaults when its trigger gate is
@@ -93,12 +89,12 @@ preference and remains off across restarts and environment changes.
 
 The automatic policy does not guess a target: after connecting, select the
 exact provider-reported window (and, for Antigravity, quota family) before any
-action can be planned. Argon currently exposes only the exact weekly bucket
-`gemini-argon-wtu-weekly`; no five-hour Argon target is inferred. Any configured
-trigger sends a normal `Hi!` provider request and may consume quota; an
-ambiguous dispatched request is not retried automatically. A pre-dispatch
-model/target mismatch fails without sending a prompt; a result that becomes
-ambiguous after possible dispatch stays uncertain.
+action can be planned. Gemini 4 Argon is selectable as a Gemini model, but
+uses the shared Gemini quota target; no independent Argon window or policy is
+created. Any configured trigger sends a normal provider request and may
+consume quota; an ambiguous dispatched request is not retried automatically.
+A pre-dispatch model/target mismatch fails without sending a prompt; a result
+that becomes ambiguous after possible dispatch stays uncertain.
 
 ### Claude Code
 

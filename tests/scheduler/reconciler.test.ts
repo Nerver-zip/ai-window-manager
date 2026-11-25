@@ -105,18 +105,16 @@ function setup(initial = '2026-09-14T07:59:00.000Z') {
   };
 }
 
-type AntigravityScope = 'gemini' | 'claude_gpt' | 'argon';
+type AntigravityScope = 'gemini' | 'claude_gpt';
 
 const ANTIGRAVITY_WINDOW_KINDS: Record<AntigravityScope, string> = {
   gemini: 'antigravity_gemini_five_hour',
   claude_gpt: 'antigravity_claude_gpt_weekly',
-  argon: 'antigravity_argon_weekly',
 };
 
 const ANTIGRAVITY_POLICY_IDS: Record<AntigravityScope, string> = {
   gemini: 'activation-antigravity-gemini',
   claude_gpt: 'activation-antigravity-claude-gpt',
-  argon: 'activation-antigravity-argon',
 };
 
 function prepareAntigravity(context: ReturnType<typeof setup>): number {
@@ -341,17 +339,15 @@ describe('Reconciler', () => {
     await worker.stop();
   });
 
-  it('keeps Gemini, Claude/GPT and Argon starts serialized provider-wide', async () => {
+  it('keeps Gemini and Claude/GPT starts serialized provider-wide', async () => {
     const context = setup();
     const nowMs = prepareAntigravity(context);
     const observedAt = new Date(nowMs).toISOString();
     storeAntigravityObservation(
       context,
-      (['gemini', 'claude_gpt', 'argon'] as const).map((scope) =>
-        makeAntigravityWindow(scope, observedAt),
-      ),
+      (['gemini', 'claude_gpt'] as const).map((scope) => makeAntigravityWindow(scope, observedAt)),
     );
-    for (const scope of ['gemini', 'claude_gpt', 'argon'] as const) {
+    for (const scope of ['gemini', 'claude_gpt'] as const) {
       addAntigravityPolicy(context, scope);
     }
 
@@ -364,43 +360,31 @@ describe('Reconciler', () => {
 
     expect(report.createdIntentIds).toEqual(['intent-1']);
     expect(starts).toHaveLength(1);
-    expect(waiting).toHaveLength(2);
-    expect(report.decisions).toHaveLength(3);
+    expect(waiting).toHaveLength(1);
+    expect(report.decisions).toHaveLength(2);
     expect(context.repositories.actionIntents.listOpen()).toMatchObject([
       { policyId: starts[0]?.policyId },
     ]);
     expect(context.triggerCount).toBe(0);
   });
 
-  it('keeps Argon manual and review-gated by default, then still blocks it after review', async () => {
+  it('does not schedule a legacy Argon target through a Gemini policy', async () => {
     const context = setup();
     prepareAntigravity(context);
     const observedAt = context.clock.now().toISOString();
-    storeAntigravityObservation(context, [makeAntigravityWindow('argon', observedAt)]);
-    const policy = addAntigravityPolicy(context, 'argon', {
-      kind: 'manual',
-      requiresReview: true,
+    const oldWindow = makeAntigravityWindow('gemini', observedAt);
+    oldWindow.windowKind = 'antigravity_argon_weekly';
+    storeAntigravityObservation(context, [oldWindow]);
+    const policy = addAntigravityPolicy(context, 'gemini');
+    context.repositories.schedulePolicies.upsert({
+      ...policy,
+      config: { windowKind: 'antigravity_argon_weekly' },
     });
 
-    const reviewReport = await antigravityReconciler(context).reconcile();
-    expect(reviewReport.decisions).toEqual([]);
-    expect(context.repositories.actionIntents.listOpen()).toEqual([]);
-    expect(context.repositories.events.list('antigravity')).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'schedule_policy_review_required',
-          reasonCode: 'POLICY_REVIEW_REQUIRED',
-          data: { policyId: policy.id, scope: 'argon' },
-        }),
-      ]),
-    );
+    const report = await antigravityReconciler(context).reconcile();
 
-    context.repositories.schedulePolicies.upsert({ ...policy, requiresReview: false });
-    const reviewedReport = await antigravityReconciler(context).reconcile();
-    expect(reviewedReport.decisions[0]?.decision).toMatchObject({
-      kind: 'NONE',
-      reasonCode: 'MANUAL_POLICY',
-    });
+    expect(report.createdIntentIds).toEqual([]);
+    expect(report.decisions.some((item) => item.decision.kind === 'START')).toBe(false);
     expect(context.repositories.actionIntents.listOpen()).toEqual([]);
     expect(context.triggerCount).toBe(0);
   });
@@ -410,7 +394,7 @@ describe('Reconciler', () => {
     { state: 'stale' as const, expectedReason: 'OBSERVATION_STALE' },
     { state: 'unknown' as const, expectedReason: 'WINDOW_PHASE_CONFIDENCE_TOO_LOW' },
   ])(
-    'does not create an Argon intent when its observation is $state',
+    'does not create a Gemini intent when its observation is $state',
     async ({ state, expectedReason }) => {
       const context = setup();
       prepareAntigravity(context);
@@ -421,7 +405,7 @@ describe('Reconciler', () => {
         state === 'unobserved'
           ? []
           : [
-              makeAntigravityWindow('argon', observedAt, {
+              makeAntigravityWindow('gemini', observedAt, {
                 ...(state === 'unknown'
                   ? { phase: 'UNKNOWN' as const, confidence: 'unknown' as const, usageRatio: 0.5 }
                   : {}),
@@ -431,7 +415,7 @@ describe('Reconciler', () => {
         observedAt,
         staleAfterSeconds: 60,
       });
-      addAntigravityPolicy(context, 'argon');
+      addAntigravityPolicy(context, 'gemini');
 
       const report = await antigravityReconciler(context).reconcile();
 
@@ -448,18 +432,18 @@ describe('Reconciler', () => {
   it.each([
     { resetAt: null, resetDescription: 'missing' },
     { resetAt: '2026-09-14T07:58:00.000Z', resetDescription: 'overdue' },
-  ])('does not start a full Argon window with a $resetDescription reset', async ({ resetAt }) => {
+  ])('does not start a full Gemini window with a $resetDescription reset', async ({ resetAt }) => {
     const context = setup();
     prepareAntigravity(context);
     const observedAt = context.clock.now().toISOString();
-    const window = makeAntigravityWindow('argon', observedAt, {
+    const window = makeAntigravityWindow('gemini', observedAt, {
       phase: 'UNKNOWN',
       confidence: 'unknown',
       usageRatio: 0,
       resetAt,
     });
     storeAntigravityObservation(context, [window]);
-    addAntigravityPolicy(context, 'argon');
+    addAntigravityPolicy(context, 'gemini');
 
     const report = await antigravityReconciler(context).reconcile();
     const decision = report.decisions[0]?.decision;

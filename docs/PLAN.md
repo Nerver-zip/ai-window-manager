@@ -1,7 +1,7 @@
 # AI Window Manager — implementation plan
 
-Prepared: **2026-09-27**; current implementation status refreshed **2026-10-20**.
-Scope: self-hosted Codex + Antigravity usage-window monitoring, bounded history, explicit scheduling, safe minimal triggers, provider lifecycle/update management and a private operator UI. Codex and the existing Gemini/Claude-GPT Antigravity actions default on for configured providers and remain explicitly disableable; Argon is a separately gated weekly-only target that defaults off.
+Prepared: **2026-09-27**; current implementation status refreshed **2026-11-24**.
+Scope: self-hosted Codex + Antigravity usage-window monitoring, bounded history, explicit scheduling, safe minimal triggers, provider lifecycle/update management and a private operator UI. Codex and the two Antigravity quota-family actions default on for configured providers and remain explicitly disableable. Gemini 4 Argon is a Gemini model and has no independent quota scope.
 
 ## A. Executive summary
 
@@ -9,7 +9,7 @@ Build AI Window Manager as one small self-hosted TypeScript daemon/container. It
 
 The hard boundary is deliberate: this is a usage-window manager, not a general AI platform. The scheduler never knows provider endpoints/auth; adapters never choose schedule policy; the UI never receives credentials.
 
-The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an enabled adapter capability; Codex and the existing Antigravity families have separate configurable quota-consuming paths, enabled by default for configured providers and explicitly disableable. Argon is a separately gated, weekly-only path with no live AWM trigger acceptance. The owner has confirmed the integrated Antigravity action for the Gemini and Claude/GPT families; its observed effect remains account/client-specific, not a universal provider guarantee.
+The primary implementation strategy is to reach a vertical slice early with `FakeProvider → scheduler → SQLite → overview → Docker`, then integrate real providers behind truthful capability flags. The safe executor dispatches only an enabled adapter capability; Codex and the Antigravity Gemini and Claude/GPT families have separate configurable quota-consuming paths, enabled by default for configured providers and explicitly disableable. The owner has confirmed account-specific integrated Antigravity actions for those two families; their observed effects are not universal provider guarantees.
 
 ## Current milestone status
 
@@ -19,14 +19,15 @@ implemented. Overview routes a disconnected operator directly to the matching
 provider Settings sign-in card. Displayed sign-in codes have one source of truth
 for selection/copy and remain only in the in-memory auth session.
 
-Gemini 4 Argon is recognized as a separate weekly Antigravity target using the
-observed bucket ID `gemini-argon-wtu-weekly`; other Argon-like buckets are
-preserved under opaque observed-only identities with unknown phase and no
-trigger target, and no five-hour Argon target is inferred. The Argon family
-gate defaults off, its policy starts manual, review-required and targetless,
-and no live AWM Argon trigger acceptance has been performed. The
-implementation passes offline validation and browser acceptance; PR/operator
-review remains required.
+Google's public [CLI usage docs](https://antigravity.google/docs/cli/commands/usage/)
+say models in the Gemini group share five-hour and weekly limits; the [plans
+page](https://antigravity.google/docs/plans) places Gemini 4 Argon in that
+shared Gemini quota for paid Google AI Pro. The independent Argon policy and
+target are retired. A historical 2026-11-14 Argon-model action is retained as
+account/client evidence only and does not establish a current bucket ID. AWM
+keeps Gemini 4 Argon as a selectable Gemini model while available in the
+official CLI. Migration 016 archives old policy configuration, preserves
+historical samples and cleanup obligations, and resolves old intents safely.
 
 Data lifecycle is bounded: detailed samples and ordinary events age out after
 90 days, aggregate Usage intervals after 400 days, and lifecycle/action history
@@ -49,9 +50,9 @@ new source pins and opens a review-only PR, never auto-merging.
 The Usage view identifies all Antigravity family/cadence charts, keeps periods
 independent, selects only weekly sources for the heatmap, and omits the redundant
 global selector and alternate day list. Antigravity schedules persist
-independently for Gemini and Claude/GPT, with a separate weekly-only Argon
-scope; provider-wide trigger serialization still blocks a second open action
-through confirmation. Codex retains one policy.
+independently for Gemini and Claude/GPT; provider-wide trigger serialization
+still blocks a second open action through confirmation. Historical Argon usage
+is read-only and labeled retired. Codex retains one policy.
 
 Codex's ordinary `Hi!` action has operator-authorized live heartbeat evidence.
 The owner also confirms end-to-end Antigravity action acceptance for the Gemini
@@ -546,15 +547,10 @@ durable intent and no retry after an uncertain result.
 **Trigger**: for the existing Gemini and Claude/GPT families, the environment
 gate defaults on for configured providers; automatic starts are the initial
 default unless explicitly disabled in SQLite or through the environment. The
-observed effect is not a universal start-window guarantee. Argon has a separate
-default-off family gate and is described below.
-
-**ARGON-001**: the exact `gemini-argon-wtu-weekly` bucket maps to a separate
-weekly target. Its initial policy is manual, review-required, and targetless;
-the family action gate defaults off. No live Argon prompt or quota acceptance
-has occurred. Implementation and offline regressions are present, with root
-validation and review pending; see the canonical item in `docs/BACKLOG.md` and
-[`SPIKE-006`](research/spikes/SPIKE-006-antigravity-argon.md).
+observed effect is not a universal start-window guarantee. Gemini 4 Argon, when
+available, is selected as a model under the Gemini target. The former separate
+Argon weekly scope is retired by ARGON-002; its prior evidence remains in
+[`SPIKE-006`](research/spikes/SPIKE-006-antigravity-argon.md) as historical.
 
 ### Phase 7 — Settings/logs/usage polish
 
@@ -590,7 +586,8 @@ state is:
 CORE-001 + CORE-002 + STORAGE-001 → SCHED-001 → TIME-001 → SCHED-002 → SCHED-003 [complete]
 SPIKE-001 → CODEX-001 → CODEX-002 [complete; Codex heartbeat owner-confirmed]
 SPIKE-002 + SPIKE-003 → ANT-001 → ANT-002 → AGY-TRIGGER-001 [Gemini and Claude/GPT complete; owner-confirmed]
-SPIKE-006 → ARGON-001 [weekly observation contract implemented; offline and root validation/review pending; no live trigger]
+SPIKE-006 → ARGON-001 [historical implementation, superseded]
+ARGON-002 [retire independent quota scope; migration and regressions implemented]
 WINDOW-001 → independent Antigravity family policies → WEB-005 [complete]
 ```
 
@@ -609,17 +606,17 @@ the maintainer's local workspace rather than the repository.
 - [x] FakeProvider exercises active/inactive/reset/failure/action-uncertain flows.
 - [x] Codex real adapter can at least monitor through an official client surface, or the exact blocking spike is documented if provider changed.
 - [x] Codex automation defaults on for configured providers, can be explicitly disabled, and performs only one persisted/confirmed minimal ordinary action per target cycle.
-- [x] Antigravity monitoring uses only the official CLI; the exact observed Argon weekly bucket is distinct, other Argon-like buckets remain opaque and observed-only, and no five-hour Argon target is inferred. Unavailable/auth-required states are explicit and no token/backend workaround exists.
+- [x] Antigravity monitoring uses only the official CLI and exposes Gemini and Claude/GPT quota families. Gemini 4 Argon is selectable under Gemini while available, with no independent Argon bucket, target or policy. The old bucket is filtered from current state; historical rows remain labeled retired.
 - [x] Official Codex and Antigravity login sessions are supervised in memory, bounded, and verified through provider reads; browser endpoints are Origin/CSRF protected.
 - [x] Antigravity runtime uses separate CLI/keyring state, non-root D-Bus/Secret Service and optional mounted unlock file. For configured providers, automatic starts default on with explicit settings/environment opt-out; migrated family policies require review.
-- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; Gemini and Claude/GPT trigger support is independently gated, exact-target allowlisted, on by default for configured providers, and explicitly disableable. Argon has a separate default-off gate and manual, review-required, targetless initial policy.
+- [x] Antigravity usage observation uses the pinned official CLI and fails closed on malformed output; Gemini and Claude/GPT trigger support is independently gated, exact-target allowlisted, on by default for configured providers, and explicitly disableable. An Argon model uses the Gemini family target and the same Gemini configuration.
 - [x] The owner has validated provider sign-in and operational use in the
       configured deployment, including the integrated Antigravity trigger for
       Gemini and Claude/GPT. Each new deployment still needs operator-owned account
       connection and read-only/restart verification; that is post-install
       acceptance, not a source-release gate.
 - [x] Antigravity trigger semantics have account-specific operator evidence and are explicitly classified experimental; no universal guarantee is claimed.
-- [ ] Argon weekly observation mapping and offline regressions are implemented; root validation and review remain pending. There is no live AWM Argon trigger acceptance or provider approval claim.
+- [x] ARGON-002 retires the independent Argon quota scope. Migration 016 archives old policy state, preserves historical data and cleanup obligations, skips unattempted intents, and resolves potentially dispatched intents as unknown without retry.
 - [x] overview shows phase, freshness, usage/remaining when known, reset with confidence, next decision and reason.
 - [x] activation policies (manual/auto/fixed/custom/active-hours) work with deterministic previews; generalized work-period optimization remains deferred.
 - [x] duplicate trigger protection is enforced by DB uniqueness + action lifecycle tests.
@@ -645,7 +642,7 @@ the maintainer's local workspace rather than the repository.
 
 - **Codex official-client integration lifecycle/auth in headless container**: SPIKE-001.
 - **Antigravity keyring/DBus in container**: isolated runtime is implemented; existing authenticated state survived restart in the local deployment, while fresh setups still require acceptance.
-- **Antigravity window-start semantics**: account-specific operator tests exist for the Gemini and Claude/GPT families; other accounts/plans/CLI versions remain unknown. Those accepted triggers default on for configured providers but can be explicitly disabled, and uncertain outcomes cannot retry. Argon has no live start-effect evidence and its separate gate defaults off.
+- **Antigravity window-start semantics**: account-specific operator tests exist for the Gemini and Claude/GPT families; other accounts/plans/CLI versions remain unknown. Those accepted triggers default on for configured providers but can be explicitly disabled, and uncertain outcomes cannot retry. The historical Argon-model action does not identify a current bucket contract; the official model page currently lists Argon as leaving on November 30, 2026.
 - **Clock/DST mis-scheduling**: dedicated temporal tests + skip missed actions.
 
 ### P2
@@ -686,7 +683,7 @@ Explicitly still not future goals: agent orchestration, prompt management, accou
 5. **Estimated vs observed**: every nontrivial fact carries `source`, `confidence`, `observedAt`.
 6. **State machine**: separate provider health from window phase.
 7. **Scheduler**: 30s reconciler + pure decision function + durable action intents.
-8. **Trigger meaning**: Codex = one minimal normal official-client request after eligibility; Antigravity Gemini/Claude-GPT = one fixed normal official CLI `Hi!` for the exact configured target model, experimental and quota-consuming. Argon is separately gated, weekly-only, and has no live effect acceptance; Fake = deterministic state transition.
+8. **Trigger meaning**: Codex = one minimal normal official-client request after eligibility; Antigravity Gemini/Claude-GPT = one fixed normal official CLI request for the exact configured target model, experimental and quota-consuming. Gemini 4 Argon, while available, uses the Gemini target and model-specific verification; it is not a separate quota family. Fake = deterministic state transition.
 9. **Duplicate prevention**: DB `UNIQUE(dedupe_key)` + intent lifecycle + fresh preflight.
 10. **Persist jobs/intentions**: `action_intents` table, not cron/in-memory timers.
 11. **Restart**: reload state/intents, mark interrupted executing triggers uncertain, inspect before decisions.

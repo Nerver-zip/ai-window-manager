@@ -323,7 +323,7 @@ export function quotaFamilyDisplayName(scope: string): string {
     case 'claude_and_gpt':
       return 'Claude and GPT Models';
     case 'argon':
-      return 'Gemini 4 Argon';
+      return 'Gemini 4 Argon (retired allowance)';
     default:
       return humanizeIdentifier(scope, 'Other');
   }
